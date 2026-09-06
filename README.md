@@ -43,7 +43,7 @@ docker compose stop
 docker compose start
 ```
 
-On macOS, native Ollama is a separate background process; its log and PID are in `.local/ollama/server.log` and `.local/ollama/server.pid`. It does not automatically start at login. Run `bash scripts/start.sh` after a reboot. `docker compose stop` stops the containers only; to stop this project's native model server, run `kill "$(cat .local/ollama/server.pid)"` after verifying that PID still belongs to this Ollama process.
+On macOS, native Ollama is a separate background process; its log and PID are in `.local/ollama/server.log` and `.local/ollama/server.pid`. Ollama also creates its standard identity key under `~/.ollama`. It does not automatically start at login. Run `bash scripts/start.sh` after a reboot. `docker compose stop` stops the containers only; to stop this project's native model server, run `kill "$(cat .local/ollama/server.pid)"` after verifying that PID still belongs to this Ollama process.
 
 The smoke test sends a clearly labeled weak-trend sample through the gateway and n8n, verifies deduplication and validation errors, and waits for a scheduled rejection. It requires Telegram disabled. Tests use the separate `zebra_tests` database and mocked AI; the main journal is preserved.
 
@@ -63,7 +63,7 @@ Example development tunnel if `cloudflared` is already installed:
 cloudflared tunnel --url http://localhost:8787
 ```
 
-This creates a public endpoint. Copy its HTTPS hostname into `.env` and update TradingView if the hostname changes. A public tunnel is **not** launched by the setup script.
+Or, with an ngrok account token configured, `ngrok http 8787`; the live address is shown at `http://127.0.0.1:4040`. Either creates a public endpoint whose hostname changes on every restart. Copy its HTTPS hostname into `.env` and update TradingView if the hostname changes. A public tunnel is **not** launched by the setup script.
 
 Pine emits on confirmed bar close when a setup first becomes valid. It uses EMA20/50/200, RSI14, MACD histogram, ADX through `ta.dmi`, ATR, and prior swing extremes. EMA/RSI/MACD/ADX/ATR gate the setup; swing levels are context only. Multi-timeframe confirmation, economic-calendar data, spread checks, and account risk checks are not implemented. The Pine source must be compiled in TradingView; no local Pine compiler is included.
 

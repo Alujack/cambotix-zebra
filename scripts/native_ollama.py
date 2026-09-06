@@ -53,7 +53,7 @@ def main():
     (LOCAL / 'server.pid').write_text(str(process.pid))
     for _ in range(30):
         if running():
-            print('Native Ollama started on localhost:11435; files and models stay in .local/ollama.')
+            print('Native Ollama started on localhost:11435; binaries, logs, and models stay in .local/ollama.')
             return
         if process.poll() is not None:
             raise SystemExit('Native Ollama failed; inspect .local/ollama/server.log.')

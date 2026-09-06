@@ -91,6 +91,7 @@ services:
     depends_on:
       n8n:
         condition: service_healthy
+        restart: true
 volumes:
   postgres_data:
   n8n_data:

@@ -98,7 +98,10 @@ server {
         limit_except POST { deny all; }
         limit_req zone=signals burst=10 nodelay;
         limit_req_status 429;
-        proxy_pass http://n8n:5678;
+        # Re-resolve n8n per request: a recreated container gets a new IP and a cached one returns 502.
+        resolver 127.0.0.11 valid=30s ipv6=off;
+        set $n8n_upstream http://n8n:5678;
+        proxy_pass $n8n_upstream;
         proxy_connect_timeout 1s;
         proxy_read_timeout 2500ms;
         proxy_set_header Host $host;
