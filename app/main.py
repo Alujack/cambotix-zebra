@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from pydantic import ValidationError
 
-from app.domain import Analysis, Signal, SYSTEM_PROMPT, freshness, notification_text, outcome, sessions, technical_rules
+from app.domain import Analysis, Signal, freshness, notification_text, outcome, session_exempt_symbols, sessions, system_prompt, technical_rules
 
 app = FastAPI(title='Cambotix Zebra — signal analyzer', docs_url=None, redoc_url=None)
 
@@ -78,9 +78,10 @@ def classify(signal: Signal) -> Analysis:
         response = client.post(os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434').rstrip('/') + '/api/chat', json={
             'model': os.getenv('OLLAMA_MODEL', 'qwen2.5:1.5b'), 'stream': False, 'format': schema,
             'options': {'temperature': 0, 'num_predict': 600, 'num_ctx': 4096},
-            'messages': [{'role': 'system', 'content': SYSTEM_PROMPT + '\nSchema: ' + json.dumps(schema)},
+            'messages': [{'role': 'system', 'content': system_prompt(signal) + '\nSchema: ' + json.dumps(schema)},
                          {'role': 'user', 'content': json.dumps({'candidate': signal.model_dump(),
-                                                                 'sessions': sessions(signal.bar_time)})}]
+                                                                 'sessions': sessions(signal.bar_time),
+                                                                 'trades_continuously': signal.symbol in session_exempt_symbols()})}]
         })
         response.raise_for_status()
         return Analysis.model_validate_json(response.json()['message']['content'])

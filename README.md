@@ -38,6 +38,7 @@ python3 scripts/history.py
 bash scripts/test.sh
 python3 scripts/smoke.py
 bash scripts/check-ai.sh
+python3 scripts/demo.py BTCUSD   # synthetic BUY+SELL through rules, AI and Telegram; IDs start with DEMO-SYNTHETIC
 docker compose logs --tail=100 analyzer n8n
 docker compose stop
 docker compose start
@@ -45,7 +46,7 @@ docker compose start
 
 On macOS, native Ollama is a separate background process; its log and PID are in `.local/ollama/server.log` and `.local/ollama/server.pid`. Ollama also creates its standard identity key under `~/.ollama`. It does not automatically start at login. Run `bash scripts/start.sh` after a reboot. `docker compose stop` stops the containers only; to stop this project's native model server, run `kill "$(cat .local/ollama/server.pid)"` after verifying that PID still belongs to this Ollama process.
 
-The smoke test sends a clearly labeled weak-trend sample through the gateway and n8n, verifies deduplication and validation errors, and waits for a scheduled rejection. It requires Telegram disabled. Tests use the separate `zebra_tests` database and mocked AI; the main journal is preserved.
+The smoke test sends a clearly labeled weak-trend sample through the gateway and n8n, verifies deduplication and validation errors, and waits for a scheduled rejection. It requires Telegram disabled. `scripts/demo.py` is the opposite: it sends one coherent synthetic BUY and one SELL setup that pass every rule so the local model decides, and it will message Telegram if enabled; event IDs begin with `DEMO-SYNTHETIC`. Tests use the separate `zebra_tests` database and mocked AI; the main journal is preserved.
 
 The stack uses named volumes. `docker compose down` preserves them. **`docker compose down -v` deletes the database, workflows, and Docker model weights.** Native macOS model files in `.local/ollama` are separate. Back up `.env` with the volumes: the encryption key is required to decrypt n8n credentials. Deleting volumes also requires removing `.local/workflows-installed` before the next start.
 
@@ -53,7 +54,7 @@ The stack uses named volumes. `docker compose down` preserves them. **`docker co
 
 1. Give `http://localhost:8787` a public HTTPS tunnel, using a stable hostname for ongoing use. Only the exact generated webhook path is proxied; other paths return 404. Do not tunnel the n8n editor or analyzer ports.
 2. Set `PUBLIC_WEBHOOK_URL=https://your-hostname/` in `.env`, then run `bash scripts/start.sh` to update local configuration. Your complete webhook URL is in `.local/webhook-url.txt`. The random path acts as a bearer secret: keep it private. The gateway rate-limits requests and caps the body at 16 KB. For an Internet deployment, add origin restrictions / source validation at your tunnel provider; path secrecy alone does not prove a request came from TradingView.
-3. In TradingView, open an **XAUUSD 15-minute** chart, paste `tradingview/gold_setups.pine` into Pine Editor, save it, and add it to the chart.
+3. In TradingView, open a **15-minute** chart of an accepted ticker (**XAUUSD** by default; see `SYMBOLS`), paste `tradingview/gold_setups.pine` into Pine Editor, save it, and add it to the chart. Set the script's "Allowed tickers" input to match `SYMBOLS`.
 4. Create an alert with condition **Cambotix Zebra → Any alert() function call**, then enter the generated HTTPS webhook URL. The script supplies JSON itself. Enable TradingView 2FA and use an account plan that supports webhook alerts.
 5. Recreate the TradingView alert whenever you change Pine inputs or script code. TradingView alerts use the saved script snapshot.
 
@@ -79,6 +80,8 @@ TELEGRAM_CHAT_ID=your_chat_id
 
 Then apply with `docker compose up -d analyzer`. Subsequent completed analyses will send messages to that chat. Old notifications marked `disabled` are not replayed. Bot tokens stay in the analyzer environment, never in Pine payloads or exported n8n workflows. Message formatting is plain text, so model text cannot inject Telegram HTML.
 
+Each message has a fixed structure: direction and result header, then **reference levels** (`BUY AT`/`SELL AT`, `STOP LOSS`, `TP1`-`TP4`), a `WHY (rules)` section with factual indicator readings, the `AI VIEW` block when the model ran, any `CHECKS FAILED` codes, and the manual-review footer. Levels are computed in Python from the payload, never by the model: the stop sits beyond the prior swing plus a 0.2 ATR buffer when that lies within 1 to 3 ATR of entry, otherwise at `STOP_ATR_MULTIPLE` x ATR, and targets are `TP_R_MULTIPLES` multiples of that distance. Levels appear only when every technical rule passed; an AI-rejected setup shows them marked *reference only*. They are arithmetic on indicator values, not advice, and no order is ever placed.
+
 Delivery is deliberately conservative: an ambiguous network result becomes `unknown` and is not automatically resent. `failed` and `unknown` entries are visible in the journal and need manual inspection. This avoids duplicate notifications after a timeout; it cannot promise exactly-once delivery to Telegram.
 
 ## Configuration and behavior
@@ -91,11 +94,15 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `MIN_ADX` | 20 | Minimum trend strength |
 | `MIN_ATR_PERCENT` / `MAX_ATR_PERCENT` | 0.02 / 0.5 | ATR divided by price, expressed as percent |
 | `FILTER_SESSIONS` | true | London 08–17 or New York 08–17, weekdays, local DST |
+| `SYMBOLS` | XAUUSD | Comma-separated tickers the analyzer accepts; others return 422 |
+| `SESSION_EXEMPT_SYMBOLS` | BTCUSD,BTCUSDT | Around-the-clock markets that skip the session filter |
+| `STOP_ATR_MULTIPLE` | 1.5 | Stop distance in ATR when no usable prior swing exists |
+| `TP_R_MULTIPLES` | 1,2,3,4 | Take-profit levels as multiples of the stop distance (R) |
 | `MAX_SIGNAL_AGE_SECONDS` | 300 | Maximum age from confirmed bar close |
 | `OLLAMA_MODEL` | qwen2.5:1.5b | Local model with schema-constrained JSON |
 | `AI_TIMEOUT_SECONDS` | 120 | Maximum wait per AI attempt |
 
-Use matching Pine indicator thresholds when adjusting rules. Only XAUUSD and 15m are accepted by this version. Incoming `bar_time` is the bar-close timestamp in **Unix seconds**, not milliseconds. Numeric fields must be finite JSON numbers. `macd_hist` means histogram, not the MACD line.
+Use matching Pine indicator thresholds when adjusting rules. Only the 15m timeframe is accepted. `SYMBOLS` lists accepted tickers; tickers in `SESSION_EXEMPT_SYMBOLS` skip the session filter on the server, and the Pine script skips it for any `crypto` symbol. Thresholds are shared across symbols, so review the ATR band before enabling a new market. Incoming `bar_time` is the bar-close timestamp in **Unix seconds**, not milliseconds. Numeric fields must be finite JSON numbers. `macd_hist` means histogram, not the MACD line.
 
 All rules and the AI gate must pass before a candidate is labeled `approved`. The AI must approve the existing direction, report a matching market regime and good/excellent quality, and meet the configured score threshold. `approved` means ready for **manual review**, never permission to place an order. No calibrated performance or profitability claim is made.
 
