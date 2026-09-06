@@ -1,13 +1,22 @@
 //@version=6
-indicator("Cambotix Zebra — 15m setup candidates", overlay=true)
+indicator("Cambotix Zebra — 15m setup candidates", overlay=true, max_lines_count=500, max_labels_count=500)
 
-minAdx = input.float(20, "Minimum ADX", minval=0, maxval=100)
-minAtrPercent = input.float(0.02, "Minimum ATR / price (%)", minval=0)
-maxAtrPercent = input.float(0.5, "Maximum ATR / price (%)", minval=0)
-swingBars = input.int(10, "Prior swing lookback", minval=2)
-sessionFilter = input.bool(true, "London / New York weekdays only (crypto exempt)")
-allowedTickers = input.string("XAUUSD,BTCUSD,BTCUSDT", "Allowed tickers (match analyzer SYMBOLS)")
+// ── Rules (keep in step with .env) ─────────────────────────────────────────────────────────────
+minAdx         = input.float(20, "Minimum ADX", minval=0, maxval=100, group="Rules (match .env)")
+minAtrPercent  = input.float(0.02, "Minimum ATR / price (%)", minval=0, group="Rules (match .env)")
+maxAtrPercent  = input.float(0.5, "Maximum ATR / price (%)", minval=0, group="Rules (match .env)")
+swingBars      = input.int(10, "Prior swing lookback", minval=2, group="Rules (match .env)")
+sessionFilter  = input.bool(true, "London / New York weekdays only (crypto exempt)", group="Rules (match .env)")
+allowedTickers = input.string("XAUUSD,BTCUSD,BTCUSDT", "Allowed tickers (match analyzer SYMBOLS)", group="Rules (match .env)")
+// ── Levels (same arithmetic as app/domain.py trade_plan) ───────────────────────────────────────
+stopAtrMultiple = input.float(1.5, "Stop: ATR multiple when no usable swing", minval=0.1, step=0.1, group="Levels (match .env)")
+tpMultiples     = input.string("1,2,3,4", "Take-profit R multiples", group="Levels (match .env)")
+// ── Display ────────────────────────────────────────────────────────────────────────────────────
+showLevels = input.bool(true, "Draw entry / stop / targets", group="Display")
+levelBars  = input.int(48, "Extend level lines (bars)", minval=1, maxval=500, group="Display")
+showTable  = input.bool(true, "Show rule table", group="Display")
 
+// ── Indicators ─────────────────────────────────────────────────────────────────────────────────
 ema20 = ta.ema(close, 20)
 ema50 = ta.ema(close, 50)
 ema200 = ta.ema(close, 200)
@@ -18,20 +27,75 @@ atr = ta.atr(14)
 atrPercent = atr / close * 100
 priorHigh = ta.highest(high[1], swingBars)
 priorLow = ta.lowest(low[1], swingBars)
+
+// ── Rule readings ──────────────────────────────────────────────────────────────────────────────
+isCrypto = syminfo.type == "crypto"
 inLondon = not na(time(timeframe.period, "0800-1700:23456", "Europe/London"))
 inNewYork = not na(time(timeframe.period, "0800-1700:23456", "America/New_York"))
-isCrypto = syminfo.type == "crypto"
 sessionOk = not sessionFilter or isCrypto or inLondon or inNewYork
 ready = not na(ema200) and not na(adx) and not na(atr) and not na(priorHigh) and not na(priorLow)
 tickerOk = str.contains("," + str.replace_all(allowedTickers, " ", "") + ",", "," + syminfo.ticker + ",")
 chartOk = tickerOk and timeframe.isminutes and timeframe.multiplier == 15
-common = ready and chartOk and sessionOk and adx >= minAdx and atrPercent >= minAtrPercent and atrPercent <= maxAtrPercent
-longSetup = common and ema20 > ema50 and close > ema200 and rsi >= 50 and rsi <= 70 and macdHist > 0
-shortSetup = common and ema20 < ema50 and close < ema200 and rsi >= 30 and rsi <= 50 and macdHist < 0
+trendBull = ema20 > ema50 and close > ema200
+trendBear = ema20 < ema50 and close < ema200
+rsiBuy = rsi >= 50 and rsi <= 70
+rsiSell = rsi >= 30 and rsi <= 50
+adxOk = adx >= minAdx
+atrOk = atrPercent >= minAtrPercent and atrPercent <= maxAtrPercent
+common = ready and chartOk and sessionOk and adxOk and atrOk
+longSetup = common and trendBull and rsiBuy and macdHist > 0
+shortSetup = common and trendBear and rsiSell and macdHist < 0
 // Emit only on the first confirmed bar of each qualifying setup, not every bar.
 buyCandidate = barstate.isconfirmed and longSetup and not longSetup[1]
 sellCandidate = barstate.isconfirmed and shortSetup and not shortSetup[1]
 
+// ── Level plan: stop beyond prior swing + 0.2 ATR when within 1-3 ATR, else ATR multiple ──────
+plan(bool isBuy, float entry, float atrValue, float swing) =>
+    float dist = stopAtrMultiple * atrValue
+    string basis = "no usable swing"
+    if not na(swing)
+        float cand = (isBuy ? entry - swing : swing - entry) + 0.2 * atrValue
+        if cand >= atrValue and cand <= 3 * atrValue
+            dist := cand
+            basis := isBuy ? "below swing low" : "above swing high"
+    [dist, basis]
+
+parseMultiples(string source) =>
+    array<float> out = array.new<float>()
+    array<string> parts = str.split(source, ",")
+    if parts.size() > 0
+        for i = 0 to parts.size() - 1
+            float m = str.tonumber(str.trim(parts.get(i)))
+            if not na(m) and m > 0
+                out.push(m)
+    out
+
+var array<float> tpM = parseMultiples(tpMultiples)
+
+drawPlan(bool isBuy) =>
+    float entry = close
+    [dist, basis] = plan(isBuy, entry, atr, isBuy ? priorLow : priorHigh)
+    int sign = isBuy ? 1 : -1
+    float stop = entry - sign * dist
+    int x2 = bar_index + levelBars
+    line.new(bar_index, entry, x2, entry, color=color.gray, width=2)
+    label.new(x2, entry, (isBuy ? "BUY AT " : "SELL AT ") + str.tostring(entry, format.mintick), style=label.style_label_left, color=color.gray, textcolor=color.white, size=size.small)
+    line.new(bar_index, stop, x2, stop, color=color.red, style=line.style_dashed)
+    label.new(x2, stop, "SL " + str.tostring(stop, format.mintick) + "  (" + str.tostring(dist / atr, "#.#") + " ATR, " + basis + ")", style=label.style_label_left, color=color.red, textcolor=color.white, size=size.small)
+    if tpM.size() > 0
+        for i = 0 to tpM.size() - 1
+            float m = tpM.get(i)
+            float tp = entry + sign * m * dist
+            line.new(bar_index, tp, x2, tp, color=color.green, style=line.style_dotted)
+            label.new(x2, tp, "TP" + str.tostring(i + 1) + " " + str.tostring(tp, format.mintick) + "  (+" + str.tostring(m, "#.##") + "R)", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+    label.new(bar_index, isBuy ? low : high, (isBuy ? "BUY" : "SELL") + " setup\nR = " + str.tostring(dist, format.mintick), style=isBuy ? label.style_label_up : label.style_label_down, color=isBuy ? color.lime : color.red, textcolor=color.black, size=size.small)
+
+if showLevels and buyCandidate
+    drawPlan(true)
+if showLevels and sellCandidate
+    drawPlan(false)
+
+// ── Alert payload (unchanged contract with the analyzer; do not add fields) ────────────────────
 number(float value) => str.tostring(value, "#.########")
 
 payload(string direction) =>
@@ -43,6 +107,30 @@ if buyCandidate
     alert(payload("BUY_SETUP"), alert.freq_once_per_bar_close)
 if sellCandidate
     alert(payload("SELL_SETUP"), alert.freq_once_per_bar_close)
+
+// ── Rule table: the WHY section, live ──────────────────────────────────────────────────────────
+var table panel = table.new(position.top_right, 3, 9, frame_color=color.gray, frame_width=1, border_color=color.gray, border_width=1)
+
+cell(int row, string name, string reading, string status, color tone) =>
+    table.cell(panel, 0, row, name, text_color=color.white, bgcolor=color.new(color.black, 15), text_size=size.small, text_halign=text.align_left)
+    table.cell(panel, 1, row, reading, text_color=color.white, bgcolor=color.new(color.black, 15), text_size=size.small, text_halign=text.align_left)
+    table.cell(panel, 2, row, status, text_color=color.white, bgcolor=tone, text_size=size.small)
+
+if showTable and barstate.islast
+    color okTone = color.new(color.green, 35)
+    color badTone = color.new(color.red, 35)
+    color waitTone = color.new(color.gray, 35)
+    table.cell(panel, 0, 0, "Cambotix Zebra", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small, text_halign=text.align_left)
+    table.cell(panel, 1, 0, "Reading", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small, text_halign=text.align_left)
+    table.cell(panel, 2, 0, "Status", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    cell(1, "Trend", "EMA20 " + (ema20 > ema50 ? ">" : "<") + " EMA50, price " + (close > ema200 ? "above" : "below") + " EMA200", trendBull ? "BUY" : trendBear ? "SELL" : "mixed", trendBull or trendBear ? okTone : badTone)
+    cell(2, "RSI 14", str.tostring(rsi, "#.#"), rsiBuy ? "BUY band 50-70" : rsiSell ? "SELL band 30-50" : "out of band", rsiBuy or rsiSell ? okTone : badTone)
+    cell(3, "MACD hist", str.tostring(macdHist, "#.##"), macdHist > 0 ? "bullish" : macdHist < 0 ? "bearish" : "flat", macdHist != 0 ? okTone : waitTone)
+    cell(4, "ADX 14", str.tostring(adx, "#.#") + "  (min " + str.tostring(minAdx, "#.#") + ")", adxOk ? "trending" : "weak", adxOk ? okTone : badTone)
+    cell(5, "ATR %", str.tostring(atrPercent, "#.###") + "%  (" + str.tostring(minAtrPercent) + "-" + str.tostring(maxAtrPercent) + ")", atrOk ? "in band" : "out of band", atrOk ? okTone : badTone)
+    cell(6, "Session", isCrypto ? "24/7 market" : inLondon and inNewYork ? "London + New York" : inLondon ? "London" : inNewYork ? "New York" : "closed", sessionOk ? "open" : "filtered", sessionOk ? okTone : badTone)
+    cell(7, "Chart", syminfo.ticker + " " + timeframe.period, chartOk ? "accepted" : "not allowed", chartOk ? okTone : badTone)
+    cell(8, "Setup now", longSetup ? "all BUY conditions met" : shortSetup ? "all SELL conditions met" : "no valid setup", longSetup ? "BUY" : shortSetup ? "SELL" : "wait", longSetup or shortSetup ? okTone : waitTone)
 
 plot(ema20, "EMA 20", color=color.teal)
 plot(ema50, "EMA 50", color=color.orange)

@@ -1,0 +1,349 @@
+//@version=6
+indicator("Cambotix Zebra — SMC/ICT Analyst 15m", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=200)
+
+// ── Structure ──────────────────────────────────────────────────────────────────────────────────
+pivotLen        = input.int(3, "Swing pivot length (bars each side)", minval=1, group="Structure")
+dispAtr         = input.float(1.0, "Displacement candle body >= ATR x", minval=0.1, step=0.1, group="Structure")
+minFvgAtr       = input.float(0.1, "Minimum FVG size (ATR x)", minval=0, step=0.05, group="Structure")
+waitBars        = input.int(12, "Bars allowed between sweep and MSS", minval=1, group="Structure")
+rangeBars       = input.int(96, "Dealing-range lookback (bars)", minval=10, group="Structure")
+requireDiscount = input.bool(true, "Longs only in discount, shorts only in premium", group="Structure")
+// ── Bias ───────────────────────────────────────────────────────────────────────────────────────
+htfTf      = input.timeframe("60", "Higher timeframe for structure bias", group="Bias")
+requireHtf = input.bool(true, "Require HTF bias alignment", group="Bias")
+// ── Killzones (New York time; match analyzer KILLZONES) ────────────────────────────────────────
+useLondonKz   = input.bool(true, "London killzone 02:00-05:00", group="Killzones (New York time)")
+useNyAmKz     = input.bool(true, "New York AM killzone 08:30-11:00", group="Killzones (New York time)")
+useNyPmKz     = input.bool(false, "New York PM killzone 13:30-16:00", group="Killzones (New York time)")
+cryptoAllDays = input.bool(true, "Crypto: killzones apply on all 7 days", group="Killzones (New York time)")
+// ── Analyst engine: confluence weights, alert threshold, outcome memory ────────────────────────
+wHtf   = input.int(20, "Weight: HTF bias aligned", minval=0, group="Analyst engine")
+wSweep = input.int(20, "Weight: liquidity swept", minval=0, group="Analyst engine")
+wMss   = input.int(20, "Weight: structure shift with displacement", minval=0, group="Analyst engine")
+wFvg   = input.int(15, "Weight: fair value gap present", minval=0, group="Analyst engine")
+wZone  = input.int(10, "Weight: entry in discount / premium", minval=0, group="Analyst engine")
+wKz    = input.int(10, "Weight: killzone open", minval=0, group="Analyst engine")
+wOb    = input.int(5, "Weight: order block present", minval=0, group="Analyst engine")
+minScore  = input.int(70, "Minimum analyst score to alert", minval=0, maxval=100, group="Analyst engine")
+trackBars = input.int(48, "Outcome memory: bars allowed for the entry to fill", minval=4, group="Analyst engine")
+// ── Chart / display ────────────────────────────────────────────────────────────────────────────
+allowedTickers = input.string("XAUUSD,BTCUSD,BTCUSDT", "Allowed tickers (match analyzer SYMBOLS)", group="Chart")
+tpMultiples    = input.string("1,2,3,4", "Take-profit R multiples (match TP_R_MULTIPLES)", group="Chart")
+levelBars = input.int(48, "Extend level lines (bars)", minval=1, maxval=500, group="Display")
+showZones = input.bool(true, "Draw FVG / order block zones", group="Display")
+showTable = input.bool(true, "Show analyst table", group="Display")
+
+// ── Context ────────────────────────────────────────────────────────────────────────────────────
+atr = ta.atr(14)
+atrPercent = atr / close * 100
+isCrypto = syminfo.type == "crypto"
+tickerOk = str.contains("," + str.replace_all(allowedTickers, " ", "") + ",", "," + syminfo.ticker + ",")
+chartOk = tickerOk and timeframe.isminutes and timeframe.multiplier == 15
+days = isCrypto and cryptoAllDays ? "1234567" : "23456"
+inLondonKz = useLondonKz and not na(time(timeframe.period, "0200-0500:" + days, "America/New_York"))
+inNyAmKz = useNyAmKz and not na(time(timeframe.period, "0830-1100:" + days, "America/New_York"))
+inNyPmKz = useNyPmKz and not na(time(timeframe.period, "1330-1600:" + days, "America/New_York"))
+inKillzone = inLondonKz or inNyAmKz or inNyPmKz
+kzName = inLondonKz ? "London" : inNyAmKz ? "NY AM" : inNyPmKz ? "NY PM" : "none"
+
+// ── Swings and structure (LTF) ─────────────────────────────────────────────────────────────────
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+var float lastHigh = na
+var float lastLow = na
+var float prevHigh = na
+var float prevLow = na
+if not na(ph)
+    prevHigh := lastHigh
+    lastHigh := ph
+if not na(pl)
+    prevLow := lastLow
+    lastLow := pl
+var int ltfBias = 0
+if not na(lastHigh) and close > lastHigh
+    ltfBias := 1
+if not na(lastLow) and close < lastLow
+    ltfBias := -1
+
+// ── HTF structure bias: direction of the last break of a confirmed swing on the higher timeframe
+structureBias() =>
+    float hph = ta.pivothigh(high, pivotLen, pivotLen)
+    float hpl = ta.pivotlow(low, pivotLen, pivotLen)
+    var float sHigh = na
+    var float sLow = na
+    var int bias = 0
+    if not na(hph)
+        sHigh := hph
+    if not na(hpl)
+        sLow := hpl
+    if not na(sHigh) and close > sHigh
+        bias := 1
+    if not na(sLow) and close < sLow
+        bias := -1
+    bias
+
+htfBias = request.security(syminfo.tickerid, htfTf, structureBias(), lookahead=barmerge.lookahead_off)
+
+// ── Liquidity sweep state machines ────────────────────────────────────────────────────────────
+var int longState = 0
+var float longSweep = na
+var float longMss = na
+var int longSweepBar = na
+bullSweep = not na(lastLow) and not na(lastHigh) and low < lastLow and close > lastLow
+if longState == 1 and (bar_index - longSweepBar > waitBars or close < longSweep)
+    longState := 0
+if bullSweep
+    longState := 1
+    longSweep := low
+    longMss := lastHigh
+    longSweepBar := bar_index
+else if longState == 1 and low < longSweep
+    longSweep := low
+
+var int shortState = 0
+var float shortSweep = na
+var float shortMss = na
+var int shortSweepBar = na
+bearSweep = not na(lastHigh) and not na(lastLow) and high > lastHigh and close < lastHigh
+if shortState == 1 and (bar_index - shortSweepBar > waitBars or close > shortSweep)
+    shortState := 0
+if bearSweep
+    shortState := 1
+    shortSweep := high
+    shortMss := lastLow
+    shortSweepBar := bar_index
+else if shortState == 1 and high > shortSweep
+    shortSweep := high
+
+// ── Displacement (middle candle) and fair value gap confirmed on this bar ─────────────────────
+body1 = math.abs(close[1] - open[1])
+bullDisp = close[1] > open[1] and body1 >= dispAtr * atr
+bearDisp = close[1] < open[1] and body1 >= dispAtr * atr
+bullFvg = low > high[2] and low - high[2] >= minFvgAtr * atr
+bearFvg = high < low[2] and low[2] - high >= minFvgAtr * atr
+
+lastOpposing(bool bullish) =>
+    float top = na
+    float bottom = na
+    for i = 2 to 8
+        if bullish ? close[i] < open[i] : close[i] > open[i]
+            top := math.max(open[i], close[i])
+            bottom := math.min(open[i], close[i])
+            break
+    [top, bottom]
+
+// ── Dealing range and candidate entries ────────────────────────────────────────────────────────
+rangeHighExt = ta.highest(high, rangeBars)
+rangeLowExt = ta.lowest(low, rangeBars)
+ceL = (low + high[2]) / 2
+eqL = (rangeHighExt + longSweep) / 2
+mssBrokenL = longState == 1 and math.max(close, close[1]) > longMss
+stopL = longSweep - 0.1 * atr
+targetL = not na(prevHigh) and prevHigh > close ? prevHigh : rangeHighExt
+targetL := targetL > ceL ? targetL : ceL + 2 * (ceL - stopL)
+
+ceS = (high + low[2]) / 2
+eqS = (shortSweep + rangeLowExt) / 2
+mssBrokenS = shortState == 1 and math.min(close, close[1]) < shortMss
+stopS = shortSweep + 0.1 * atr
+targetS = not na(prevLow) and prevLow < close ? prevLow : rangeLowExt
+targetS := targetS < ceS ? targetS : ceS - 2 * (stopS - ceS)
+
+// ── Analyst engine 1/3: confluence score per direction, live on every bar ─────────────────────
+[obTopL, obBotL] = lastOpposing(true)
+[obTopS, obBotS] = lastOpposing(false)
+scoreTotal = wHtf + wSweep + wMss + wFvg + wZone + wKz + wOb
+
+scoreFor(bool isBuy) =>
+    bool armed = isBuy ? longState == 1 : shortState == 1
+    bool shifted = isBuy ? mssBrokenL and bullDisp : mssBrokenS and bearDisp
+    bool gap = isBuy ? bullFvg : bearFvg
+    bool zoneOk = armed and (isBuy ? ceL < eqL : ceS > eqS)
+    bool obOk = not na(isBuy ? obTopL : obTopS)
+    int points = 0
+    points += (isBuy ? htfBias == 1 : htfBias == -1) ? wHtf : 0
+    points += armed ? wSweep : 0
+    points += shifted ? wMss : 0
+    points += gap ? wFvg : 0
+    points += zoneOk ? wZone : 0
+    points += inKillzone ? wKz : 0
+    points += obOk ? wOb : 0
+    scoreTotal > 0 ? math.round(100.0 * points / scoreTotal) : 0
+
+scoreL = scoreFor(true)
+scoreS = scoreFor(false)
+grade(int score) => score >= 80 ? "A" : score >= 60 ? "B" : score >= 40 ? "C" : "D"
+
+// ── Analyst engine 2/3: plain-language read of what price is doing ─────────────────────────────
+narrative(bool isBuy) =>
+    bool armed = isBuy ? longState == 1 : shortState == 1
+    bool biasOk = isBuy ? htfBias == 1 : htfBias == -1
+    string read = biasOk ? "HTF " + (isBuy ? "bullish" : "bearish") + ". " : "HTF not aligned. "
+    if armed
+        read += (isBuy ? "Sell-side" : "Buy-side") + " liquidity taken at " + str.tostring(isBuy ? longSweep : shortSweep, format.mintick) + "; need a displacement close " + (isBuy ? "above " : "below ") + str.tostring(isBuy ? longMss : shortMss, format.mintick) + " that leaves an FVG."
+    else
+        read += "Waiting for a sweep of swing " + (isBuy ? "low " : "high ") + str.tostring(isBuy ? lastLow : lastHigh, format.mintick) + "."
+    read
+
+// ── Analyst engine 3/3: outcome memory of past signals (limit fill at FVG CE, then TP1 or stop) ─
+var array<float> mEntry = array.new<float>()
+var array<float> mStop = array.new<float>()
+var array<float> mTarget = array.new<float>()
+var array<int> mDir = array.new<int>()
+var array<int> mBar = array.new<int>()
+var array<bool> mFilled = array.new<bool>()
+var int wins = 0
+var int losses = 0
+var int unfilled = 0
+var float realizedR = 0.0
+
+forget(int i) =>
+    mEntry.remove(i)
+    mStop.remove(i)
+    mTarget.remove(i)
+    mDir.remove(i)
+    mBar.remove(i)
+    mFilled.remove(i)
+
+if barstate.isconfirmed and mEntry.size() > 0
+    for i = mEntry.size() - 1 to 0
+        float e = mEntry.get(i)
+        float s = mStop.get(i)
+        float t = mTarget.get(i)
+        int d = mDir.get(i)
+        bool filled = mFilled.get(i)
+        int age = bar_index - mBar.get(i)
+        bool done = false
+        if not filled
+            if (d == 1 ? low <= e : high >= e)
+                filled := true
+                mFilled.set(i, true)
+            else if age > trackBars
+                unfilled += 1
+                done := true
+        if filled and not done
+            bool hitStop = d == 1 ? low <= s : high >= s
+            bool hitTarget = d == 1 ? high >= t : low <= t
+            if hitStop
+                losses += 1
+                realizedR -= 1.0
+                done := true
+            else if hitTarget
+                wins += 1
+                realizedR += math.abs(t - e) / math.abs(e - s)
+                done := true
+            else if age > 4 * trackBars
+                unfilled += 1
+                done := true
+        if done
+            forget(i)
+
+samples = wins + losses
+hitRate = samples > 0 ? wins * 1.0 / samples : na
+historyText = samples > 0 ? "TP1 hit " + str.tostring(100 * hitRate, "#") + "% of " + str.tostring(samples) + ", avg " + (realizedR >= 0 ? "+" : "") + str.tostring(realizedR / samples, "#.##") + "R, " + str.tostring(unfilled) + " unfilled" : "no completed signals yet on this chart"
+
+remember(bool isBuy, float entry, float stop, float target) =>
+    mEntry.push(entry)
+    mStop.push(stop)
+    mTarget.push(target)
+    mDir.push(isBuy ? 1 : -1)
+    mBar.push(bar_index)
+    mFilled.push(false)
+
+// ── Triggers: every hard condition plus the analyst threshold ──────────────────────────────────
+longTrigger = barstate.isconfirmed and chartOk and inKillzone and mssBrokenL and bullDisp and bullFvg and (not requireHtf or htfBias == 1) and (not requireDiscount or ceL < eqL) and scoreL >= minScore
+shortTrigger = barstate.isconfirmed and chartOk and inKillzone and mssBrokenS and bearDisp and bearFvg and (not requireHtf or htfBias == -1) and (not requireDiscount or ceS > eqS) and scoreS >= minScore
+
+// ── Helpers ────────────────────────────────────────────────────────────────────────────────────
+parseMultiples(string source) =>
+    array<float> out = array.new<float>()
+    array<string> parts = str.split(source, ",")
+    if parts.size() > 0
+        for i = 0 to parts.size() - 1
+            float m = str.tonumber(str.trim(parts.get(i)))
+            if not na(m) and m > 0
+                out.push(m)
+    out
+
+var array<float> tpM = parseMultiples(tpMultiples)
+
+number(float value) => na(value) ? "null" : str.tostring(value, "#.########")
+
+payload(string direction, int score, float entry, float stop, float target, float sweep, float mss, float fvgBot, float fvgTop, float obTop, float obBot, float rHigh, float rLow) =>
+    stamp = str.tostring(int(time_close / 1000))
+    eventId = syminfo.ticker + "-15m-smc-" + stamp + "-" + direction
+    '{"event_id":"' + eventId + '","symbol":"' + syminfo.ticker + '","timeframe":"15m","bar_time":' + stamp + ',"signal":"' + direction + '","model":"smc","price":' + number(close) + ',"atr":' + number(atr) + ',"htf_bias":' + str.tostring(htfBias) + ',"sweep_level":' + number(sweep) + ',"mss_level":' + number(mss) + ',"fvg_top":' + number(fvgTop) + ',"fvg_bottom":' + number(fvgBot) + ',"ob_top":' + number(obTop) + ',"ob_bottom":' + number(obBot) + ',"range_high":' + number(rHigh) + ',"range_low":' + number(rLow) + ',"entry":' + number(entry) + ',"stop":' + number(stop) + ',"target_liquidity":' + number(target) + ',"killzone":"' + kzName + '","score":' + str.tostring(score) + ',"hit_rate":' + (samples > 0 ? str.tostring(hitRate, "#.###") : "null") + ',"samples":' + str.tostring(samples) + '}'
+
+drawSetup(bool isBuy, int score, float entry, float stop, float target, float fvgBot, float fvgTop, float obTop, float obBot, float sweep) =>
+    int x2 = bar_index + levelBars
+    if showZones
+        box.new(bar_index - 2, fvgTop, x2, fvgBot, border_color=color.new(color.green, 40), bgcolor=color.new(color.green, 85), text="FVG", text_color=color.white, text_size=size.tiny, text_halign=text.align_left)
+        if not na(obTop) and not na(obBot)
+            box.new(bar_index - 2, obTop, x2, obBot, border_color=color.new(color.blue, 40), bgcolor=color.new(color.blue, 85), text="OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_left)
+    line.new(bar_index, entry, x2, entry, color=color.gray, width=2)
+    label.new(x2, entry, (isBuy ? "BUY AT " : "SELL AT ") + str.tostring(entry, format.mintick) + "  (FVG CE)", style=label.style_label_left, color=color.gray, textcolor=color.white, size=size.small)
+    line.new(bar_index, stop, x2, stop, color=color.red, style=line.style_dashed)
+    label.new(x2, stop, "SL " + str.tostring(stop, format.mintick) + "  (beyond sweep " + str.tostring(sweep, format.mintick) + ")", style=label.style_label_left, color=color.red, textcolor=color.white, size=size.small)
+    float risk = math.abs(entry - stop)
+    float liqR = risk > 0 ? math.abs(target - entry) / risk : 0
+    line.new(bar_index, target, x2, target, color=color.green, style=line.style_dotted)
+    label.new(x2, target, "TP1 " + str.tostring(target, format.mintick) + "  (liquidity, +" + str.tostring(liqR, "#.#") + "R)", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+    int sign = isBuy ? 1 : -1
+    int n = 1
+    if tpM.size() > 0
+        for i = 0 to tpM.size() - 1
+            float m = tpM.get(i)
+            if m > liqR + 0.05
+                n += 1
+                float tp = entry + sign * m * risk
+                line.new(bar_index, tp, x2, tp, color=color.green, style=line.style_dotted)
+                label.new(x2, tp, "TP" + str.tostring(n) + " " + str.tostring(tp, format.mintick) + "  (+" + str.tostring(m, "#.##") + "R)", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
+    label.new(bar_index, isBuy ? low : high, (isBuy ? "BUY" : "SELL") + " SMC setup  " + str.tostring(score) + "/100 " + grade(score) + "\nsweep > MSS > FVG", style=isBuy ? label.style_label_up : label.style_label_down, color=isBuy ? color.lime : color.red, textcolor=color.black, size=size.small)
+
+// ── Fire once per sweep, on the confirmed bar that completes the model ────────────────────────
+if longTrigger
+    drawSetup(true, scoreL, ceL, stopL, targetL, high[2], low, obTopL, obBotL, longSweep)
+    alert(payload("BUY_SETUP", scoreL, ceL, stopL, targetL, longSweep, longMss, high[2], low, obTopL, obBotL, rangeHighExt, longSweep), alert.freq_once_per_bar_close)
+    remember(true, ceL, stopL, targetL)
+    longState := 0
+if shortTrigger
+    drawSetup(false, scoreS, ceS, stopS, targetS, high, low[2], obTopS, obBotS, shortSweep)
+    alert(payload("SELL_SETUP", scoreS, ceS, stopS, targetS, shortSweep, shortMss, high, low[2], obTopS, obBotS, shortSweep, rangeLowExt), alert.freq_once_per_bar_close)
+    remember(false, ceS, stopS, targetS)
+    shortState := 0
+
+// ── Analyst table ──────────────────────────────────────────────────────────────────────────────
+var table panel = table.new(position.top_right, 3, 12, frame_color=color.gray, frame_width=1, border_color=color.gray, border_width=1)
+
+cell(int row, string name, string reading, string status, color tone) =>
+    table.cell(panel, 0, row, name, text_color=color.white, bgcolor=color.new(color.black, 15), text_size=size.small, text_halign=text.align_left)
+    table.cell(panel, 1, row, reading, text_color=color.white, bgcolor=color.new(color.black, 15), text_size=size.small, text_halign=text.align_left)
+    table.cell(panel, 2, row, status, text_color=color.white, bgcolor=tone, text_size=size.small)
+
+toneFor(int score) => score >= 80 ? color.new(color.green, 35) : score >= 60 ? color.new(color.orange, 35) : color.new(color.gray, 35)
+
+if showTable and barstate.islast
+    color okTone = color.new(color.green, 35)
+    color badTone = color.new(color.red, 35)
+    color waitTone = color.new(color.gray, 35)
+    table.cell(panel, 0, 0, "Cambotix Zebra SMC/ICT Analyst", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small, text_halign=text.align_left)
+    table.cell(panel, 1, 0, "Reading", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small, text_halign=text.align_left)
+    table.cell(panel, 2, 0, "Status", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
+    cell(1, "HTF bias " + htfTf, htfBias == 1 ? "bullish structure" : htfBias == -1 ? "bearish structure" : "no break yet", htfBias == 1 ? "BUY only" : htfBias == -1 ? "SELL only" : "wait", htfBias != 0 ? okTone : waitTone)
+    cell(2, "LTF structure", ltfBias == 1 ? "last break up" : ltfBias == -1 ? "last break down" : "none", ltfBias == 1 ? "bullish" : ltfBias == -1 ? "bearish" : "wait", ltfBias != 0 ? okTone : waitTone)
+    cell(3, "Swings", "H " + str.tostring(lastHigh, format.mintick) + "  L " + str.tostring(lastLow, format.mintick), "liquidity", waitTone)
+    cell(4, "Long model", longState == 1 ? "swept " + str.tostring(longSweep, format.mintick) + ", need close > " + str.tostring(longMss, format.mintick) : "no sweep of a swing low", longState == 1 ? "waiting MSS" : "idle", longState == 1 ? okTone : waitTone)
+    cell(5, "Short model", shortState == 1 ? "swept " + str.tostring(shortSweep, format.mintick) + ", need close < " + str.tostring(shortMss, format.mintick) : "no sweep of a swing high", shortState == 1 ? "waiting MSS" : "idle", shortState == 1 ? okTone : waitTone)
+    cell(6, "Killzone", kzName, inKillzone ? "open" : "closed", inKillzone ? okTone : badTone)
+    cell(7, "Range " + str.tostring(rangeBars) + " bars", str.tostring(rangeLowExt, format.mintick) + " - " + str.tostring(rangeHighExt, format.mintick) + "  EQ " + str.tostring((rangeHighExt + rangeLowExt) / 2, format.mintick), close < (rangeHighExt + rangeLowExt) / 2 ? "discount" : "premium", waitTone)
+    cell(8, "Chart", syminfo.ticker + " " + timeframe.period + "  ATR " + str.tostring(atrPercent, "#.##") + "%", chartOk ? "accepted" : tickerOk ? "switch to 15m" : "ticker not allowed", chartOk ? okTone : badTone)
+    cell(9, "Analyst: long", narrative(true), str.tostring(scoreL) + "/100 " + grade(scoreL), toneFor(scoreL))
+    cell(10, "Analyst: short", narrative(false), str.tostring(scoreS) + "/100 " + grade(scoreS), toneFor(scoreS))
+    cell(11, "Memory", historyText, samples > 0 ? (hitRate >= 0.5 ? "edge" : "weak") : "learning", samples > 0 ? (hitRate >= 0.5 ? okTone : badTone) : waitTone)
+
+plot(lastHigh, "Last swing high", color=color.new(color.red, 40), style=plot.style_linebr)
+plot(lastLow, "Last swing low", color=color.new(color.green, 40), style=plot.style_linebr)
+plotshape(longTrigger, title="BUY SMC setup", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small)
+plotshape(shortTrigger, title="SELL SMC setup", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+bgcolor(inKillzone ? color.new(color.blue, 94) : na, title="Killzone")
+bgcolor(not chartOk ? color.new(color.red, 90) : na, title="Use an allowed ticker on 15m")

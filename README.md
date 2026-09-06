@@ -38,7 +38,8 @@ python3 scripts/history.py
 bash scripts/test.sh
 python3 scripts/smoke.py
 bash scripts/check-ai.sh
-python3 scripts/demo.py BTCUSD   # synthetic BUY+SELL through rules, AI and Telegram; IDs start with DEMO-SYNTHETIC
+python3 scripts/demo.py BTCUSD        # synthetic classic BUY+SELL through rules, AI and Telegram; IDs start with DEMO-SYNTHETIC
+python3 scripts/demo.py BTCUSD smc    # same for the SMC/ICT model
 docker compose logs --tail=100 analyzer n8n
 docker compose stop
 docker compose start
@@ -54,7 +55,7 @@ The stack uses named volumes. `docker compose down` preserves them. **`docker co
 
 1. Give `http://localhost:8787` a public HTTPS tunnel, using a stable hostname for ongoing use. Only the exact generated webhook path is proxied; other paths return 404. Do not tunnel the n8n editor or analyzer ports.
 2. Set `PUBLIC_WEBHOOK_URL=https://your-hostname/` in `.env`, then run `bash scripts/start.sh` to update local configuration. Your complete webhook URL is in `.local/webhook-url.txt`. The random path acts as a bearer secret: keep it private. The gateway rate-limits requests and caps the body at 16 KB. For an Internet deployment, add origin restrictions / source validation at your tunnel provider; path secrecy alone does not prove a request came from TradingView.
-3. In TradingView, open a **15-minute** chart of an accepted ticker (**XAUUSD** by default; see `SYMBOLS`), paste `tradingview/gold_setups.pine` into Pine Editor, save it, and add it to the chart. Set the script's "Allowed tickers" input to match `SYMBOLS`.
+3. In TradingView, open a **15-minute** chart of an accepted ticker (**XAUUSD** by default; see `SYMBOLS`), paste `tradingview/gold_setups.pine` into Pine Editor, save it, and add it to the chart. Set the script's "Allowed tickers" input to match `SYMBOLS`, and its Levels inputs to match `STOP_ATR_MULTIPLE` and `TP_R_MULTIPLES`.
 4. Create an alert with condition **Cambotix Zebra → Any alert() function call**, then enter the generated HTTPS webhook URL. The script supplies JSON itself. Enable TradingView 2FA and use an account plan that supports webhook alerts.
 5. Recreate the TradingView alert whenever you change Pine inputs or script code. TradingView alerts use the saved script snapshot.
 
@@ -66,7 +67,24 @@ cloudflared tunnel --url http://localhost:8787
 
 Or, with an ngrok account token configured, `ngrok http 8787`; the live address is shown at `http://127.0.0.1:4040`. Either creates a public endpoint whose hostname changes on every restart. Copy its HTTPS hostname into `.env` and update TradingView if the hostname changes. A public tunnel is **not** launched by the setup script.
 
-Pine emits on confirmed bar close when a setup first becomes valid. It uses EMA20/50/200, RSI14, MACD histogram, ADX through `ta.dmi`, ATR, and prior swing extremes. EMA/RSI/MACD/ADX/ATR gate the setup; swing levels are context only. Multi-timeframe confirmation, economic-calendar data, spread checks, and account risk checks are not implemented. The Pine source must be compiled in TradingView; no local Pine compiler is included.
+Pine emits on confirmed bar close when a setup first becomes valid. It uses EMA20/50/200, RSI14, MACD histogram, ADX through `ta.dmi`, ATR, and prior swing extremes. EMA/RSI/MACD/ADX/ATR gate the setup; swing levels are context only. On the chart the indicator also draws the same plan the Telegram message carries (`BUY AT`/`SELL AT`, `SL`, `TP1`-`TP4`, computed with the identical swing/ATR arithmetic) and a top-right rule table with live readings and pass/fail status per rule, so a chart and its message always agree. The alert JSON contains indicator values only; levels are recomputed by the analyzer. Multi-timeframe confirmation, economic-calendar data, spread checks, and account risk checks are not implemented. The Pine source must be compiled in TradingView; no local Pine compiler is included.
+
+## Strategy models
+
+Two detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
+
+**classic** (`tradingview/gold_setups.pine`): EMA20/50/200 alignment, RSI band, MACD histogram sign, ADX minimum, ATR band, and the London/New York session filter. Levels come from ATR and the prior swing.
+
+**smc** (`tradingview/smc_setups.pine`): ICT / Smart Money Concepts, detected mechanically on the 15m chart:
+
+1. **HTF bias**: direction of the last break of a confirmed swing on the higher timeframe (default 1H).
+2. **Liquidity sweep**: a candle trades through the last confirmed swing low (for longs) and closes back above it.
+3. **Market structure shift**: within `waitBars`, a displacement candle (body at least 1 ATR) closes through the nearest swing high.
+4. **Fair value gap**: the three-candle imbalance left by that displacement; the entry is its consequent encroachment (midpoint). The last opposing candle before the displacement is reported as the order block.
+5. **Premium/discount**: the entry must sit below the equilibrium of the dealing range (swept low to the `rangeBars` high) for longs, above it for shorts.
+6. **Killzone**: the setup bar must open inside an enabled ICT killzone, in New York time; crypto tickers use all seven days.
+
+The Pine script posts `entry`, `stop` (beyond the swept liquidity plus 0.1 ATR), `target_liquidity` (the next opposing swing or the range extreme), the FVG, order block, range, sweep and MSS levels, HTF bias and killzone. It also carries its **analyst engine** output: `score`, a 0-100 confluence score computed on every bar from weighted inputs (HTF bias, sweep, shift with displacement, FVG, discount/premium, killzone, order block; weights are inputs and a minimum score gates the alert), plus `hit_rate` and `samples`, the chart's own memory of past signals (limit fill at the FVG midpoint, then TP1 or stop). The table shows a live plain-language read per direction and that history. Pine cannot run a language model; the Ollama analysis stays server-side and returns through Telegram, using these fields as extra context. The analyzer re-validates every relation server-side (`entry_outside_fvg`, `stop_not_beyond_sweep`, `structure_not_shifted`, `entry_not_in_discount`/`entry_not_in_premium`, `risk_outside_atr_band` for 0.3-3 ATR, `target_too_close`, `htf_bias_mismatch`, `outside_killzone`) before the model sees it. Messages show TP1 at the liquidity target with its R multiple, then the configured R multiples beyond it. `python3 scripts/demo.py BTCUSD smc` sends a synthetic pair through the SMC path. Neither model has established performance; both remain manual-review tools.
 
 ## Telegram
 
@@ -98,6 +116,10 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `SESSION_EXEMPT_SYMBOLS` | BTCUSD,BTCUSDT | Around-the-clock markets that skip the session filter |
 | `STOP_ATR_MULTIPLE` | 1.5 | Stop distance in ATR when no usable prior swing exists |
 | `TP_R_MULTIPLES` | 1,2,3,4 | Take-profit levels as multiples of the stop distance (R) |
+| `KILLZONES` | London,NY AM | SMC model: ICT killzones (New York time) a setup must open inside |
+| `REQUIRE_HTF_BIAS` | true | SMC model: higher-timeframe structure must agree with the direction |
+| `REQUIRE_DISCOUNT` | true | SMC model: longs only below range equilibrium, shorts only above |
+| `MIN_RR` | 1.0 | SMC model: minimum reward to TP1 (liquidity) per unit of risk |
 | `MAX_SIGNAL_AGE_SECONDS` | 300 | Maximum age from confirmed bar close |
 | `OLLAMA_MODEL` | qwen2.5:1.5b | Local model with schema-constrained JSON |
 | `AI_TIMEOUT_SECONDS` | 120 | Maximum wait per AI attempt |
