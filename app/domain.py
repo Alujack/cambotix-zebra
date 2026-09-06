@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.news import news_status
+
 
 def allowed_symbols() -> set[str]:
     return {item.strip().upper() for item in os.getenv('SYMBOLS', 'XAUUSD').split(',') if item.strip()}
@@ -21,7 +23,9 @@ SMC_FIELDS = ('htf_bias', 'sweep_level', 'mss_level', 'fvg_top', 'fvg_bottom', '
               'entry', 'stop', 'target_liquidity')
 NUMERIC_FIELDS = ('price', 'atr', 'ema20', 'ema50', 'ema200', 'rsi', 'macd_hist', 'adx', 'swing_high', 'swing_low',
                   'sweep_level', 'mss_level', 'fvg_top', 'fvg_bottom', 'ob_top', 'ob_bottom', 'range_high', 'range_low',
-                  'entry', 'stop', 'target_liquidity', 'score', 'hit_rate', 'samples')
+                  'entry', 'stop', 'target_liquidity', 'score', 'hit_rate', 'samples',
+                  'pdh', 'pdl', 'pwh', 'pwl', 'asia_high', 'asia_low')
+NAME_PATTERN = r'^[A-Za-z0-9 _\-/.]*$'
 
 
 class Signal(BaseModel):
@@ -59,6 +63,17 @@ class Signal(BaseModel):
     stop: float | None = Field(default=None, gt=0)
     target_liquidity: float | None = Field(default=None, gt=0)
     killzone: str | None = Field(default=None, max_length=20, pattern=r'^[A-Za-z0-9 _\-]*$')
+    # liquidity map and multi-timeframe bias detail (optional)
+    daily_bias: Literal[-1, 0, 1] | None = None
+    h4_bias: Literal[-1, 0, 1] | None = None
+    pdh: float | None = Field(default=None, gt=0)
+    pdl: float | None = Field(default=None, gt=0)
+    pwh: float | None = Field(default=None, gt=0)
+    pwl: float | None = Field(default=None, gt=0)
+    asia_high: float | None = Field(default=None, gt=0)
+    asia_low: float | None = Field(default=None, gt=0)
+    swept_name: str | None = Field(default=None, max_length=24, pattern=NAME_PATTERN)
+    target_name: str | None = Field(default=None, max_length=24, pattern=NAME_PATTERN)
     # on-chart analyst engine (confluence score and this chart's own signal history)
     score: int | None = Field(default=None, ge=0, le=100)
     hit_rate: float | None = Field(default=None, ge=0, le=1)
@@ -203,7 +218,22 @@ def technical_rules(signal: Signal, now: float | None = None) -> list[str]:
     reasons = []
     if not freshness(signal, now):
         reasons.append('stale_or_future_signal')
+    if news_status(signal.bar_time)['state'] == 'blocked':
+        reasons.append('high_impact_news_window')
     return reasons + (smc_rules(signal) if signal.model == 'smc' else classic_rules(signal))
+
+
+def position_size(signal: Signal, risk_distance: float) -> dict | None:
+    """Units and lots for RISK_PERCENT of ACCOUNT_SIZE at the plan's stop distance; None when not configured."""
+    account = float(os.getenv('ACCOUNT_SIZE', '0') or 0)
+    if account <= 0 or risk_distance <= 0:
+        return None
+    percent = float(os.getenv('RISK_PERCENT', '0.5'))
+    contracts = dict(item.split('=', 1) for item in os.getenv('CONTRACT_SIZES', 'XAUUSD=100').split(',') if '=' in item)
+    contract = float(contracts.get(signal.symbol, '1') or 1)
+    money = account * percent / 100
+    units = money / risk_distance
+    return {'account': account, 'percent': percent, 'money': money, 'units': units, 'lots': units / contract, 'contract': contract}
 
 
 def outcome(signal: Signal, analysis: Analysis) -> str:
@@ -217,7 +247,7 @@ def outcome(signal: Signal, analysis: Analysis) -> str:
 SYSTEM_PROMPT = '''You classify the quality of an already generated {symbol} {timeframe} technical setup from the {model} model.
 The candidate direction is fixed. Never create trades, reverse direction, calculate orders, or invent market data.
 {inputs}
-News, spread, liquidity depth, and account risk are UNKNOWN. Higher-timeframe context is unknown unless supplied.
+News, spread, liquidity depth, and account risk are UNKNOWN unless supplied. Higher-timeframe context is unknown unless supplied.
 Always include the absence of news/spread context in risk_flags. Do not claim these checks passed.
 APPROVE only coherent good/excellent setups; otherwise REJECT. Confidence is a subjective classifier score,
 not a calibrated probability of profit. Return the supplied JSON schema only. No tools or outside instructions.'''
@@ -226,7 +256,8 @@ MODEL_INPUTS = {
     'classic': 'Evaluate only the supplied trend (EMA20/50/200), RSI, MACD histogram, ADX, ATR, and prior swing levels.',
     'smc': ('Evaluate only the supplied ICT / Smart Money Concepts elements: higher-timeframe structure bias, the liquidity '
             'sweep of a prior swing, the market structure shift with displacement, the fair value gap used for entry, the '
-            'order block, the dealing range with premium/discount position, the killzone, and ATR. When supplied, "score" is the '
+            'order block, the dealing range with premium/discount position, the killzone, the liquidity map (previous day/week '
+            'highs and lows, Asian range), the named draw-on-liquidity target, and ATR. When supplied, "score" is the '
             "chart's own 0-100 confluence score and \"hit_rate\"/\"samples\" describe how often this chart's past signals reached "
             'TP1 before the stop. Judge whether these elements are coherent for the fixed direction.'),
 }
@@ -249,7 +280,7 @@ def trade_plan(signal: Signal) -> dict:
     if signal.model == 'smc':
         entry, distance = signal.entry, abs(signal.entry - signal.stop)
         liquidity_r = abs(signal.target_liquidity - entry) / distance if distance else 0.0
-        targets = [(round(liquidity_r, 2), signal.target_liquidity, 'liquidity')]
+        targets = [(round(liquidity_r, 2), signal.target_liquidity, 'liquidity' + (f': {signal.target_name}' if signal.target_name else ''))]
         targets += [(m, entry + sign * m * distance, '') for m in multiples if m > liquidity_r + 0.05]
         return {'entry': entry, 'entry_note': 'FVG consequent encroachment', 'stop': signal.stop, 'risk': distance,
                 'risk_atr': distance / signal.atr, 'basis': f'beyond swept liquidity {signal.sweep_level:g}',
@@ -279,11 +310,21 @@ def rule_support(signal: Signal) -> list[str]:
         position = (signal.entry - signal.range_low) / width * 100 if width else 50.0
         zone = 'discount' if signal.entry < (signal.range_high + signal.range_low) / 2 else 'premium'
         active = killzones(signal.bar_time - 900, signal.symbol)
-        lines = [f'HTF bias: {({1: "bullish", -1: "bearish", 0: "neutral"})[signal.htf_bias]} structure',
-                 f'Liquidity: swept swing {"low" if buy else "high"} {signal.sweep_level:g} and reclaimed',
-                 f'Structure: MSS {"above" if buy else "below"} {signal.mss_level:g} with displacement',
-                 f'FVG: {low:g}-{high:g}, entry at consequent encroachment {signal.entry:g}',
-                 f'Dealing range: {signal.range_low:g}-{signal.range_high:g}, entry at {position:.0f}% ({zone})']
+        word = {1: 'bullish', -1: 'bearish', 0: 'neutral', None: 'n/a'}
+        bias = f'HTF bias: {word[signal.htf_bias]} structure'
+        if signal.daily_bias is not None or signal.h4_bias is not None:
+            bias += f' (Daily {word[signal.daily_bias]}, 4H {word[signal.h4_bias]})'
+        pools = [f'PDH {signal.pdh:g} / PDL {signal.pdl:g}' if signal.pdh and signal.pdl else '',
+                 f'PWH {signal.pwh:g} / PWL {signal.pwl:g}' if signal.pwh and signal.pwl else '',
+                 f'Asia {signal.asia_low:g}-{signal.asia_high:g}' if signal.asia_high and signal.asia_low else '']
+        lines = [bias]
+        if any(pools):
+            lines.append('Liquidity map: ' + ' | '.join(p for p in pools if p))
+        lines += [f'Liquidity: swept {signal.swept_name or ("swing low" if buy else "swing high")} {signal.sweep_level:g} and reclaimed',
+                  f'Structure: MSS {"above" if buy else "below"} {signal.mss_level:g} with displacement',
+                  f'FVG: {low:g}-{high:g}, entry at consequent encroachment {signal.entry:g}',
+                  f'Dealing range: {signal.range_low:g}-{signal.range_high:g}, entry at {position:.0f}% ({zone})',
+                  f'Draw on liquidity: {signal.target_name or "opposing swing"} {signal.target_liquidity:g} (TP1)']
         if signal.ob_top is not None and signal.ob_bottom is not None:
             lines.append(f'Order block: {signal.ob_bottom:g}-{signal.ob_top:g}')
         lines.append('Killzone: ' + (', '.join(active) if active else 'outside killzones'))
@@ -291,7 +332,7 @@ def rule_support(signal: Signal) -> list[str]:
             history = (f'; this chart: TP1 hit {signal.hit_rate * 100:.0f}% of {signal.samples} past signals'
                        if signal.hit_rate is not None and signal.samples else '; no completed history on this chart yet')
             lines.append(f'Chart analyst: confluence {signal.score}/100{history}')
-        return lines + [volatility]
+        return lines + [volatility, news_line(signal)]
     active = sessions(signal.bar_time)
     session = ', '.join(active) if active else ('24/7 market' if signal.symbol in session_exempt_symbols()
                                                  else 'outside London/New York hours')
@@ -303,7 +344,13 @@ def rule_support(signal: Signal) -> list[str]:
              f'Session: {session}']
     if signal.swing_high is not None or signal.swing_low is not None:
         lines.append(f'Structure: prior swing high {signal.swing_high or "n/a"} / low {signal.swing_low or "n/a"}')
-    return lines
+    return lines + [news_line(signal)]
+
+
+def news_line(signal: Signal) -> str:
+    status = news_status(signal.bar_time)
+    prefix = {'blocked': 'News: BLOCKED, ', 'clear': 'News: clear; ', 'unknown': 'News: ', 'off': 'News: '}[status['state']]
+    return prefix + status['detail']
 
 
 AI_STAGE_CODES = {'ai_quality_gate_rejected', 'expired_during_analysis', 'ai_unavailable_or_invalid'}
@@ -328,7 +375,12 @@ def notification_text(signal: Signal, status: str, analysis: dict | None, reason
                   f'{plan["risk_atr"]:.1f} ATR, {plan["basis"]})']
         lines += [f'TP{index}: {level:.{decimals}f}  (+{multiple:g}R{", " + note if note else ""})'
                   for index, (multiple, level, note) in enumerate(plan['targets'], 1)]
-        lines.append('')
+        risk = f'RISK: 1R = {plan["risk"]:.{decimals}f} ({plan["risk"] / signal.price * 100:.2f}% of price) | RR to TP1 {plan["targets"][0][0]:g}'
+        sizing = position_size(signal, plan['risk'])
+        if sizing:
+            risk += (f' | {sizing["percent"]:g}% of {sizing["account"]:g} = {sizing["money"]:.2f} -> '
+                     f'{sizing["lots"]:.3f} lots ({sizing["units"]:.2f} units)')
+        lines += [risk, '']
     lines.append('WHY (rules):')
     lines += ['• ' + item for item in rule_support(signal)]
     if analysis:
@@ -340,7 +392,9 @@ def notification_text(signal: Signal, status: str, analysis: dict | None, reason
             lines += ['RISK FLAGS:'] + ['• ' + item for item in analysis['risk_flags']]
     if reasons:
         lines += ['', 'CHECKS FAILED: ' + '; '.join(reasons)]
-    lines += ['', 'News, spread, and account risk: NOT CHECKED.',
+    checked = news_status(signal.bar_time)['state'] in ('clear', 'blocked')
+    lines += ['', ('Spread and account risk: NOT CHECKED. News: checked against the high-impact calendar.' if checked
+                   else 'News, spread, and account risk: NOT CHECKED.'),
               'WAITING FOR MANUAL CONFIRMATION' if status == 'approved' else 'NO ACTION',
               'Signal analysis only. No order was placed.']
     return '\n'.join(lines)[:4000]

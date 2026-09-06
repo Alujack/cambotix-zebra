@@ -22,7 +22,7 @@ if model not in ('classic', 'smc'):
 url = 'http://localhost:' + env['GATEWAY_PORT'] + '/webhook/' + env['WEBHOOK_PATH']
 # Coherent hypothetical values around a gold reference price, scaled to the symbol; rules pass so the AI decides.
 scale = {'XAUUSD': 3510.0, 'BTCUSD': 79800.0, 'BTCUSDT': 79800.0}.get(symbol, 100.0) / 3510.0
-unscaled = {'rsi', 'adx', 'htf_bias', 'killzone', 'score', 'hit_rate', 'samples'}
+unscaled = {'rsi', 'adx', 'htf_bias', 'killzone', 'score', 'hit_rate', 'samples', 'daily_bias', 'h4_bias', 'swept_name', 'target_name'}
 setups = {
     'classic': {
         'BUY_SETUP': {'price': 3512.4, 'ema20': 3508.9, 'ema50': 3503.2, 'ema200': 3481.7, 'rsi': 58.6, 'macd_hist': 1.8,
@@ -33,11 +33,15 @@ setups = {
         'BUY_SETUP': {'price': 3513.5, 'atr': 4.2, 'htf_bias': 1, 'sweep_level': 3496.0, 'mss_level': 3512.0,
                       'fvg_top': 3509.0, 'fvg_bottom': 3505.0, 'ob_top': 3506.0, 'ob_bottom': 3503.0,
                       'range_high': 3540.0, 'range_low': 3496.0, 'entry': 3507.0, 'stop': 3495.6,
-                      'target_liquidity': 3540.0, 'killzone': 'demo', 'score': 95, 'hit_rate': 0.58, 'samples': 24},
+                      'target_liquidity': 3540.0, 'killzone': 'demo', 'score': 95, 'hit_rate': 0.58, 'samples': 24,
+                      'daily_bias': 1, 'h4_bias': 1, 'pdh': 3540.0, 'pdl': 3496.0, 'pwh': 3580.0, 'pwl': 3450.0,
+                      'asia_high': 3520.0, 'asia_low': 3500.0, 'swept_name': 'PDL', 'target_name': 'PDH'},
         'SELL_SETUP': {'price': 3506.5, 'atr': 4.2, 'htf_bias': -1, 'sweep_level': 3524.0, 'mss_level': 3508.0,
                        'fvg_top': 3515.0, 'fvg_bottom': 3511.0, 'ob_top': 3517.0, 'ob_bottom': 3514.0,
                        'range_high': 3524.0, 'range_low': 3480.0, 'entry': 3513.0, 'stop': 3524.42,
-                       'target_liquidity': 3480.0, 'killzone': 'demo', 'score': 90, 'hit_rate': 0.5, 'samples': 12}},
+                       'target_liquidity': 3480.0, 'killzone': 'demo', 'score': 90, 'hit_rate': 0.5, 'samples': 12,
+                       'daily_bias': -1, 'h4_bias': -1, 'pdh': 3524.0, 'pdl': 3480.0, 'pwh': 3560.0, 'pwl': 3440.0,
+                       'asia_high': 3522.0, 'asia_low': 3505.0, 'swept_name': 'PDH', 'target_name': 'PDL'}},
 }[model]
 history = urllib.request.Request('http://localhost:' + env['ANALYZER_PORT'] + '/signals',
                                  headers={'X-Zebra-Token': env['ANALYZER_TOKEN']})

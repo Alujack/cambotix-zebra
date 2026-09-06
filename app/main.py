@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 from pydantic import ValidationError
 
 from app.domain import Analysis, Signal, freshness, notification_text, outcome, session_exempt_symbols, sessions, system_prompt, technical_rules
+from app.news import news_status
 
 app = FastAPI(title='Cambotix Zebra — signal analyzer', docs_url=None, redoc_url=None)
 
@@ -81,7 +82,8 @@ def classify(signal: Signal) -> Analysis:
             'messages': [{'role': 'system', 'content': system_prompt(signal) + '\nSchema: ' + json.dumps(schema)},
                          {'role': 'user', 'content': json.dumps({'candidate': signal.model_dump(),
                                                                  'sessions': sessions(signal.bar_time),
-                                                                 'trades_continuously': signal.symbol in session_exempt_symbols()})}]
+                                                                 'trades_continuously': signal.symbol in session_exempt_symbols(),
+                                                                 'news': news_status(signal.bar_time)})}]
         })
         response.raise_for_status()
         return Analysis.model_validate_json(response.json()['message']['content'])

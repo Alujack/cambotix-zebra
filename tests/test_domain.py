@@ -4,6 +4,13 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain import Analysis, Signal, freshness, killzones, notification_text, outcome, sessions, system_prompt, technical_rules, trade_plan
+from app import domain, news
+from app.news import news_status
+
+
+@pytest.fixture(autouse=True)
+def offline_news(monkeypatch):
+    monkeypatch.setenv('NEWS_FILTER', 'false')
 
 
 def candidate(**changes):
@@ -219,3 +226,62 @@ def test_smc_plan_and_message(monkeypatch):
     assert 'confluence 95/100; no completed history on this chart yet' in fresh
     with pytest.raises(ValidationError):
         smc(score=101)
+
+
+def test_news_window(monkeypatch):
+    monkeypatch.setenv('NEWS_FILTER', 'true')
+    monkeypatch.delenv('NEWS_WINDOW_BEFORE_MIN', raising=False)
+    monkeypatch.delenv('NEWS_WINDOW_AFTER_MIN', raising=False)
+    monkeypatch.delenv('NEWS_CURRENCIES', raising=False)
+    bar = 1788508800
+    def event(offset_min, impact='High', country='USD', title='CPI m/m'):
+        return {'time': bar + offset_min * 60, 'title': title, 'country': country, 'impact': impact}
+    assert news_status(bar, [event(20)])['state'] == 'blocked' and 'in 20 min' in news_status(bar, [event(20)])['detail']
+    assert news_status(bar, [event(-10)])['state'] == 'blocked'
+    assert news_status(bar, [event(45)])['state'] == 'clear' and 'CPI m/m in 0.8 h' in news_status(bar, [event(45)])['detail']
+    assert news_status(bar, [event(-20)])['state'] == 'clear'
+    assert news_status(bar, [event(5, impact='Medium')])['state'] == 'clear'
+    assert news_status(bar, [event(5, country='EUR')])['state'] == 'clear'
+    monkeypatch.setenv('NEWS_CURRENCIES', 'USD,EUR')
+    assert news_status(bar, [event(5, country='EUR')])['state'] == 'blocked'
+    monkeypatch.setattr(news, '_load', lambda: None)
+    assert news_status(bar)['state'] == 'unknown'
+    monkeypatch.setenv('NEWS_FILTER', 'false')
+    assert news_status(bar, [event(5)])['state'] == 'off'
+
+
+def test_news_blocks_both_models(monkeypatch):
+    monkeypatch.setenv('FILTER_SESSIONS', 'false')
+    monkeypatch.setattr(domain, 'news_status', lambda bar_time: {'state': 'blocked', 'detail': 'NFP (USD) in 12 min'})
+    assert 'high_impact_news_window' in technical_rules(candidate(), candidate().bar_time)
+    assert 'high_impact_news_window' in technical_rules(smc(), smc().bar_time)
+    message = notification_text(smc(), 'rejected', None, ['high_impact_news_window'])
+    assert 'News: BLOCKED, NFP (USD) in 12 min' in message and 'STOP LOSS' not in message
+    monkeypatch.setattr(domain, 'news_status', lambda bar_time: {'state': 'clear', 'detail': 'next high-impact USD: CPI m/m in 5.0 h'})
+    assert technical_rules(smc(), smc().bar_time) == []
+    approved = notification_text(smc(), 'approved', analysis().model_dump(), [])
+    assert 'News: clear; next high-impact USD: CPI m/m in 5.0 h' in approved
+    assert 'News: checked against the high-impact calendar.' in approved
+
+
+def test_position_size_and_risk_line(monkeypatch):
+    monkeypatch.setenv('ACCOUNT_SIZE', '10000')
+    monkeypatch.setenv('RISK_PERCENT', '0.5')
+    monkeypatch.setenv('CONTRACT_SIZES', 'XAUUSD=100')
+    message = notification_text(smc(), 'approved', analysis().model_dump(), [])
+    assert 'RISK: 1R = 11.40 (0.32% of price) | RR to TP1 2.89 | 0.5% of 10000 = 50.00 -> 0.044 lots (4.39 units)' in message
+    monkeypatch.setenv('ACCOUNT_SIZE', '0')
+    bare = notification_text(candidate(), 'approved', analysis().model_dump(), [])
+    assert 'RISK: 1R = 6.30 (0.18% of price) | RR to TP1 1' in bare and 'lots' not in bare
+
+
+def test_liquidity_map_and_named_target():
+    signal = smc(daily_bias=1, h4_bias=1, pdh=3540.0, pdl=3496.0, pwh=3580.0, pwl=3450.0, asia_high=3520.0,
+                 asia_low=3500.0, swept_name='PDL', target_name='PDH')
+    message = notification_text(signal, 'approved', analysis().model_dump(), [])
+    assert 'HTF bias: bullish structure (Daily bullish, 4H bullish)' in message
+    assert 'Liquidity map: PDH 3540 / PDL 3496 | PWH 3580 / PWL 3450 | Asia 3500-3520' in message
+    assert 'Liquidity: swept PDL 3496 and reclaimed' in message
+    assert 'Draw on liquidity: PDH 3540 (TP1)' in message and 'TP1: 3540.00  (+2.89R, liquidity: PDH)' in message
+    with pytest.raises(ValidationError):
+        smc(target_name='<script>')

@@ -15,6 +15,7 @@ def isolated_database(monkeypatch):
     assert os.getenv('DB_NAME') == 'zebra_tests', 'Integration tests require a separate zebra_tests database'
     monkeypatch.setenv('FILTER_SESSIONS', 'false')
     monkeypatch.setenv('TELEGRAM_ENABLED', 'false')
+    monkeypatch.setenv('NEWS_FILTER', 'false')
     with main.database() as conn:
         conn.execute('TRUNCATE notifications, signals')
     yield

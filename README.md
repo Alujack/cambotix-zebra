@@ -77,12 +77,15 @@ Two detection models share the same pipeline, journal, AI gate, and message form
 
 **smc** (`tradingview/smc_setups.pine`): ICT / Smart Money Concepts, detected mechanically on the 15m chart:
 
-1. **HTF bias**: direction of the last break of a confirmed swing on the higher timeframe (default 1H).
-2. **Liquidity sweep**: a candle trades through the last confirmed swing low (for longs) and closes back above it.
+1. **HTF bias, top-down**: structure on the Daily and the 4H (direction of the last break of a confirmed swing); by default both must agree, otherwise the indicator stands aside. The payload carries `htf_bias` plus `daily_bias` and `h4_bias`.
+2. **Liquidity map and sweep**: previous day high/low (`pdh`/`pdl`), previous week high/low (`pwh`/`pwl`), the completed Asian range (`asia_high`/`asia_low`, default 20:00-00:00 New York), equal highs/lows within a tolerance, and confirmed swings are plotted and watched. A sweep is a candle trading through one of these pools and closing back inside; the pool's name travels as `swept_name`.
 3. **Market structure shift**: within `waitBars`, a displacement candle (body at least 1 ATR) closes through the nearest swing high.
 4. **Fair value gap**: the three-candle imbalance left by that displacement; the entry is its consequent encroachment (midpoint). The last opposing candle before the displacement is reported as the order block.
 5. **Premium/discount**: the entry must sit below the equilibrium of the dealing range (swept low to the `rangeBars` high) for longs, above it for shorts.
-6. **Killzone**: the setup bar must open inside an enabled ICT killzone, in New York time; crypto tickers use all seven days.
+6. **Draw on liquidity**: TP1 is the nearest opposing pool (swing, PDH/PDL, PWH/PWL, Asian range, equal highs/lows, range extreme) that offers at least `minRr` reward per unit of risk; its name travels as `target_name`. The table shows the current draw for the active bias.
+7. **Time**: the setup bar must open inside an enabled ICT killzone in New York time (London open, New York open, optional London close and New York PM); crypto tickers use all seven days.
+8. **News**: the analyzer checks the free ForexFactory weekly calendar and rejects any setup (both models) inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked.
+9. **Risk**: every message states 1R, its percent of price, and the reward-to-risk to TP1. With `ACCOUNT_SIZE` set, it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. The indicator shows the same sizing on the signal label when its Account size input is set.
 
 The Pine script posts `entry`, `stop` (beyond the swept liquidity plus 0.1 ATR), `target_liquidity` (the next opposing swing or the range extreme), the FVG, order block, range, sweep and MSS levels, HTF bias and killzone. It also carries its **analyst engine** output: `score`, a 0-100 confluence score computed on every bar from weighted inputs (HTF bias, sweep, shift with displacement, FVG, discount/premium, killzone, order block; weights are inputs and a minimum score gates the alert), plus `hit_rate` and `samples`, the chart's own memory of past signals (limit fill at the FVG midpoint, then TP1 or stop). The table shows a live plain-language read per direction and that history. Pine cannot run a language model; the Ollama analysis stays server-side and returns through Telegram, using these fields as extra context. The analyzer re-validates every relation server-side (`entry_outside_fvg`, `stop_not_beyond_sweep`, `structure_not_shifted`, `entry_not_in_discount`/`entry_not_in_premium`, `risk_outside_atr_band` for 0.3-3 ATR, `target_too_close`, `htf_bias_mismatch`, `outside_killzone`) before the model sees it. Messages show TP1 at the liquidity target with its R multiple, then the configured R multiples beyond it. `python3 scripts/demo.py BTCUSD smc` sends a synthetic pair through the SMC path. Neither model has established performance; both remain manual-review tools.
 
@@ -120,6 +123,12 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `REQUIRE_HTF_BIAS` | true | SMC model: higher-timeframe structure must agree with the direction |
 | `REQUIRE_DISCOUNT` | true | SMC model: longs only below range equilibrium, shorts only above |
 | `MIN_RR` | 1.0 | SMC model: minimum reward to TP1 (liquidity) per unit of risk |
+| `NEWS_FILTER` | true | Reject setups near high-impact calendar events (both models) |
+| `NEWS_WINDOW_BEFORE_MIN` / `NEWS_WINDOW_AFTER_MIN` | 30 / 15 | Blocked minutes around an event |
+| `NEWS_CURRENCIES` | USD | Currencies whose high-impact events count |
+| `ACCOUNT_SIZE` | 0 | Account size for position sizing in messages; 0 hides it |
+| `RISK_PERCENT` | 0.5 | Risk per trade used for sizing |
+| `CONTRACT_SIZES` | XAUUSD=100 | Units per lot per symbol for the lots figure |
 | `MAX_SIGNAL_AGE_SECONDS` | 300 | Maximum age from confirmed bar close |
 | `OLLAMA_MODEL` | qwen2.5:1.5b | Local model with schema-constrained JSON |
 | `AI_TIMEOUT_SECONDS` | 120 | Maximum wait per AI attempt |
