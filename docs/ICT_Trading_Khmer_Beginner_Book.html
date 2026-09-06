@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>ICT_Trading_Khmer_Beginner_Book.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/*
+
+Arduino® Light Theme - Stefania Mellai <s.mellai@arduino.cc>
+
+*/
+
+.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 0.5em;
+  background: #FFFFFF;
+}
+
+.hljs,
+.hljs-subst {
+  color: #434f54;
+}
+
+.hljs-keyword,
+.hljs-attribute,
+.hljs-selector-tag,
+.hljs-doctag,
+.hljs-name {
+  color: #00979D;
+}
+
+.hljs-built_in,
+.hljs-literal,
+.hljs-bullet,
+.hljs-code,
+.hljs-addition {
+  color: #D35400;
+}
+
+.hljs-regexp,
+.hljs-symbol,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-link,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: #00979D;
+}
+
+.hljs-type,
+.hljs-string,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-quote,
+.hljs-template-tag,
+.hljs-deletion {
+  color: #005C5F;
+}
+
+.hljs-title,
+.hljs-section {
+  color: #880000;
+  font-weight: bold;
+}
+
+.hljs-comment {
+  color: rgba(149,165,166,.8);
+}
+
+.hljs-meta-keyword {
+  color: #728E00;
+}
+
+.hljs-meta {
+  color: #434f54;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}
+
+.hljs-function {
+  color: #728E00;
+}
+
+.hljs-number {
+  color: #8A7B52;  
+}
+
+</style>
+
+<style>
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family:   "HelveticaNeue-Light", sans-serif, "宋体","Segoe WPC", "Segoe UI", "SFUIText-Light","Droid Sans Fallback";
+	font-size: 18px;
+	padding: 0 12px;
+	line-height: 1.6;
+	word-wrap: break-word;
+	color: #333333;
+}
+
+.content-wrapper{
+	max-width: 860px;
+    margin: 0 auto;
+    padding: 0 30px;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	color: #4080D0;
+	text-decoration: none;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom: 1px solid #eee;
+}
+
+
+h2{
+	padding-bottom: .3em;
+    font-size: 2em;
+    line-height: 1.225;
+    border-bottom: 1px solid #eee;
+}
+
+h3{
+	font-size: 1.75em;
+    line-height: 1.225;
+}
+
+h1, h2, h3 {
+	font-weight: bold;
+}
+
+h1 code,
+h2 code,
+h3 code,
+h4 code,
+h5 code,
+h6 code {
+	font-size: inherit;
+	line-height: auto;
+}
+
+a:hover {
+	color: #4080D0;
+	text-decoration: underline;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left: 5px solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 14px;
+	line-height: 19px;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+.mac code {
+	font-size: 12px;
+	line-height: 18px;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+/** Theming */
+
+.vscode-light,
+.vscode-light pre code {
+	color: rgb(30, 30, 30);
+}
+
+.vscode-dark,
+.vscode-dark pre code {
+	color: #DDD;
+}
+
+.vscode-high-contrast,
+.vscode-high-contrast pre code {
+	color: white;
+}
+
+.vscode-light code {
+	color: #A31515;
+}
+
+.vscode-dark code {
+	color: #D7BA7D;
+}
+
+.vscode-light pre:not(.hljs),
+.vscode-light code > div {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre:not(.hljs),
+.vscode-dark code > div {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre:not(.hljs),
+.vscode-high-contrast code > div {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+.vscode-light blockquote,
+.vscode-dark blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.vscode-high-contrast blockquote {
+	background: transparent;
+	border-color: #fff;
+}
+</style>
+
+<style>
+/* Obsidian syntax defaults for legacy export (PDF / HTML / DOCX) */
+
+.callout {
+	--callout-accent: #0969da;
+	margin: 12px 0;
+	border-radius: 6px;
+	border-left: 4px solid var(--callout-accent);
+	background: rgba(9, 105, 218, 0.08);
+	color: #333333;
+	overflow: hidden;
+}
+
+.callout[data-callout="note"],
+.callout[data-callout="abstract"],
+.callout[data-callout="info"],
+.callout[data-callout="todo"],
+.callout[data-subtype="note"],
+.callout[data-subtype="abstract"],
+.callout[data-subtype="info"],
+.callout[data-subtype="todo"],
+.callout[data-callout="note" i],
+.callout[data-callout="abstract" i],
+.callout[data-callout="info" i],
+.callout[data-callout="todo" i],
+.callout[data-subtype="note" i],
+.callout[data-subtype="abstract" i],
+.callout[data-subtype="info" i],
+.callout[data-subtype="todo" i] {
+	--callout-accent: #0969da;
+	border-left-color: #0969da;
+	background: rgba(9, 105, 218, 0.08);
+}
+
+.callout[data-callout="tip"],
+.callout[data-callout="hint"],
+.callout[data-subtype="tip"],
+.callout[data-subtype="hint"],
+.callout[data-callout="tip" i],
+.callout[data-callout="hint" i],
+.callout[data-subtype="tip" i],
+.callout[data-subtype="hint" i] {
+	--callout-accent: #116329;
+	border-left-color: #116329;
+	background: rgba(17, 99, 41, 0.08);
+}
+
+.callout[data-callout="important"],
+.callout[data-subtype="important"],
+.callout[data-callout="important" i],
+.callout[data-subtype="important" i] {
+	--callout-accent: #8250df;
+	border-left-color: #8250df;
+	background: rgba(130, 80, 223, 0.08);
+}
+
+.callout[data-callout="warning"],
+.callout[data-subtype="warning"],
+.callout[data-callout="warning" i],
+.callout[data-subtype="warning" i] {
+	--callout-accent: #bc4c00;
+	border-left-color: #bc4c00;
+	background: rgba(188, 76, 0, 0.08);
+}
+
+.callout[data-callout="caution"],
+.callout[data-callout="danger"],
+.callout[data-callout="error"],
+.callout[data-callout="bug"],
+.callout[data-callout="fail"],
+.callout[data-subtype="caution"],
+.callout[data-subtype="danger"],
+.callout[data-subtype="error"],
+.callout[data-subtype="bug"],
+.callout[data-subtype="fail"],
+.callout[data-callout="caution" i],
+.callout[data-callout="danger" i],
+.callout[data-callout="error" i],
+.callout[data-callout="bug" i],
+.callout[data-callout="fail" i],
+.callout[data-subtype="caution" i],
+.callout[data-subtype="danger" i],
+.callout[data-subtype="error" i],
+.callout[data-subtype="bug" i],
+.callout[data-subtype="fail" i] {
+	--callout-accent: #cf222e;
+	border-left-color: #cf222e;
+	background: rgba(207, 34, 46, 0.08);
+}
+
+.callout[data-callout="question"],
+.callout[data-callout="help"],
+.callout[data-callout="faq"],
+.callout[data-subtype="question"],
+.callout[data-subtype="help"],
+.callout[data-subtype="faq"],
+.callout[data-callout="question" i],
+.callout[data-callout="help" i],
+.callout[data-callout="faq" i],
+.callout[data-subtype="question" i],
+.callout[data-subtype="help" i],
+.callout[data-subtype="faq" i] {
+	--callout-accent: #9a6700;
+	border-left-color: #9a6700;
+	background: rgba(154, 103, 0, 0.08);
+}
+
+.callout .callout-title,
+.callout .callout-info {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 12px 14px 0;
+	margin-bottom: 10px;
+	color: var(--callout-accent);
+}
+
+.callout .callout-title-icon,
+.callout .callout-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
+	color: var(--callout-accent);
+}
+
+.callout .callout-title-icon svg {
+	width: 16px;
+	height: 16px;
+}
+
+.callout .callout-title-inner,
+.callout .callout-info > .callout-title {
+	font-weight: 700;
+	font-size: 0.95em;
+	line-height: 1.35;
+	color: var(--callout-accent);
+}
+
+.callout .callout-content {
+	padding: 6px 14px 12px;
+	color: #333333;
+}
+
+.callout .callout-content > :first-child {
+	margin-top: 0;
+}
+
+.callout .callout-content > :last-child {
+	margin-bottom: 0;
+}
+
+.obsidian-wikilink {
+	color: #7c3aed;
+	text-decoration: underline;
+}
+
+.obsidian-wikilink-embed {
+	display: inline-block;
+	padding: 2px 8px;
+	border: 1px dashed #d0d7de;
+	border-radius: 4px;
+	color: #7c3aed;
+}
+
+.obsidian-tag {
+	color: #7c3aed;
+	background: rgba(124, 58, 237, 0.12);
+	border-radius: 4px;
+	padding: 0 4px;
+}
+
+mark {
+	background: rgba(154, 103, 0, 0.35);
+	color: inherit;
+	padding: 0 2px;
+	border-radius: 2px;
+}
+
+[data-type="yaml-front-matter"] {
+	margin: 0 0 16px;
+}
+
+.vditor-properties {
+	border: 1px solid #d0d7de;
+	border-radius: 8px;
+	background: #f6f8fa;
+	overflow: hidden;
+}
+
+.vditor-properties__heading {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-bottom: 1px solid #d0d7de;
+	background: #f3f4f6;
+	font-size: 0.85rem;
+	font-weight: 600;
+	color: #6b7280;
+}
+
+.vditor-properties__heading-icon::before {
+	content: "☰";
+	opacity: 0.75;
+}
+
+.vditor-properties__table {
+	display: flex;
+	flex-direction: column;
+}
+
+.vditor-properties__row {
+	display: grid;
+	grid-template-columns: minmax(120px, 34%) 1fr;
+	gap: 8px 12px;
+	align-items: start;
+	padding: 8px 12px;
+	border-top: 1px solid rgba(208, 215, 222, 0.45);
+}
+
+.vditor-properties__row:first-child {
+	border-top: none;
+}
+
+.vditor-properties__key {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	color: #6b7280;
+	font-size: 0.85rem;
+}
+
+.vditor-properties__key-icon {
+	flex-shrink: 0;
+	width: 14px;
+	height: 14px;
+	opacity: 0.72;
+	text-align: center;
+}
+
+.vditor-properties__key-icon[data-icon="tag"]::before { content: "#"; }
+.vditor-properties__key-icon[data-icon="alias"]::before { content: "⛓"; }
+.vditor-properties__key-icon[data-icon="date"]::before { content: "📅"; }
+.vditor-properties__key-icon[data-icon="toggle"]::before { content: "◉"; }
+.vditor-properties__key-icon[data-icon="number"]::before { content: "#"; }
+.vditor-properties__key-icon[data-icon="list"]::before { content: "≡"; }
+.vditor-properties__key-icon[data-icon="text"]::before { content: "T"; }
+
+.vditor-properties__key-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.vditor-properties__value {
+	min-width: 0;
+	font-size: 0.92rem;
+	color: #333333;
+	word-break: break-word;
+}
+
+.vditor-properties__value--tags,
+.vditor-properties__value--aliases {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.vditor-properties__value--aliases {
+	gap: 6px;
+}
+
+.vditor-properties__list {
+	margin: 0;
+	padding-left: 1.1rem;
+}
+
+.vditor-properties__checkbox {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	margin-right: 6px;
+	border: 1px solid #d0d7de;
+	border-radius: 3px;
+	vertical-align: -2px;
+	background: #ffffff;
+}
+
+.vditor-properties__checkbox[is-checked="true"] {
+	background: #7c3aed;
+	border-color: #7c3aed;
+	box-shadow: inset 0 0 0 2px #ffffff;
+}
+
+.vditor-properties__empty {
+	opacity: 0.45;
+}
+
+</style>
+
+<style>
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+.table-of-contents li{
+	list-style-type: initial;
+}
+
+</style>
+
+<style>
+@font-face{font-display:block;font-family:KaTeX_AMS;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_AMS-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_AMS-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_AMS-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Caligraphic;font-style:normal;font-weight:700;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Caligraphic-Bold.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Caligraphic-Bold.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Caligraphic-Bold.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Caligraphic;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Caligraphic-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Caligraphic-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Caligraphic-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Fraktur;font-style:normal;font-weight:700;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Fraktur-Bold.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Fraktur-Bold.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Fraktur-Bold.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Fraktur;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Fraktur-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Fraktur-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Fraktur-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Main;font-style:normal;font-weight:700;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Bold.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Bold.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Bold.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Main;font-style:italic;font-weight:700;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-BoldItalic.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-BoldItalic.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-BoldItalic.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Main;font-style:italic;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Italic.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Italic.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Italic.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Main;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Main-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Math;font-style:italic;font-weight:700;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Math-BoldItalic.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Math-BoldItalic.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Math-BoldItalic.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Math;font-style:italic;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Math-Italic.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Math-Italic.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Math-Italic.ttf") format("truetype")}@font-face{font-display:block;font-family:"KaTeX_SansSerif";font-style:normal;font-weight:700;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Bold.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Bold.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Bold.ttf") format("truetype")}@font-face{font-display:block;font-family:"KaTeX_SansSerif";font-style:italic;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Italic.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Italic.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Italic.ttf") format("truetype")}@font-face{font-display:block;font-family:"KaTeX_SansSerif";font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_SansSerif-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Script;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Script-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Script-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Script-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Size1;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size1-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size1-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size1-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Size2;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size2-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size2-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size2-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Size3;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size3-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size3-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size3-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Size4;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size4-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size4-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Size4-Regular.ttf") format("truetype")}@font-face{font-display:block;font-family:KaTeX_Typewriter;font-style:normal;font-weight:400;src:url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Typewriter-Regular.woff2") format("woff2"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Typewriter-Regular.woff") format("woff"),url("https://cdn.jsdelivr.net/npm/katex@0.16.2/dist/fonts/KaTeX_Typewriter-Regular.ttf") format("truetype")}.katex{font:normal 1.21em KaTeX_Main,Times New Roman,serif;line-height:1.2;position:relative;text-indent:0;text-rendering:auto}.katex *{-ms-high-contrast-adjust:none!important;border-color:currentColor}.katex .katex-version:after{content:"0.16.47"}.katex .katex-mathml{border:0;-webkit-clip-path:inset(50%);clip-path:inset(50%);height:1px;overflow:hidden;padding:0;position:absolute;width:1px}.katex .katex-html>.newline{display:block}.katex .base{position:relative;white-space:nowrap;width:-webkit-min-content;width:-moz-min-content;width:min-content}.katex .base,.katex .strut{display:inline-block}.katex .textbf{font-weight:700}.katex .textit{font-style:italic}.katex .textrm{font-family:KaTeX_Main}.katex .textsf{font-family:KaTeX_SansSerif}.katex .texttt{font-family:KaTeX_Typewriter}.katex .mathnormal{font-family:KaTeX_Math;font-style:italic}.katex .mathit{font-family:KaTeX_Main;font-style:italic}.katex .mathrm{font-style:normal}.katex .mathbf{font-family:KaTeX_Main;font-weight:700}.katex .boldsymbol{font-family:KaTeX_Math;font-style:italic;font-weight:700}.katex .amsrm,.katex .mathbb,.katex .textbb{font-family:KaTeX_AMS}.katex .mathcal{font-family:KaTeX_Caligraphic}.katex .mathfrak,.katex .textfrak{font-family:KaTeX_Fraktur}.katex .mathboldfrak,.katex .textboldfrak{font-family:KaTeX_Fraktur;font-weight:700}.katex .mathtt{font-family:KaTeX_Typewriter}.katex .mathscr,.katex .textscr{font-family:KaTeX_Script}.katex .mathsf,.katex .textsf{font-family:KaTeX_SansSerif}.katex .mathboldsf,.katex .textboldsf{font-family:KaTeX_SansSerif;font-weight:700}.katex .mathitsf,.katex .mathsfit,.katex .textitsf{font-family:KaTeX_SansSerif;font-style:italic}.katex .mainrm{font-family:KaTeX_Main;font-style:normal}.katex .vlist-t{border-collapse:collapse;display:inline-table;table-layout:fixed}.katex .vlist-r{display:table-row}.katex .vlist{display:table-cell;position:relative;vertical-align:bottom}.katex .vlist>span{display:block;height:0;position:relative}.katex .vlist>span>span{display:inline-block}.katex .vlist>span>.pstrut{overflow:hidden;width:0}.katex .vlist-t2{margin-right:-2px}.katex .vlist-s{display:table-cell;font-size:1px;min-width:2px;vertical-align:bottom;width:2px}.katex .vbox{align-items:baseline;display:inline-flex;flex-direction:column}.katex .hbox{width:100%}.katex .hbox,.katex .thinbox{display:inline-flex;flex-direction:row}.katex .thinbox{max-width:0;width:0}.katex .msupsub{text-align:left}.katex .mfrac>span>span{text-align:center}.katex .mfrac .frac-line{border-bottom-style:solid;display:inline-block;width:100%}.katex .hdashline,.katex .hline,.katex .mfrac .frac-line,.katex .overline .overline-line,.katex .rule,.katex .underline .underline-line{min-height:1px}.katex .mspace{display:inline-block}.katex .smash{display:inline;line-height:0}.katex .clap,.katex .llap,.katex .rlap{position:relative;width:0}.katex .clap>.inner,.katex .llap>.inner,.katex .rlap>.inner{position:absolute}.katex .clap>.fix,.katex .llap>.fix,.katex .rlap>.fix{display:inline-block}.katex .llap>.inner{right:0}.katex .clap>.inner,.katex .rlap>.inner{left:0}.katex .clap>.inner>span{margin-left:-50%;margin-right:50%}.katex .rule{border:0 solid;display:inline-block;position:relative}.katex .hline,.katex .overline .overline-line,.katex .underline .underline-line{border-bottom-style:solid;display:inline-block;width:100%}.katex .hdashline{border-bottom-style:dashed;display:inline-block;width:100%}.katex .sqrt>.root{margin-left:.2777777778em;margin-right:-.5555555556em}.katex .fontsize-ensurer.reset-size1.size1,.katex .sizing.reset-size1.size1{font-size:1em}.katex .fontsize-ensurer.reset-size1.size2,.katex .sizing.reset-size1.size2{font-size:1.2em}.katex .fontsize-ensurer.reset-size1.size3,.katex .sizing.reset-size1.size3{font-size:1.4em}.katex .fontsize-ensurer.reset-size1.size4,.katex .sizing.reset-size1.size4{font-size:1.6em}.katex .fontsize-ensurer.reset-size1.size5,.katex .sizing.reset-size1.size5{font-size:1.8em}.katex .fontsize-ensurer.reset-size1.size6,.katex .sizing.reset-size1.size6{font-size:2em}.katex .fontsize-ensurer.reset-size1.size7,.katex .sizing.reset-size1.size7{font-size:2.4em}.katex .fontsize-ensurer.reset-size1.size8,.katex .sizing.reset-size1.size8{font-size:2.88em}.katex .fontsize-ensurer.reset-size1.size9,.katex .sizing.reset-size1.size9{font-size:3.456em}.katex .fontsize-ensurer.reset-size1.size10,.katex .sizing.reset-size1.size10{font-size:4.148em}.katex .fontsize-ensurer.reset-size1.size11,.katex .sizing.reset-size1.size11{font-size:4.976em}.katex .fontsize-ensurer.reset-size2.size1,.katex .sizing.reset-size2.size1{font-size:.8333333333em}.katex .fontsize-ensurer.reset-size2.size2,.katex .sizing.reset-size2.size2{font-size:1em}.katex .fontsize-ensurer.reset-size2.size3,.katex .sizing.reset-size2.size3{font-size:1.1666666667em}.katex .fontsize-ensurer.reset-size2.size4,.katex .sizing.reset-size2.size4{font-size:1.3333333333em}.katex .fontsize-ensurer.reset-size2.size5,.katex .sizing.reset-size2.size5{font-size:1.5em}.katex .fontsize-ensurer.reset-size2.size6,.katex .sizing.reset-size2.size6{font-size:1.6666666667em}.katex .fontsize-ensurer.reset-size2.size7,.katex .sizing.reset-size2.size7{font-size:2em}.katex .fontsize-ensurer.reset-size2.size8,.katex .sizing.reset-size2.size8{font-size:2.4em}.katex .fontsize-ensurer.reset-size2.size9,.katex .sizing.reset-size2.size9{font-size:2.88em}.katex .fontsize-ensurer.reset-size2.size10,.katex .sizing.reset-size2.size10{font-size:3.4566666667em}.katex .fontsize-ensurer.reset-size2.size11,.katex .sizing.reset-size2.size11{font-size:4.1466666667em}.katex .fontsize-ensurer.reset-size3.size1,.katex .sizing.reset-size3.size1{font-size:.7142857143em}.katex .fontsize-ensurer.reset-size3.size2,.katex .sizing.reset-size3.size2{font-size:.8571428571em}.katex .fontsize-ensurer.reset-size3.size3,.katex .sizing.reset-size3.size3{font-size:1em}.katex .fontsize-ensurer.reset-size3.size4,.katex .sizing.reset-size3.size4{font-size:1.1428571429em}.katex .fontsize-ensurer.reset-size3.size5,.katex .sizing.reset-size3.size5{font-size:1.2857142857em}.katex .fontsize-ensurer.reset-size3.size6,.katex .sizing.reset-size3.size6{font-size:1.4285714286em}.katex .fontsize-ensurer.reset-size3.size7,.katex .sizing.reset-size3.size7{font-size:1.7142857143em}.katex .fontsize-ensurer.reset-size3.size8,.katex .sizing.reset-size3.size8{font-size:2.0571428571em}.katex .fontsize-ensurer.reset-size3.size9,.katex .sizing.reset-size3.size9{font-size:2.4685714286em}.katex .fontsize-ensurer.reset-size3.size10,.katex .sizing.reset-size3.size10{font-size:2.9628571429em}.katex .fontsize-ensurer.reset-size3.size11,.katex .sizing.reset-size3.size11{font-size:3.5542857143em}.katex .fontsize-ensurer.reset-size4.size1,.katex .sizing.reset-size4.size1{font-size:.625em}.katex .fontsize-ensurer.reset-size4.size2,.katex .sizing.reset-size4.size2{font-size:.75em}.katex .fontsize-ensurer.reset-size4.size3,.katex .sizing.reset-size4.size3{font-size:.875em}.katex .fontsize-ensurer.reset-size4.size4,.katex .sizing.reset-size4.size4{font-size:1em}.katex .fontsize-ensurer.reset-size4.size5,.katex .sizing.reset-size4.size5{font-size:1.125em}.katex .fontsize-ensurer.reset-size4.size6,.katex .sizing.reset-size4.size6{font-size:1.25em}.katex .fontsize-ensurer.reset-size4.size7,.katex .sizing.reset-size4.size7{font-size:1.5em}.katex .fontsize-ensurer.reset-size4.size8,.katex .sizing.reset-size4.size8{font-size:1.8em}.katex .fontsize-ensurer.reset-size4.size9,.katex .sizing.reset-size4.size9{font-size:2.16em}.katex .fontsize-ensurer.reset-size4.size10,.katex .sizing.reset-size4.size10{font-size:2.5925em}.katex .fontsize-ensurer.reset-size4.size11,.katex .sizing.reset-size4.size11{font-size:3.11em}.katex .fontsize-ensurer.reset-size5.size1,.katex .sizing.reset-size5.size1{font-size:.5555555556em}.katex .fontsize-ensurer.reset-size5.size2,.katex .sizing.reset-size5.size2{font-size:.6666666667em}.katex .fontsize-ensurer.reset-size5.size3,.katex .sizing.reset-size5.size3{font-size:.7777777778em}.katex .fontsize-ensurer.reset-size5.size4,.katex .sizing.reset-size5.size4{font-size:.8888888889em}.katex .fontsize-ensurer.reset-size5.size5,.katex .sizing.reset-size5.size5{font-size:1em}.katex .fontsize-ensurer.reset-size5.size6,.katex .sizing.reset-size5.size6{font-size:1.1111111111em}.katex .fontsize-ensurer.reset-size5.size7,.katex .sizing.reset-size5.size7{font-size:1.3333333333em}.katex .fontsize-ensurer.reset-size5.size8,.katex .sizing.reset-size5.size8{font-size:1.6em}.katex .fontsize-ensurer.reset-size5.size9,.katex .sizing.reset-size5.size9{font-size:1.92em}.katex .fontsize-ensurer.reset-size5.size10,.katex .sizing.reset-size5.size10{font-size:2.3044444444em}.katex .fontsize-ensurer.reset-size5.size11,.katex .sizing.reset-size5.size11{font-size:2.7644444444em}.katex .fontsize-ensurer.reset-size6.size1,.katex .sizing.reset-size6.size1{font-size:.5em}.katex .fontsize-ensurer.reset-size6.size2,.katex .sizing.reset-size6.size2{font-size:.6em}.katex .fontsize-ensurer.reset-size6.size3,.katex .sizing.reset-size6.size3{font-size:.7em}.katex .fontsize-ensurer.reset-size6.size4,.katex .sizing.reset-size6.size4{font-size:.8em}.katex .fontsize-ensurer.reset-size6.size5,.katex .sizing.reset-size6.size5{font-size:.9em}.katex .fontsize-ensurer.reset-size6.size6,.katex .sizing.reset-size6.size6{font-size:1em}.katex .fontsize-ensurer.reset-size6.size7,.katex .sizing.reset-size6.size7{font-size:1.2em}.katex .fontsize-ensurer.reset-size6.size8,.katex .sizing.reset-size6.size8{font-size:1.44em}.katex .fontsize-ensurer.reset-size6.size9,.katex .sizing.reset-size6.size9{font-size:1.728em}.katex .fontsize-ensurer.reset-size6.size10,.katex .sizing.reset-size6.size10{font-size:2.074em}.katex .fontsize-ensurer.reset-size6.size11,.katex .sizing.reset-size6.size11{font-size:2.488em}.katex .fontsize-ensurer.reset-size7.size1,.katex .sizing.reset-size7.size1{font-size:.4166666667em}.katex .fontsize-ensurer.reset-size7.size2,.katex .sizing.reset-size7.size2{font-size:.5em}.katex .fontsize-ensurer.reset-size7.size3,.katex .sizing.reset-size7.size3{font-size:.5833333333em}.katex .fontsize-ensurer.reset-size7.size4,.katex .sizing.reset-size7.size4{font-size:.6666666667em}.katex .fontsize-ensurer.reset-size7.size5,.katex .sizing.reset-size7.size5{font-size:.75em}.katex .fontsize-ensurer.reset-size7.size6,.katex .sizing.reset-size7.size6{font-size:.8333333333em}.katex .fontsize-ensurer.reset-size7.size7,.katex .sizing.reset-size7.size7{font-size:1em}.katex .fontsize-ensurer.reset-size7.size8,.katex .sizing.reset-size7.size8{font-size:1.2em}.katex .fontsize-ensurer.reset-size7.size9,.katex .sizing.reset-size7.size9{font-size:1.44em}.katex .fontsize-ensurer.reset-size7.size10,.katex .sizing.reset-size7.size10{font-size:1.7283333333em}.katex .fontsize-ensurer.reset-size7.size11,.katex .sizing.reset-size7.size11{font-size:2.0733333333em}.katex .fontsize-ensurer.reset-size8.size1,.katex .sizing.reset-size8.size1{font-size:.3472222222em}.katex .fontsize-ensurer.reset-size8.size2,.katex .sizing.reset-size8.size2{font-size:.4166666667em}.katex .fontsize-ensurer.reset-size8.size3,.katex .sizing.reset-size8.size3{font-size:.4861111111em}.katex .fontsize-ensurer.reset-size8.size4,.katex .sizing.reset-size8.size4{font-size:.5555555556em}.katex .fontsize-ensurer.reset-size8.size5,.katex .sizing.reset-size8.size5{font-size:.625em}.katex .fontsize-ensurer.reset-size8.size6,.katex .sizing.reset-size8.size6{font-size:.6944444444em}.katex .fontsize-ensurer.reset-size8.size7,.katex .sizing.reset-size8.size7{font-size:.8333333333em}.katex .fontsize-ensurer.reset-size8.size8,.katex .sizing.reset-size8.size8{font-size:1em}.katex .fontsize-ensurer.reset-size8.size9,.katex .sizing.reset-size8.size9{font-size:1.2em}.katex .fontsize-ensurer.reset-size8.size10,.katex .sizing.reset-size8.size10{font-size:1.4402777778em}.katex .fontsize-ensurer.reset-size8.size11,.katex .sizing.reset-size8.size11{font-size:1.7277777778em}.katex .fontsize-ensurer.reset-size9.size1,.katex .sizing.reset-size9.size1{font-size:.2893518519em}.katex .fontsize-ensurer.reset-size9.size2,.katex .sizing.reset-size9.size2{font-size:.3472222222em}.katex .fontsize-ensurer.reset-size9.size3,.katex .sizing.reset-size9.size3{font-size:.4050925926em}.katex .fontsize-ensurer.reset-size9.size4,.katex .sizing.reset-size9.size4{font-size:.462962963em}.katex .fontsize-ensurer.reset-size9.size5,.katex .sizing.reset-size9.size5{font-size:.5208333333em}.katex .fontsize-ensurer.reset-size9.size6,.katex .sizing.reset-size9.size6{font-size:.5787037037em}.katex .fontsize-ensurer.reset-size9.size7,.katex .sizing.reset-size9.size7{font-size:.6944444444em}.katex .fontsize-ensurer.reset-size9.size8,.katex .sizing.reset-size9.size8{font-size:.8333333333em}.katex .fontsize-ensurer.reset-size9.size9,.katex .sizing.reset-size9.size9{font-size:1em}.katex .fontsize-ensurer.reset-size9.size10,.katex .sizing.reset-size9.size10{font-size:1.2002314815em}.katex .fontsize-ensurer.reset-size9.size11,.katex .sizing.reset-size9.size11{font-size:1.4398148148em}.katex .fontsize-ensurer.reset-size10.size1,.katex .sizing.reset-size10.size1{font-size:.2410800386em}.katex .fontsize-ensurer.reset-size10.size2,.katex .sizing.reset-size10.size2{font-size:.2892960463em}.katex .fontsize-ensurer.reset-size10.size3,.katex .sizing.reset-size10.size3{font-size:.337512054em}.katex .fontsize-ensurer.reset-size10.size4,.katex .sizing.reset-size10.size4{font-size:.3857280617em}.katex .fontsize-ensurer.reset-size10.size5,.katex .sizing.reset-size10.size5{font-size:.4339440694em}.katex .fontsize-ensurer.reset-size10.size6,.katex .sizing.reset-size10.size6{font-size:.4821600771em}.katex .fontsize-ensurer.reset-size10.size7,.katex .sizing.reset-size10.size7{font-size:.5785920926em}.katex .fontsize-ensurer.reset-size10.size8,.katex .sizing.reset-size10.size8{font-size:.6943105111em}.katex .fontsize-ensurer.reset-size10.size9,.katex .sizing.reset-size10.size9{font-size:.8331726133em}.katex .fontsize-ensurer.reset-size10.size10,.katex .sizing.reset-size10.size10{font-size:1em}.katex .fontsize-ensurer.reset-size10.size11,.katex .sizing.reset-size10.size11{font-size:1.1996142719em}.katex .fontsize-ensurer.reset-size11.size1,.katex .sizing.reset-size11.size1{font-size:.2009646302em}.katex .fontsize-ensurer.reset-size11.size2,.katex .sizing.reset-size11.size2{font-size:.2411575563em}.katex .fontsize-ensurer.reset-size11.size3,.katex .sizing.reset-size11.size3{font-size:.2813504823em}.katex .fontsize-ensurer.reset-size11.size4,.katex .sizing.reset-size11.size4{font-size:.3215434084em}.katex .fontsize-ensurer.reset-size11.size5,.katex .sizing.reset-size11.size5{font-size:.3617363344em}.katex .fontsize-ensurer.reset-size11.size6,.katex .sizing.reset-size11.size6{font-size:.4019292605em}.katex .fontsize-ensurer.reset-size11.size7,.katex .sizing.reset-size11.size7{font-size:.4823151125em}.katex .fontsize-ensurer.reset-size11.size8,.katex .sizing.reset-size11.size8{font-size:.578778135em}.katex .fontsize-ensurer.reset-size11.size9,.katex .sizing.reset-size11.size9{font-size:.6945337621em}.katex .fontsize-ensurer.reset-size11.size10,.katex .sizing.reset-size11.size10{font-size:.8336012862em}.katex .fontsize-ensurer.reset-size11.size11,.katex .sizing.reset-size11.size11{font-size:1em}.katex .delimsizing.size1{font-family:KaTeX_Size1}.katex .delimsizing.size2{font-family:KaTeX_Size2}.katex .delimsizing.size3{font-family:KaTeX_Size3}.katex .delimsizing.size4{font-family:KaTeX_Size4}.katex .delimsizing.mult .delim-size1>span{font-family:KaTeX_Size1}.katex .delimsizing.mult .delim-size4>span{font-family:KaTeX_Size4}.katex .nulldelimiter{display:inline-block;width:.12em}.katex .delimcenter,.katex .op-symbol{position:relative}.katex .op-symbol.small-op{font-family:KaTeX_Size1}.katex .op-symbol.large-op{font-family:KaTeX_Size2}.katex .accent>.vlist-t,.katex .op-limits>.vlist-t{text-align:center}.katex .accent .accent-body{position:relative}.katex .accent .accent-body:not(.accent-full){width:0}.katex .overlay{display:block}.katex .mtable .vertical-separator{display:inline-block;min-width:1px}.katex .mtable .arraycolsep{display:inline-block}.katex .mtable .col-align-c>.vlist-t{text-align:center}.katex .mtable .col-align-l>.vlist-t{text-align:left}.katex .mtable .col-align-r>.vlist-t{text-align:right}.katex .svg-align{text-align:left}.katex svg{fill:currentColor;stroke:currentColor;display:block;height:inherit;position:absolute;width:100%}.katex svg path{stroke:none}.katex svg{fill-rule:nonzero;fill-opacity:1;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1}.katex img{border-style:none;max-height:none;max-width:none;min-height:0;min-width:0}.katex .stretchy{display:block;overflow:hidden;position:relative;width:100%}.katex .stretchy:after,.katex .stretchy:before{content:""}.katex .hide-tail{overflow:hidden;position:relative;width:100%}.katex .halfarrow-left{left:0;overflow:hidden;position:absolute;width:50.2%}.katex .halfarrow-right{overflow:hidden;position:absolute;right:0;width:50.2%}.katex .brace-left{left:0;overflow:hidden;position:absolute;width:25.1%}.katex .brace-center{left:25%;overflow:hidden;position:absolute;width:50%}.katex .brace-right{overflow:hidden;position:absolute;right:0;width:25.1%}.katex .x-arrow-pad{padding:0 .5em}.katex .cd-arrow-pad{padding:0 .55556em 0 .27778em}.katex .mover,.katex .munder,.katex .x-arrow{text-align:center}.katex .boxpad{padding:0 .3em}.katex .fbox,.katex .fcolorbox{border:.04em solid;box-sizing:border-box}.katex .cancel-pad{padding:0 .2em}.katex .cancel-lap{margin-left:-.2em;margin-right:-.2em}.katex .sout{border-bottom-style:solid;border-bottom-width:.08em}.katex .angl{border-right:.049em solid;border-top:.049em solid;box-sizing:border-box;margin-right:.03889em}.katex .anglpad{padding:0 .03889em}.katex .eqn-num:before{content:"(" counter(katexEqnNo) ")";counter-increment:katexEqnNo}.katex .mml-eqn-num:before{content:"(" counter(mmlEqnNo) ")";counter-increment:mmlEqnNo}.katex .mtr-glue{width:50%}.katex .cd-vert-arrow{display:inline-block;position:relative}.katex .cd-label-left{display:inline-block;position:absolute;right:calc(50% + .3em);text-align:left}.katex .cd-label-right{display:inline-block;left:calc(50% + .3em);position:absolute;text-align:right}.katex-display{display:block;margin:1em 0;text-align:center}.katex-display>.katex{display:block;text-align:center;white-space:nowrap}.katex-display>.katex>.katex-html{display:block;position:relative}.katex-display>.katex>.katex-html>.tag{position:absolute;right:0}.katex-display.leqno>.katex>.katex-html>.tag{left:0;right:auto}.katex-display.fleqn>.katex{padding-left:2em;text-align:left}body{counter-reset:katexEqnNo mmlEqnNo}
+
+</style>
+<style>
+body {
+    padding-top: 25px;
+}
+</style>
+</head>
+<body>
+    <div class="content-wrapper">
+        <h1 id="ict-trading-%E1%9E%9F%E1%9E%98%E1%9F%92%E1%9E%9A%E1%9E%B6%E1%9E%94%E1%9F%8B%E1%9E%A2%E1%9F%92%E1%9E%93%E1%9E%80%E1%9E%85%E1%9E%B6%E1%9E%94%E1%9F%8B%E1%9E%95%E1%9F%92%E1%9E%8F%E1%9E%BE%E1%9E%98%E1%9E%96%E1%9E%B8%E1%9E%9F%E1%9E%BC%E1%9E%93%E1%9F%92%E1%9E%99" tabindex="-1">ICT Trading សម្រាប់អ្នកចាប់ផ្តើមពីសូន្យ</h1>
+<h3 id="%E1%9E%9F%E1%9F%80%E1%9E%9C%E1%9E%97%E1%9F%85-ict-concept-%E1%9E%9F%E1%9E%98%E1%9F%92%E1%9E%9A%E1%9E%B6%E1%9E%94%E1%9F%8B%E1%9E%A2%E1%9F%92%E1%9E%93%E1%9E%80%E1%9E%98%E1%9E%B7%E1%9E%93%E1%9E%91%E1%9E%B6%E1%9E%93%E1%9F%8B%E1%9E%8A%E1%9E%B9%E1%9E%84-trading---%E1%9E%96%E1%9E%93%E1%9F%92%E1%9E%99%E1%9E%9B%E1%9F%8B%E1%9E%9F%E1%9E%B6%E1%9E%98%E1%9E%89%E1%9F%92%E1%9E%89%E1%9E%94%E1%9F%86%E1%9E%95%E1%9E%BB%E1%9E%8F" tabindex="-1">សៀវភៅ ICT Concept សម្រាប់អ្នកមិនទាន់ដឹង Trading - ពន្យល់សាមញ្ញបំផុត</h3>
+<p><strong>Educational use only - Trading can cause substantial financial loss.</strong></p>
+<h2 id="%E1%9E%98%E1%9E%B6%E1%9E%8F%E1%9E%B7%E1%9E%80%E1%9E%B6" tabindex="-1">មាតិកា</h2>
+<ol>
+<li>មុនចាប់ផ្តើម៖ សៀវភៅនេះប្រើយ៉ាងដូចម្តេច</li>
+<li>
+<ol>
+<li>ទីផ្សារ (Market) គឺអ្វី?</li>
+</ol>
+</li>
+<li>
+<ol start="2">
+<li>Candlestick៖ ប្រអប់តូចៗដែលប្រាប់រឿងតម្លៃ</li>
+</ol>
+</li>
+<li>
+<ol start="3">
+<li>Timeframe៖ មើលផែនទីធំ មុនមើលផ្លូវតូច</li>
+</ol>
+</li>
+<li>
+<ol start="4">
+<li>Swing High និង Swing Low៖ ភ្នំ និងជ្រលង</li>
+</ol>
+</li>
+<li>
+<ol start="5">
+<li>Liquidity៖ កន្លែងដែល order ច្រើនប្រមូលផ្តុំ</li>
+</ol>
+</li>
+<li>
+<ol start="6">
+<li>Liquidity Sweep / Raid៖ ចាក់លើ high ឬក្រោម low ហើយត្រឡប់</li>
+</ol>
+</li>
+<li>
+<ol start="7">
+<li>Dealing Range, Premium និង Discount</li>
+</ol>
+</li>
+<li>
+<ol start="8">
+<li>Displacement៖ ពេលតម្លៃរត់ខ្លាំងដូចកូនបាល់ត្រូវទាត់</li>
+</ol>
+</li>
+<li>
+<ol start="9">
+<li>Fair Value Gap (FVG)៖ ចន្លោះដែលតម្លៃរត់លឿនពេក</li>
+</ol>
+</li>
+<li>
+<ol start="10">
+<li>Order Block (OB)៖ candle មុន move ខ្លាំង</li>
+</ol>
+</li>
+<li>
+<ol start="11">
+<li>Breaker Block និង Mitigation Block - ដឹងឈ្មោះ មិនចាំបាច់ប្រញាប់ trade</li>
+</ol>
+</li>
+<li>
+<ol start="12">
+<li>BOS, CHoCH និង MSS៖ កុំឲ្យពាក្យធ្វើឲ្យច្រឡំ</li>
+</ol>
+</li>
+<li>
+<ol start="13">
+<li>PD Arrays៖ ប្រអប់ឧបករណ៍ មិនមែនប៊ូតុង Buy/Sell</li>
+</ol>
+</li>
+<li>
+<ol start="14">
+<li>Higher-Timeframe Bias / Narrative៖ តើរឿងធំកំពុងនិយាយអ្វី?</li>
+</ol>
+</li>
+<li>
+<ol start="15">
+<li>Draw on Liquidity៖ គោលដៅដែល price អាចទៅស្វែងរក</li>
+</ol>
+</li>
+<li>
+<ol start="16">
+<li>Time &amp; Sessions៖ setup ល្អត្រូវការពេលសមរម្យ</li>
+</ol>
+</li>
+<li>
+<ol start="17">
+<li>Power of 3 (AMD)៖ ប្រមូល - បោកទិស - រត់</li>
+</ol>
+</li>
+<li>
+<ol start="18">
+<li>Judas Swing៖ move ដំបូងដែលអាចបោកអ្នក</li>
+</ol>
+</li>
+<li>
+<ol start="19">
+<li>Beginner 2022-Style Setup៖ រឿងមួយពីដើមដល់ចប់</li>
+</ol>
+</li>
+<li>
+<ol start="20">
+<li>ឧទាហរណ៍ XAUUSD៖ មើល Gold ដោយមិនទាយ</li>
+</ol>
+</li>
+<li>
+<ol start="21">
+<li>Economic News៖ chart ស្អាតអាចខូចក្នុងប៉ុន្មានវិនាទី</li>
+</ol>
+</li>
+<li>
+<ol start="22">
+<li>Risk Management៖ រក្សាជីវិត account មុនរក profit</li>
+</ol>
+</li>
+<li>
+<ol start="23">
+<li>Stop Loss និង Invalidation៖ stop មិនមែនលេខចៃដន្យ</li>
+</ol>
+</li>
+<li>
+<ol start="24">
+<li>Take Profit៖ យក profit តាម liquidity មិនមែនតាមអារម្មណ៍</li>
+</ol>
+</li>
+<li>
+<ol start="25">
+<li>Daily Analysis Checklist៖ 10 នាទីមុនចាប់ផ្តើម</li>
+</ol>
+</li>
+<li>
+<ol start="26">
+<li>Trade Journal៖ កន្លែងដែល trader រីកចម្រើនពិត</li>
+</ol>
+</li>
+<li>
+<ol start="27">
+<li>Backtesting៖ សាកល្បង model មុនជឿវា</li>
+</ol>
+</li>
+<li>
+<ol start="28">
+<li>Mistakes 12 យ៉ាងដែល beginner ICT ធ្វើញឹកញាប់</li>
+</ol>
+</li>
+<li>
+<ol start="29">
+<li>30-Day Study Plan៖ រៀនតាមលំដាប់ មិនរត់លឿន</li>
+</ol>
+</li>
+<li>
+<ol start="30">
+<li>សំណួរសាកល្បងខ្លួនឯង</li>
+</ol>
+</li>
+<li>
+<ol start="31">
+<li>Glossary៖ ពាក្យដែលអ្នកត្រូវចេះ</li>
+</ol>
+</li>
+<li>
+<ol start="32">
+<li>ផែនការសាមញ្ញមួយដែលអ្នកអាចបោះពុម្ពទុកជិត Monitor</li>
+</ol>
+</li>
+<li>References &amp; Notes</li>
+</ol>
+<hr>
+<h1 id="%E1%9E%98%E1%9E%BB%E1%9E%93%E1%9E%85%E1%9E%B6%E1%9E%94%E1%9F%8B%E1%9E%95%E1%9F%92%E1%9E%8F%E1%9E%BE%E1%9E%98%E1%9F%96-%E1%9E%9F%E1%9F%80%E1%9E%9C%E1%9E%97%E1%9F%85%E1%9E%93%E1%9F%81%E1%9F%87%E1%9E%94%E1%9F%92%E1%9E%9A%E1%9E%BE%E1%9E%99%E1%9F%89%E1%9E%B6%E1%9E%84%E1%9E%8A%E1%9E%BC%E1%9E%85%E1%9E%98%E1%9F%92%E1%9E%8F%E1%9F%81%E1%9E%85" tabindex="-1">មុនចាប់ផ្តើម៖ សៀវភៅនេះប្រើយ៉ាងដូចម្តេច</h1>
+<p>សៀវភៅនេះសរសេរសម្រាប់មនុស្សដែលមិនទាន់ដឹងអ្វីអំពី Trading ទាល់តែសោះ។ អ្នកមិនចាំបាច់ដឹង RSI, MACD, Fibonacci ឬពាក្យពិបាកណាមួយជាមុនទេ។ យើងនឹងចាប់ផ្តើមពី “តម្លៃឡើងចុះមានន័យអ្វី?” ហើយបន្តទៅ ICT concepts ម្តងមួយៗ។</p>
+<p><strong>គោលដៅរបស់អ្នកមិនមែនរក trade ថ្ងៃនេះទេ។</strong> គោលដៅគឺអាន chart ឲ្យចេះ មើលឃើញ liquidity, structure, imbalance និងដឹងថាពេលណា “មិនគួរចូល”។ Beginner ដែលស្វែងរក entry មុនយល់ context ជាធម្មតានឹងបាត់បង់លុយលឿន។</p>
+<p><strong>ច្បាប់ 3 យ៉ាងសម្រាប់សិក្សា</strong></p>
+<ol>
+<li>អាន chapter មួយ ហើយបើក TradingView មើល chart ពិត។</li>
+<li>កុំប្រើលុយពិតរហូតដល់អ្នក backtest និង demo បានគ្រប់គ្រាន់។</li>
+<li>រាល់ពេលច្រឡំ សួរតែ 3 សំណួរ៖ តម្លៃនៅទីណា? Liquidity នៅទីណា? ខ្ញុំត្រូវរង់ចាំអ្វី?</li>
+</ol>
+<blockquote>
+<p><strong>ព្រមានសំខាន់</strong>៖ Trading មានហានិភ័យខ្ពស់។ ICT គឺជាវិធីអាន price action មួយ មិនមែនម៉ាស៊ីនបង្កើតប្រាក់ និងមិនធានាថា setup ណាមួយឈ្នះទេ។</p>
+</blockquote>
+<h1 id="1.-%E1%9E%91%E1%9E%B8%E1%9E%95%E1%9F%92%E1%9E%9F%E1%9E%B6%E1%9E%9A-(market)-%E1%9E%82%E1%9E%BA%E1%9E%A2%E1%9F%92%E1%9E%9C%E1%9E%B8%3F" tabindex="-1">1. ទីផ្សារ (Market) គឺអ្វី?</h1>
+<p>គិតថា Market ដូចជា <strong>ផ្សារមួយធំៗ</strong>។ មានមនុស្សចង់ទិញ និងមនុស្សចង់លក់។ បើអ្នកទិញច្រើនជាងលក់ តម្លៃអាចឡើង។ បើអ្នកលក់ច្រើនជាងទិញ តម្លៃអាចចុះ។ តម្លៃដែលអ្នកឃើញនៅលើ chart គឺលទ្ធផលនៃការទិញ និងលក់ដែលកំពុងប្រកួតគ្នា។</p>
+<p>នៅ Forex យើងជួញដូរ currency pair ដូចជា EURUSD។ នៅ Gold យើងឃើញ <strong>XAUUSD</strong> ដែលមានន័យសាមញ្ញថា “តម្លៃមាសវាស់ជាដុល្លារ”។</p>
+<p><strong>Buy</strong> មានន័យថាអ្នករំពឹងតម្លៃឡើង។ <strong>Sell</strong> មានន័យថាអ្នករំពឹងតម្លៃចុះ។ ប៉ុន្តែ professional trader មិន Buy ព្រោះ “មើលទៅឡើង” ហើយមិន Sell ព្រោះ “មើលទៅចុះ” ទេ។ គេត្រូវការផែនការ៖ direction, level, timing, confirmation និង risk។</p>
+<p><strong>គិតដូចក្មេង 5 ឆ្នាំ</strong>៖ អ្នកមិនរត់ចូលផ្លូវព្រោះឃើញឡានមួយទៅខាងស្តាំទេ។ អ្នកមើលភ្លើងសញ្ញា មើលឡានពីទិសទាំងពីរ ហើយចាំពេលសុវត្ថិភាព។ Trading ក៏ដូចគ្នា។</p>
+<h1 id="2.-candlestick%E1%9F%96-%E1%9E%94%E1%9F%92%E1%9E%9A%E1%9E%A2%E1%9E%94%E1%9F%8B%E1%9E%8F%E1%9E%BC%E1%9E%85%E1%9F%97%E1%9E%8A%E1%9F%82%E1%9E%9B%E1%9E%94%E1%9F%92%E1%9E%9A%E1%9E%B6%E1%9E%94%E1%9F%8B%E1%9E%9A%E1%9E%BF%E1%9E%84%E1%9E%8F%E1%9E%98%E1%9F%92%E1%9E%9B%E1%9F%83" tabindex="-1">2. Candlestick៖ ប្រអប់តូចៗដែលប្រាប់រឿងតម្លៃ</h1>
+<p>Candlestick គឺជាវិធីគូរតម្លៃក្នុងរយៈពេលមួយ។ Candle មួយមាន 4 ចំណុច៖ <strong>Open, High, Low, Close</strong>។</p>
+<ul>
+<li>Open = តម្លៃនៅពេល candle ចាប់ផ្តើម។</li>
+<li>High = តម្លៃខ្ពស់បំផុតក្នុង candle នោះ។</li>
+<li>Low = តម្លៃទាបបំផុត។</li>
+<li>Close = តម្លៃនៅពេល candle បិទ។</li>
+</ul>
+<p>បើ Close ខ្ពស់ជាង Open យើងហៅថា bullish candle។ បើ Close ទាបជាង Open វាជា bearish candle។ Wick វែងអាចបង្ហាញថាតម្លៃបានទៅសាកតំបន់មួយ ហើយត្រូវបានបញ្ចូនត្រឡប់វិញ។ តែ wick មួយតែមួយ <strong>មិនមែន signal</strong> ទេ។</p>
+<p><strong>កុំចាំឈ្មោះ pattern ច្រើនពេក</strong>។ សម្រាប់ ICT beginner អ្វីដែលសំខាន់ជាងគេគឺ៖ candle នេះកំពុងធ្វើអ្វីជាមួយ high/low មុន? វាបំបែក structure ទេ? វាបង្កើត displacement ឬ FVG ទេ?</p>
+<p><img src="ict_book_assets/01_candlestick.png" alt="Diagram"></p>
+<h1 id="3.-timeframe%E1%9F%96-%E1%9E%98%E1%9E%BE%E1%9E%9B%E1%9E%95%E1%9F%82%E1%9E%93%E1%9E%91%E1%9E%B8%E1%9E%92%E1%9F%86-%E1%9E%98%E1%9E%BB%E1%9E%93%E1%9E%98%E1%9E%BE%E1%9E%9B%E1%9E%95%E1%9F%92%E1%9E%9B%E1%9E%BC%E1%9E%9C%E1%9E%8F%E1%9E%BC%E1%9E%85" tabindex="-1">3. Timeframe៖ មើលផែនទីធំ មុនមើលផ្លូវតូច</h1>
+<p>Timeframe គឺរយៈពេលដែល candle មួយតំណាង។ 1M = 1 នាទី, 5M = 5 នាទី, 15M = 15 នាទី, 1H = 1 ម៉ោង, 4H = 4 ម៉ោង, D = 1 ថ្ងៃ, W = 1 សប្តាហ៍។</p>
+<p>Beginner ច្រើនបើក 1-minute chart ហើយច្រឡំ ព្រោះវាមាន noise ច្រើន។ វាដូចជាអ្នកឈរចំពោះមុខដើមឈើហើយព្យាយាមស្គាល់ព្រៃទាំងមូល។</p>
+<p><strong>Framework ងាយៗ</strong>៖</p>
+<ul>
+<li>Weekly/Daily៖ មើលរឿងធំ - range, major highs/lows, liquidity ធំៗ។</li>
+<li>4H/1H៖ មើល context និង level ដែលអាចមាន reaction។</li>
+<li>15M/5M៖ រង់ចាំ sweep, displacement, MSS និង entry model។</li>
+</ul>
+<p>មិនមាន timeframe “ល្អបំផុត” សម្រាប់គ្រប់គ្នាទេ។ ចំណុចសំខាន់គឺឲ្យ timeframe នីមួយៗមានការងាររបស់វា។</p>
+<h1 id="4.-swing-high-%E1%9E%93%E1%9E%B7%E1%9E%84-swing-low%E1%9F%96-%E1%9E%97%E1%9F%92%E1%9E%93%E1%9F%86-%E1%9E%93%E1%9E%B7%E1%9E%84%E1%9E%87%E1%9F%92%E1%9E%9A%E1%9E%9B%E1%9E%84" tabindex="-1">4. Swing High និង Swing Low៖ ភ្នំ និងជ្រលង</h1>
+<p>Swing High គឺកំពូលដែលតម្លៃឡើងទៅ ហើយបន្ទាប់មកចុះ។ Swing Low គឺបាតដែលតម្លៃចុះទៅ ហើយបន្ទាប់មកឡើង។</p>
+<p>គិត chart ដូចជាផ្លូវភ្នំ៖ មានកំពូល មានជ្រលង។ យើងប្រើកំពូល/ជ្រលងដើម្បីដឹងថា market structure កំពុងធ្វើអ្វី។</p>
+<ul>
+<li><strong>HH (Higher High)</strong> = កំពូលថ្មីខ្ពស់ជាងកំពូលមុន។</li>
+<li><strong>HL (Higher Low)</strong> = បាតថ្មីខ្ពស់ជាងបាតមុន។</li>
+<li><strong>LH (Lower High)</strong> = កំពូលថ្មីទាបជាងមុន។</li>
+<li><strong>LL (Lower Low)</strong> = បាតថ្មីទាបជាងមុន។</li>
+</ul>
+<p>HH + HL ជាបន្តបន្ទាប់ = structure ធម្មតាដែលមានទិសឡើង។ LH + LL = structure ធម្មតាដែលមានទិសចុះ។ ប៉ុន្តែ ICT មិនគ្រាន់តែសួរ “trend ឡើងឬចុះ?” ទេ។ គេសួរថា <strong>តម្លៃកំពុងរត់ទៅរក liquidity មួយណា?</strong></p>
+<p><img src="ict_book_assets/02_structure.png" alt="Diagram"></p>
+<h1 id="5.-liquidity%E1%9F%96-%E1%9E%80%E1%9E%93%E1%9F%92%E1%9E%9B%E1%9F%82%E1%9E%84%E1%9E%8A%E1%9F%82%E1%9E%9B-order-%E1%9E%85%E1%9F%92%E1%9E%9A%E1%9E%BE%E1%9E%93%E1%9E%94%E1%9F%92%E1%9E%9A%E1%9E%98%E1%9E%BC%E1%9E%9B%E1%9E%95%E1%9F%92%E1%9E%8F%E1%9E%BB%E1%9F%86" tabindex="-1">5. Liquidity៖ កន្លែងដែល order ច្រើនប្រមូលផ្តុំ</h1>
+<p>នេះជាគន្លឹះមួយក្នុង ICT។ នៅលើ chart មានតំបន់ដែល traders ច្រើនដាក់ stop ឬ pending order នៅជិតៗគ្នា។ ICT vocabulary ហៅតំបន់ទាំងនោះថា <strong>liquidity pools</strong>។</p>
+<p>កន្លែងដែលគេមើលញឹកញាប់៖</p>
+<ul>
+<li>Previous Day High (PDH) / Previous Day Low (PDL)</li>
+<li>Previous Week High (PWH) / Previous Week Low (PWL)</li>
+<li>Equal Highs (EQH) / Equal Lows (EQL)</li>
+<li>Swing High / Swing Low ច្បាស់ៗ</li>
+<li>Asian Session High / Low</li>
+</ul>
+<p><strong>Buy-side liquidity (BSL)</strong> ជាទូទៅស្ថិតនៅលើ highs។ <strong>Sell-side liquidity (SSL)</strong> ជាទូទៅស្ថិតនៅក្រោម lows។</p>
+<p>គិតដូចនេះ៖ មានក្មេងជាច្រើនទុកស្ករគ្រាប់នៅលើធ្នើមួយ។ ធ្នើនោះក្លាយជាកន្លែងដែលគេចាប់អារម្មណ៍។ នៅ chart, obvious highs/lows ក៏ជាកន្លែងដែល orders អាចកកកុញ។</p>
+<p>ចំណុចសំខាន់៖ កុំយល់ថា “market កំពុងតាម hunt stop របស់ខ្ញុំផ្ទាល់”។ យើងគ្រាន់តែសង្កេតថា stop/order clusters អាចមានជុំវិញតំបន់ obvious ហើយតម្លៃជាញឹកញាប់ទៅសាកតំបន់ទាំងនោះ។</p>
+<p><img src="ict_book_assets/03_liquidity.png" alt="Diagram"></p>
+<h1 id="6.-liquidity-sweep-%2F-raid%E1%9F%96-%E1%9E%85%E1%9E%B6%E1%9E%80%E1%9F%8B%E1%9E%9B%E1%9E%BE-high-%E1%9E%AC%E1%9E%80%E1%9F%92%E1%9E%9A%E1%9F%84%E1%9E%98-low-%E1%9E%A0%E1%9E%BE%E1%9E%99%E1%9E%8F%E1%9F%92%E1%9E%9A%E1%9E%A1%E1%9E%94%E1%9F%8B" tabindex="-1">6. Liquidity Sweep / Raid៖ ចាក់លើ high ឬក្រោម low ហើយត្រឡប់</h1>
+<p>Liquidity sweep គឺពេលតម្លៃឆ្លងកាត់ high/low ដែលមាន liquidity ហើយបន្ទាប់មកបង្ហាញ reaction។</p>
+<p>ឧទាហរណ៍ bearish idea៖</p>
+<ol>
+<li>មាន Equal Highs នៅខាងលើ។</li>
+<li>តម្លៃឡើងលើ Equal Highs បន្តិច។</li>
+<li>Stops ខាងលើអាចត្រូវ trigger។</li>
+<li>បន្ទាប់មកតម្លៃចុះខ្លាំង។</li>
+</ol>
+<p>Beginner mistake ធំបំផុត៖ ឃើញ sweep ហើយ Sell/Buy ភ្លាម។ <strong>Sweep មួយមិនគ្រប់គ្រាន់ទេ</strong>។ យើងចង់ឃើញ displacement និង structure shift ដើម្បីបញ្ជាក់ថា reaction មិនមែនជាសម្លេងរំខាន។</p>
+<p>សូមចងចាំប្រយោគនេះ៖ <strong>Liquidity ប្រាប់ខ្ញុំថា “ទីណា”; Displacement + MSS ប្រាប់ខ្ញុំថា “ឥឡូវនេះមានអ្វីផ្លាស់ប្តូរ”។</strong></p>
+<h1 id="7.-dealing-range%2C-premium-%E1%9E%93%E1%9E%B7%E1%9E%84-discount" tabindex="-1">7. Dealing Range, Premium និង Discount</h1>
+<p>យើងអាចយក Swing Low និង Swing High មួយគូដើម្បីបង្កើត <strong>dealing range</strong>។ ចែក range ជាពីរនៅ 50%៖</p>
+<ul>
+<li>ខាងលើ 50% = <strong>Premium</strong> - តម្លៃគេចាត់ថា “ថ្លៃ” បើប្រៀបធៀបក្នុង range នោះ។</li>
+<li>ខាងក្រោម 50% = <strong>Discount</strong> - តម្លៃគេចាត់ថា “ថោក” ក្នុង range នោះ។</li>
+<li>50% = Equilibrium។</li>
+</ul>
+<p>គំនិតសាមញ្ញ៖ បើ narrative របស់អ្នក bullish អ្នកមិនចង់ chase Buy នៅកំពូល range ទេ; អ្នកចង់ឲ្យតម្លៃមកតំបន់ discount/PD Array ហើយបង្ហាញ confirmation។ បើ narrative bearish អ្នកចូលចិត្តស្វែងរក Sell នៅ premium។</p>
+<p><strong>ប៉ុន្តែ Premium/Discount មិនមែន signal</strong>។ Price នៅ discount អាចបន្តចុះទៀត។ Context និង draw on liquidity ត្រូវមកជាមួយ។</p>
+<p><img src="ict_book_assets/04_premium_discount.png" alt="Diagram"></p>
+<h1 id="8.-displacement%E1%9F%96-%E1%9E%96%E1%9F%81%E1%9E%9B%E1%9E%8F%E1%9E%98%E1%9F%92%E1%9E%9B%E1%9F%83%E1%9E%9A%E1%9E%8F%E1%9F%8B%E1%9E%81%E1%9F%92%E1%9E%9B%E1%9E%B6%E1%9F%86%E1%9E%84%E1%9E%8A%E1%9E%BC%E1%9E%85%E1%9E%80%E1%9E%BC%E1%9E%93%E1%9E%94%E1%9E%B6%E1%9E%9B%E1%9F%8B%E1%9E%8F%E1%9F%92%E1%9E%9A%E1%9E%BC%E1%9E%9C%E1%9E%91%E1%9E%B6%E1%9E%8F%E1%9F%8B" tabindex="-1">8. Displacement៖ ពេលតម្លៃរត់ខ្លាំងដូចកូនបាល់ត្រូវទាត់</h1>
+<p>Displacement គឺ move ខ្លាំង មាន momentum ច្បាស់ ដែលជាទូទៅបំបែក structure ហើយអាចទុក imbalance/FVG។</p>
+<p>អ្វីដែលអ្នកអាចសង្កេត៖</p>
+<ul>
+<li>candle body ធំៗ</li>
+<li>overlap តិច</li>
+<li>move ឆាប់ និងមានទិសច្បាស់</li>
+<li>break swing/short-term structure</li>
+<li>អាចទុក FVG នៅពីក្រោយ</li>
+</ul>
+<p>គិតដូចកូនបាល់៖ បើអ្នកប៉ះបាល់ស្រាលៗ វារមៀលតិច។ បើអ្នកទាត់ខ្លាំង វាចេញពីកន្លែងចាស់យ៉ាងលឿន។ ICT trader ចង់ឃើញ “ការទាត់ខ្លាំង” បន្ទាប់ពី liquidity event មុនគិត entry។</p>
+<p><strong>No displacement = no conviction</strong> ជាគោលការណ៍សិក្សាល្អសម្រាប់ beginner។ មិនមែនច្បាប់ធម្មជាតិ 100% ទេ ប៉ុន្តែវាជួយអ្នកកាត់បន្ថយ entry ស្មានៗ។</p>
+<h1 id="9.-fair-value-gap-(fvg)%E1%9F%96-%E1%9E%85%E1%9E%93%E1%9F%92%E1%9E%9B%E1%9F%84%E1%9F%87%E1%9E%8A%E1%9F%82%E1%9E%9B%E1%9E%8F%E1%9E%98%E1%9F%92%E1%9E%9B%E1%9F%83%E1%9E%9A%E1%9E%8F%E1%9F%8B%E1%9E%9B%E1%9E%BF%E1%9E%93%E1%9E%96%E1%9F%81%E1%9E%80" tabindex="-1">9. Fair Value Gap (FVG)៖ ចន្លោះដែលតម្លៃរត់លឿនពេក</h1>
+<p>FVG គឺ 3-candle imbalance ដែលតម្លៃរត់លឿន ហើយមានផ្នែកមួយដែល candle ទី 1 និង candle ទី 3 មិន overlap គ្នា។</p>
+<p>ក្នុង bullish FVG៖ high របស់ candle ទី 1 និង low របស់ candle ទី 3 ទុកចន្លោះមួយ។ ក្នុង bearish FVG វាបញ្ច្រាស។</p>
+<p>ហេតុអ្វី ICT trader ចាប់អារម្មណ៍? ព្រោះតម្លៃ <strong>អាច</strong> ត្រឡប់ទៅ rebalance តំបន់ដែល delivery មិនស្មើនោះ។ ពាក្យ “អាច” សំខាន់ណាស់។ FVG មិនត្រូវ fill គ្រប់ពេល ហើយមិនមែន FVG គ្រប់មួយជាអ្វីដែលត្រូវ trade ទេ។</p>
+<p>FVG ដែលល្អសម្រាប់ beginner គួរតែមាន context៖</p>
+<ol>
+<li>HTF narrative មានទិស។</li>
+<li>Liquidity ត្រូវបាន sweep។</li>
+<li>មាន displacement បំបែក structure។</li>
+<li>FVG កើតក្នុង displacement នោះ។</li>
+<li>Price retrace មក FVG នៅពេលសមរម្យ។</li>
+</ol>
+<p>ឃើញ FVG មួយមិនមែនមានន័យ “Buy/Sell” ទេ។</p>
+<p><img src="ict_book_assets/05_fvg.png" alt="Diagram"></p>
+<h1 id="10.-order-block-(ob)%E1%9F%96-candle-%E1%9E%98%E1%9E%BB%E1%9E%93-move-%E1%9E%81%E1%9F%92%E1%9E%9B%E1%9E%B6%E1%9F%86%E1%9E%84" tabindex="-1">10. Order Block (OB)៖ candle មុន move ខ្លាំង</h1>
+<p>ការពន្យល់ beginner៖ Order Block ជាទូទៅគេកំណត់ជាកandle ផ្ទុយទិសចុងក្រោយមុន displacement ខ្លាំង។ ឧទាហរណ៍ bullish OB អាចជាប្រអប់ bearish candle ចុងក្រោយមុន price រត់ឡើងខ្លាំង។</p>
+<p>ហេតុអ្វីគេចាប់អារម្មណ៍? ព្រោះ price អាច retrace មក zone នោះ ហើយ react។ តែ <strong>កុំគូរ OB គ្រប់ candle</strong>។ បើគ្មាន displacement, liquidity/context និង structure change, “OB” នោះភាគច្រើនគ្រាន់តែជាប្រអប់ស្អាតលើ chart។</p>
+<p>Checklist មុនសម្គាល់ OB៖</p>
+<ul>
+<li>តើ move ចេញពី zone ខ្លាំងទេ?</li>
+<li>តើវាបំបែក structure ដែរឬទេ?</li>
+<li>តើមាន liquidity event មុន move ដែរឬទេ?</li>
+<li>តើ OB ស្របនឹង HTF narrative ដែរឬទេ?</li>
+</ul>
+<p>សម្រាប់ beginner ប្រើ FVG ជាមួយ OB ជា confluence មួយបាន ប៉ុន្តែកុំបន្ថែម zone ច្រើនរហូត chart មើលមិនឃើញ។</p>
+<p><img src="ict_book_assets/06_order_block.png" alt="Diagram"></p>
+<h1 id="11.-breaker-block-%E1%9E%93%E1%9E%B7%E1%9E%84-mitigation-block---%E1%9E%8A%E1%9E%B9%E1%9E%84%E1%9E%88%E1%9F%92%E1%9E%98%E1%9F%84%E1%9F%87-%E1%9E%98%E1%9E%B7%E1%9E%93%E1%9E%85%E1%9E%B6%E1%9F%86%E1%9E%94%E1%9E%B6%E1%9E%85%E1%9F%8B%E1%9E%94%E1%9F%92%E1%9E%9A%E1%9E%89%E1%9E%B6%E1%9E%94%E1%9F%8B-trade" tabindex="-1">11. Breaker Block និង Mitigation Block - ដឹងឈ្មោះ មិនចាំបាច់ប្រញាប់ trade</h1>
+<p>នេះជាគំនិតកម្រិតបន្ទាប់។ Beginner គួរយល់ត្រឹម logic ជាមុន។</p>
+<p><strong>Breaker Block</strong>៖ zone ដែលធ្លាប់រំពឹងថានឹង hold ប៉ុន្តែ fail ហើយបន្ទាប់ពី structure ផ្លាស់ប្តូរ វាអាចធ្វើតួនាទីថ្មី។ គិតដូចទ្វារដែលធ្លាប់បិទផ្លូវ ប៉ុន្តែពេលបាក់ វាអាចក្លាយជាច្រកឆ្លង។</p>
+<p><strong>Mitigation Block</strong>៖ តំបន់ដែល price ត្រឡប់មក “ដោះស្រាយ/mitigate” order exposure មុនបន្ត move។</p>
+<p>អ្វីសំខាន់៖ កុំរៀន 20 PD Arrays ក្នុងថ្ងៃតែមួយ។ សម្រាប់ខែដំបូង អ្នកត្រូវចេះ <strong>Liquidity + Structure + Displacement + FVG + basic OB</strong> មុនគេ។ បន្ទាប់មកទើបបន្ថែម Breaker/Mitigation។</p>
+<h1 id="12.-bos%2C-choch-%E1%9E%93%E1%9E%B7%E1%9E%84-mss%E1%9F%96-%E1%9E%80%E1%9E%BB%E1%9F%86%E1%9E%B2%E1%9F%92%E1%9E%99%E1%9E%96%E1%9E%B6%E1%9E%80%E1%9F%92%E1%9E%99%E1%9E%92%E1%9F%92%E1%9E%9C%E1%9E%BE%E1%9E%B2%E1%9F%92%E1%9E%99%E1%9E%85%E1%9F%92%E1%9E%9A%E1%9E%A1%E1%9F%86" tabindex="-1">12. BOS, CHoCH និង MSS៖ កុំឲ្យពាក្យធ្វើឲ្យច្រឡំ</h1>
+<p>អ្នកបង្រៀនផ្សេងៗប្រើ BOS/CHoCH/MSS ខុសគ្នាបន្តិច។ ដូច្នេះសៀវភៅនេះប្រើ version សាមញ្ញសម្រាប់សិក្សា៖</p>
+<ul>
+<li><strong>BOS (Break of Structure)</strong>៖ structure បន្តក្នុងទិសដដែល។ ឧ. bullish market បំបែក previous high។</li>
+<li><strong>CHoCH (Change of Character)</strong>៖ early warning ថាអាកប្បកិរិយា short-term អាចកំពុងផ្លាស់ប្តូរ។</li>
+<li><strong>MSS (Market Structure Shift)</strong>៖ សម្រាប់ book នេះ យើងចង់ឃើញ liquidity event + strong displacement បំបែក short-term structure ដើម្បីចាត់ថាជា confirmation ដែលមានទម្ងន់ជាង wick break ធម្មតា។</li>
+</ul>
+<p>កុំ trade ព្រោះ label។ Trade logic៖ <strong>អ្វីត្រូវបាន sweep? move បន្ទាប់ខ្លាំងប៉ុណ្ណា? structure មួយណាត្រូវបានបំបែក? FVG/PD Array មួយណាទុកពីក្រោយ?</strong></p>
+<p><img src="ict_book_assets/07_mss_flow.png" alt="Diagram"></p>
+<h1 id="13.-pd-arrays%E1%9F%96-%E1%9E%94%E1%9F%92%E1%9E%9A%E1%9E%A2%E1%9E%94%E1%9F%8B%E1%9E%A7%E1%9E%94%E1%9E%80%E1%9E%9A%E1%9E%8E%E1%9F%8D-%E1%9E%98%E1%9E%B7%E1%9E%93%E1%9E%98%E1%9F%82%E1%9E%93%E1%9E%94%E1%9F%8A%E1%9E%BC%E1%9E%8F%E1%9E%BB%E1%9E%84-buy%2Fsell" tabindex="-1">13. PD Arrays៖ ប្រអប់ឧបករណ៍ មិនមែនប៊ូតុង Buy/Sell</h1>
+<p>PD Array ជាពាក្យ ICT សម្រាប់ zones/tools ក្នុង price delivery ដូចជា FVG, Order Block, Breaker, Mitigation និង imbalance ប្រភេទផ្សេងៗ។</p>
+<p>គិតដូចប្រអប់ឧបករណ៍ជាងជួសជុល។ Hammer មិនមែនប្រើគ្រប់ការងារ។ Screwdriver ក៏មិនមែនប្រើគ្រប់ការងារ។ FVG/OB ក៏ដូចគ្នា - វាមានតម្លៃនៅពេល context ត្រូវ។</p>
+<p><strong>Hierarchy សម្រាប់ beginner</strong>៖</p>
+<ol>
+<li>Narrative / HTF context</li>
+<li>Liquidity / draw on liquidity</li>
+<li>Time/session</li>
+<li>Sweep + displacement + structure confirmation</li>
+<li>PD Array សម្រាប់ retracement/entry</li>
+<li>Invalidation + target + risk</li>
+</ol>
+<p>បើអ្នកចាប់ផ្តើមពីលេខ 5 មុនលេខ 1-4 អ្នកនឹងឃើញ “setup” នៅគ្រប់ទីកន្លែង។</p>
+<h1 id="14.-higher-timeframe-bias-%2F-narrative%E1%9F%96-%E1%9E%8F%E1%9E%BE%E1%9E%9A%E1%9E%BF%E1%9E%84%E1%9E%92%E1%9F%86%E1%9E%80%E1%9F%86%E1%9E%96%E1%9E%BB%E1%9E%84%E1%9E%93%E1%9E%B7%E1%9E%99%E1%9E%B6%E1%9E%99%E1%9E%A2%E1%9F%92%E1%9E%9C%E1%9E%B8%3F" tabindex="-1">14. Higher-Timeframe Bias / Narrative៖ តើរឿងធំកំពុងនិយាយអ្វី?</h1>
+<p>Bias មិនមែន “ខ្ញុំមានអារម្មណ៍ថាឡើង” ទេ។ វាជា hypothesis ដែលមានហេតុផល ហើយអាចខុសបាន។</p>
+<p>របៀបសាមញ្ញ៖</p>
+<ol>
+<li>មើល Weekly/Daily major swing high/low។</li>
+<li>Mark PDH/PDL, PWH/PWL និង obvious EQH/EQL។</li>
+<li>សួរថា liquidity មួយណាត្រូវបានយករួច? មួយណានៅសល់?</li>
+<li>មើល dealing range: price premium ឬ discount?</li>
+<li>មើល HTF FVG/OB/imbalance ដែលនៅជិត។</li>
+<li>បង្កើត scenario A និង scenario B - មិនមែន prediction តែមួយ។</li>
+</ol>
+<p>ឧទាហរណ៍៖ “បើ price sweep PDL ហើយ 15M displacement ឡើង បំបែក short-term high ខ្ញុំនឹងស្វែងរក buy retracement; បើ price accept ខាងក្រោម PDL និងបន្ត displacement ចុះ ខ្ញុំមិន buy ទេ។” នេះជាការគិត professional ជាង “ថ្ងៃនេះ Buy Gold”។</p>
+<h1 id="15.-draw-on-liquidity%E1%9F%96-%E1%9E%82%E1%9F%84%E1%9E%9B%E1%9E%8A%E1%9F%85%E1%9E%8A%E1%9F%82%E1%9E%9B-price-%E1%9E%A2%E1%9E%B6%E1%9E%85%E1%9E%91%E1%9F%85%E1%9E%9F%E1%9F%92%E1%9E%9C%E1%9F%82%E1%9E%84%E1%9E%9A%E1%9E%80" tabindex="-1">15. Draw on Liquidity៖ គោលដៅដែល price អាចទៅស្វែងរក</h1>
+<p>Draw on liquidity គឺគំនិតថា price មាន liquidity target ដែលទាក់ទាញ narrative របស់អ្នក។ វាអាចជា PDH, PDL, PWH, PWL, equal highs/lows ឬ major swing។</p>
+<p>ចាំឲ្យងាយ៖ <strong>Bias = ទិសដែលខ្ញុំសង្ស័យ។ Draw on liquidity = ទីដែលខ្ញុំសង្ស័យថា price ចង់ទៅ។</strong></p>
+<p>បើអ្នក Buy ត្រូវដឹង target ខាងលើនៅទីណា។ បើ Sell ត្រូវដឹង target ខាងក្រោម។ Entry ដោយគ្មាន target គឺដូចឡើងឡានតាក់ស៊ីហើយមិនដឹងទៅណា។</p>
+<p>Draw on liquidity ក៏ជួយ stop overtrading។ បើ target ជិតពេក ហើយ reward មិនសមនឹង risk អ្នកអាច skip trade ទោះ setup មើលស្អាតក៏ដោយ។</p>
+<h1 id="16.-time-%26-sessions%E1%9F%96-setup-%E1%9E%9B%E1%9F%92%E1%9E%A2%E1%9E%8F%E1%9F%92%E1%9E%9A%E1%9E%BC%E1%9E%9C%E1%9E%80%E1%9E%B6%E1%9E%9A%E1%9E%96%E1%9F%81%E1%9E%9B%E1%9E%9F%E1%9E%98%E1%9E%9A%E1%9E%98%E1%9F%92%E1%9E%99" tabindex="-1">16. Time &amp; Sessions៖ setup ល្អត្រូវការពេលសមរម្យ</h1>
+<p>ICT ផ្តោតលើពេលវេលាខ្លាំង។ Market មិនមាន activity ស្មើគ្នា 24 ម៉ោងទេ។ Asia ជាញឹកញាប់បង្កើត range; London និង New York អាចមាន expansion ខ្លាំង; major U.S. data អាចបង្កើត volatility ខ្លាំង។</p>
+<p><strong>កុំចាំម៉ោងពី screenshot ចាស់</strong>។ New York មាន Daylight Saving Time (DST) ដូច្នេះម៉ោងបម្លែងទៅកម្ពុជា​អាចផ្លាស់ប្តូរតាមរដូវ។ អ្នកគួរប្រើ New York local time/session indicator ឬ economic calendar ដែលបម្លែង timezone ត្រឹមត្រូវ។</p>
+<p>Workflow beginner៖</p>
+<ol>
+<li>មុន session សំខាន់ mark Asia High/Low និង PDH/PDL។</li>
+<li>កុំ anticipate entry មុន liquidity event។</li>
+<li>ពេល active session ចាប់ផ្តើម សង្កេត sweep។</li>
+<li>រង់ចាំ displacement + MSS។</li>
+<li>រង់ចាំ retracement ទៅ FVG/OB។</li>
+<li>បើ context មិន align - no trade។</li>
+</ol>
+<p><strong>No time, no trade</strong> គឺ rule សិក្សាដែលល្អជាងអង្គុយចុច Buy/Sell ពេញថ្ងៃ។</p>
+<p><img src="ict_book_assets/08_sessions.png" alt="Diagram"></p>
+<h1 id="17.-power-of-3-(amd)%E1%9F%96-%E1%9E%94%E1%9F%92%E1%9E%9A%E1%9E%98%E1%9E%BC%E1%9E%9B---%E1%9E%94%E1%9F%84%E1%9E%80%E1%9E%91%E1%9E%B7%E1%9E%9F---%E1%9E%9A%E1%9E%8F%E1%9F%8B" tabindex="-1">17. Power of 3 (AMD)៖ ប្រមូល - បោកទិស - រត់</h1>
+<p>ICT Power of 3 ត្រូវបានពន្យល់ជាញឹកញាប់ជា <strong>Accumulation -&gt; Manipulation -&gt; Distribution (AMD)</strong>។</p>
+<ul>
+<li>Accumulation៖ price ស្ថិតក្នុង range តូចៗ និង liquidity កកកុញ។</li>
+<li>Manipulation៖ price ចេញពី range ទៅទិសមួយ សូម្បីតែ sweep high/low ដើម្បីយក liquidity។</li>
+<li>Distribution៖ price បន្ទាប់មក expand ទៅទិសដែល narrative សំខាន់គាំទ្រ។</li>
+</ul>
+<p>គិតដូចក្មេងលេងលាក់បាល់៖ ដំបូងបាល់នៅកណ្តាល, បន្ទាប់មកគេធ្វើឲ្យអ្នកគិតថាវាទៅខាងឆ្វេង, ប៉ុន្តែ move ពិតទៅខាងស្តាំ។</p>
+<p>កុំ assume រាល់ range = AMD។ អ្នកត្រូវការបរិបទ HTF និង confirmation។</p>
+<h1 id="18.-judas-swing%E1%9F%96-move-%E1%9E%8A%E1%9F%86%E1%9E%94%E1%9E%BC%E1%9E%84%E1%9E%8A%E1%9F%82%E1%9E%9B%E1%9E%A2%E1%9E%B6%E1%9E%85%E1%9E%94%E1%9F%84%E1%9E%80%E1%9E%A2%E1%9F%92%E1%9E%93%E1%9E%80" tabindex="-1">18. Judas Swing៖ move ដំបូងដែលអាចបោកអ្នក</h1>
+<p>Judas Swing ជា label សម្រាប់ false/contrary move នៅជុំវិញ session transition ដែលអាច raid liquidity មុន expansion ទៅទិសផ្សេង។</p>
+<p>Beginner មិនត្រូវ “ចាប់ Judas Swing” ទេ។ គោលដៅគឺ <strong>កុំក្លាយជាមនុស្សដែល chase វា</strong>។ បើ London ឬ New York បើកហើយ price រត់ខ្លាំងភ្លាមៗ អ្នកមិនចាំបាច់លោតតាម។ ចាំមើលថាវាសweep liquidity ឬអត់ និងមាន reversal displacement ឬអត់។</p>
+<p>Rule៖ <strong>First move is information, not invitation.</strong> Move ដំបូងប្រាប់អ្វីមួយ; វាមិនមែនបញ្ជាឲ្យអ្នកចូល trade ទេ។</p>
+<h1 id="19.-beginner-2022-style-setup%E1%9F%96-%E1%9E%9A%E1%9E%BF%E1%9E%84%E1%9E%98%E1%9E%BD%E1%9E%99%E1%9E%96%E1%9E%B8%E1%9E%8A%E1%9E%BE%E1%9E%98%E1%9E%8A%E1%9E%9B%E1%9F%8B%E1%9E%85%E1%9E%94%E1%9F%8B" tabindex="-1">19. Beginner 2022-Style Setup៖ រឿងមួយពីដើមដល់ចប់</h1>
+<p>សម្រាប់ beginner យើងអាចចងចាំ sequence មួយ៖</p>
+<p><strong>HTF Bias -&gt; Liquidity Target -&gt; Key Time -&gt; Liquidity Sweep -&gt; Displacement -&gt; MSS -&gt; FVG/OB Retracement -&gt; Entry -&gt; Target Opposing Liquidity</strong></p>
+<p>ឧទាហរណ៍ bullish៖</p>
+<ol>
+<li>Daily context មិន bearish ខ្លាំង ហើយ downside liquidity ជាគោលដៅដំបូង។</li>
+<li>Price មក sweep PDL ឬ Asian Low។</li>
+<li>នៅ active session មាន bullish displacement។</li>
+<li>Displacement បំបែក short-term swing high = MSS confirmation។</li>
+<li>Move ទុក bullish FVG។</li>
+<li>Price retrace ទៅ FVG។</li>
+<li>Stop នៅទីដែល invalidate idea - មិនមែនដាក់ random 10 pips។</li>
+<li>Target liquidity ខាងលើ។</li>
+</ol>
+<p>បើជំហានណាមួយខ្វះ អ្នកអាច skip។ Professionalism មិនមែន trade ច្រើន; គឺ reject setup មិនគ្រប់លក្ខខណ្ឌ។</p>
+<p><img src="ict_book_assets/09_setup_flow.png" alt="Diagram"></p>
+<h1 id="20.-%E1%9E%A7%E1%9E%91%E1%9E%B6%E1%9E%A0%E1%9E%9A%E1%9E%8E%E1%9F%8D-xauusd%E1%9F%96-%E1%9E%98%E1%9E%BE%E1%9E%9B-gold-%E1%9E%8A%E1%9F%84%E1%9E%99%E1%9E%98%E1%9E%B7%E1%9E%93%E1%9E%91%E1%9E%B6%E1%9E%99" tabindex="-1">20. ឧទាហរណ៍ XAUUSD៖ មើល Gold ដោយមិនទាយ</h1>
+<p>យើងសន្មត់ថាអ្នកកំពុងមើល Gold។ កុំចាប់ផ្តើមដោយ “Buy ឬ Sell?” ចាប់ផ្តើមដោយ map។</p>
+<p><strong>មុនថ្ងៃចាប់ផ្តើម</strong>៖</p>
+<ul>
+<li>Mark Previous Day High / Low។</li>
+<li>Mark Previous Week High / Low។</li>
+<li>Mark obvious equal highs/lows។</li>
+<li>Mark HTF FVG/OB ដែលជិត price។</li>
+<li>Check economic news។</li>
+</ul>
+<p><strong>Scenario bullish</strong>៖ price sweep sell-side liquidity ខាងក្រោម, bullish displacement បំបែក 5M/15M structure, retrace ទៅ FVG ក្នុង active New York/London context, target liquidity ខាងលើ។</p>
+<p><strong>Scenario bearish</strong>៖ price sweep buy-side liquidity ខាងលើ, bearish displacement បំបែក structure, retrace ទៅ bearish FVG/OB, target sell-side liquidity ខាងក្រោម។</p>
+<p>សំខាន់៖ XAUUSD អាច move ឆាប់ និង spread/slippage អាចកើនពេល news។ Beginner គួរប្រើ demo និង risk តូច។ កុំចង់បាន “2% រាល់ថ្ងៃ” ព្រោះ market មិនមាន obligation ផ្តល់ប្រាក់ឲ្យអ្នករាល់ថ្ងៃទេ។</p>
+<h1 id="21.-economic-news%E1%9F%96-chart-%E1%9E%9F%E1%9F%92%E1%9E%A2%E1%9E%B6%E1%9E%8F%E1%9E%A2%E1%9E%B6%E1%9E%85%E1%9E%81%E1%9E%BC%E1%9E%85%E1%9E%80%E1%9F%92%E1%9E%93%E1%9E%BB%E1%9E%84%E1%9E%94%E1%9F%89%E1%9E%BB%E1%9E%93%E1%9F%92%E1%9E%98%E1%9E%B6%E1%9E%93%E1%9E%9C%E1%9E%B7%E1%9E%93%E1%9E%B6%E1%9E%91%E1%9E%B8" tabindex="-1">21. Economic News៖ chart ស្អាតអាចខូចក្នុងប៉ុន្មានវិនាទី</h1>
+<p>Gold និង USD pairs អាចមាន volatility ខ្លាំងជុំវិញ news ដូចជា CPI, NFP, FOMC, PCE, employment data និង Fed speeches។</p>
+<p>មុន trade សូម check calendar។ Beginner គួរមាន rule ងាយៗ៖</p>
+<ul>
+<li>បើ high-impact news ជិតមក កុំចូល trade ថ្មីដោយមិនដឹងហានិភ័យ។</li>
+<li>កុំដាក់ stop តូចពេកនៅពេល volatility ធំ។</li>
+<li>បើ spread ធំ ឬ price spike អស្ចារ្យ - no trade។</li>
+<li>កុំទាយ news result។ Trade reaction បន្ទាប់ពីទីផ្សារបង្ហាញ price action ច្បាស់ជាង។</li>
+</ul>
+<p>News មិនធ្វើឲ្យ ICT concept “មិនដំណើរការ” ឬ “ដំណើរការជានិច្ច” ទេ។ វាគ្រាន់តែបង្កើន volatility និងអាចបំផ្លាញ setup ដែល risk planning ខ្សោយ។</p>
+<h1 id="22.-risk-management%E1%9F%96-%E1%9E%9A%E1%9E%80%E1%9F%92%E1%9E%9F%E1%9E%B6%E1%9E%87%E1%9E%B8%E1%9E%9C%E1%9E%B7%E1%9E%8F-account-%E1%9E%98%E1%9E%BB%E1%9E%93%E1%9E%9A%E1%9E%80-profit" tabindex="-1">22. Risk Management៖ រក្សាជីវិត account មុនរក profit</h1>
+<p>Risk management គឺសំខាន់ជាង entry model។ Setup អាចខុស។ Trader ល្អក៏អាចមាន losing streak។</p>
+<p><strong>Beginner framework</strong>៖ risk តិចក្នុង trade មួយ។ ឧទាហរណ៍ 0.25%-0.5% សម្រាប់ការសិក្សា/demo logic; មនុស្សខ្លះប្រើដល់ 1% ប៉ុន្តែវាមិនមែន target ដែលអ្នកត្រូវប្រញាប់ទៅដល់ទេ។</p>
+<p>គន្លឹះ៖</p>
+<ul>
+<li>Define invalidation មុនចូល។</li>
+<li>Calculate position size ពី stop distance និង risk amount។</li>
+<li>កុំបន្ថែម position ព្រោះខឹង។</li>
+<li>កុំ move stop ឆ្ងាយដើម្បី “ឲ្យវាដកខ្លួនវិញ”។</li>
+<li>Daily loss limit ជួយឈប់ revenge trading។</li>
+<li>Reward/Risk ratio ត្រូវមើលជាមួយ probability; RR ខ្ពស់មិនមានន័យល្អដោយស្វ័យប្រវត្តិ។</li>
+</ul>
+<p><strong>គិតដូច game មាន 100 lives</strong>៖ បើអ្នកចំណាយ 20 lives ក្នុង trade មួយ អ្នកឆាប់ game over។ បើចំណាយ 0.5-1 life អ្នកមានឱកាសរៀនបានយូរ។</p>
+<p><img src="ict_book_assets/10_risk_reward.png" alt="Diagram"></p>
+<h1 id="23.-stop-loss-%E1%9E%93%E1%9E%B7%E1%9E%84-invalidation%E1%9F%96-stop-%E1%9E%98%E1%9E%B7%E1%9E%93%E1%9E%98%E1%9F%82%E1%9E%93%E1%9E%9B%E1%9F%81%E1%9E%81%E1%9E%85%E1%9F%83%E1%9E%8A%E1%9E%93%E1%9F%92%E1%9E%99" tabindex="-1">23. Stop Loss និង Invalidation៖ stop មិនមែនលេខចៃដន្យ</h1>
+<p>Stop loss គួរត្រូវបានដាក់នៅកន្លែងដែលបើ price ទៅដល់ នោះ setup hypothesis របស់អ្នកខុស ឬមិនមានទៀត។</p>
+<p>ឧទាហរណ៍ bullish setup បន្ទាប់ពី sell-side sweep + MSS៖ stop អាចស្ថិតក្រោម swing/sweep low ឬ structure level ដែលបើ break វាបំផ្លាញ logic។ វាអាស្រ័យលើ model និង timeframe។</p>
+<p>កុំធ្វើ៖ “ខ្ញុំចង់ risk <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>5</mn><mtext>ដូច្នេះដាក់</mtext><mi>s</mi><mi>t</mi><mi>o</mi><mi>p</mi><mn>5</mn><mi>p</mi><mi>i</mi><mi>p</mi><mi>s</mi><mtext>”។វាបញ្ច្រាស</mtext><mi>l</mi><mi>o</mi><mi>g</mi><mi>i</mi><mi>c</mi><mtext>។ត្រូវធ្វើ៖</mtext><mo>∗</mo><mo>∗</mo><mtext>កន្លែងណា</mtext><mi>i</mi><mi>n</mi><mi>v</mi><mi>a</mi><mi>l</mi><mi>i</mi><mi>d</mi><mi>a</mi><mi>t</mi><mi>i</mi><mi>o</mi><mi>n</mi><mo stretchy="false">?</mo><mtext>បន្ទាប់មក</mtext><mi>p</mi><mi>o</mi><mi>s</mi><mi>i</mi><mi>t</mi><mi>i</mi><mi>o</mi><mi>n</mi><mi>s</mi><mi>i</mi><mi>z</mi><mi>e</mi><mtext>ប៉ុន្មានដើម្បី</mtext><mi>r</mi><mi>i</mi><mi>s</mi><mi>k</mi><mtext>ត្រឹម</mtext></mrow><annotation encoding="application/x-tex">5 ដូច្នេះដាក់ stop 5 pips”។ វាបញ្ច្រាស logic។ ត្រូវធ្វើ៖ **កន្លែងណា invalidation? បន្ទាប់មក position size ប៉ុន្មានដើម្បី risk ត្រឹម </annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord">5ដូច្នេះដាក់</span><span class="mord mathnormal">s</span><span class="mord mathnormal">t</span><span class="mord mathnormal">o</span><span class="mord mathnormal">p</span><span class="mord">5</span><span class="mord mathnormal">p</span><span class="mord mathnormal">i</span><span class="mord mathnormal">p</span><span class="mord mathnormal">s</span><span class="mord">”។វាបញ្ច្រាស</span><span class="mord mathnormal" style="margin-right:0.0197em;">l</span><span class="mord mathnormal">o</span><span class="mord mathnormal" style="margin-right:0.0359em;">g</span><span class="mord mathnormal">i</span><span class="mord mathnormal">c</span><span class="mord">។ត្រូវធ្វើ៖</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">∗</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="base"><span class="strut" style="height:0.8889em;vertical-align:-0.1944em;"></span><span class="mord">∗</span><span class="mord">កន្លែងណា</span><span class="mord mathnormal">in</span><span class="mord mathnormal" style="margin-right:0.0359em;">v</span><span class="mord mathnormal">a</span><span class="mord mathnormal" style="margin-right:0.0197em;">l</span><span class="mord mathnormal">i</span><span class="mord mathnormal">d</span><span class="mord mathnormal">a</span><span class="mord mathnormal">t</span><span class="mord mathnormal">i</span><span class="mord mathnormal">o</span><span class="mord mathnormal">n</span><span class="mclose">?</span><span class="mord">បន្ទាប់មក</span><span class="mord mathnormal">p</span><span class="mord mathnormal">os</span><span class="mord mathnormal">i</span><span class="mord mathnormal">t</span><span class="mord mathnormal">i</span><span class="mord mathnormal">o</span><span class="mord mathnormal">n</span><span class="mord mathnormal">s</span><span class="mord mathnormal">i</span><span class="mord mathnormal" style="margin-right:0.044em;">z</span><span class="mord mathnormal">e</span><span class="mord">ប៉ុន្មានដើម្បី</span><span class="mord mathnormal" style="margin-right:0.0278em;">r</span><span class="mord mathnormal">i</span><span class="mord mathnormal">s</span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span><span class="mord">ត្រឹម</span></span></span></span>5?**</p>
+<p>Stop loss មិនធានាថាចេញតម្លៃដូចគ្រោងនៅ news/slippage ទេ។ នេះជាមូលហេតុមួយដែលអ្នកមិនគួរ risk ធំ។</p>
+<h1 id="24.-take-profit%E1%9F%96-%E1%9E%99%E1%9E%80-profit-%E1%9E%8F%E1%9E%B6%E1%9E%98-liquidity-%E1%9E%98%E1%9E%B7%E1%9E%93%E1%9E%98%E1%9F%82%E1%9E%93%E1%9E%8F%E1%9E%B6%E1%9E%98%E1%9E%A2%E1%9E%B6%E1%9E%9A%E1%9E%98%E1%9F%92%E1%9E%98%E1%9E%8E%E1%9F%8D" tabindex="-1">24. Take Profit៖ យក profit តាម liquidity មិនមែនតាមអារម្មណ៍</h1>
+<p>Target ល្អត្រូវមាន logic។ ICT trader ជាញឹកញាប់មើល opposing liquidity៖ previous high/low, equal highs/lows, session high/low, HTF objective។</p>
+<p>មុនចូល trade អ្នកគួរដឹង៖</p>
+<ul>
+<li>Entry នៅណា?</li>
+<li>Invalidation នៅណា?</li>
+<li>First logical target នៅណា?</li>
+<li>Reward compared to risk សមទេ?</li>
+</ul>
+<p>បើ target ជិតពេក ឬ obstacle ធំមុន target អ្នកអាច skip។ កុំប្តូរ target ព្រោះ greed នៅពេល trade កំពុង profit។</p>
+<p>អ្នកអាចសិក្សា partial profit ក្រោយពេលចេះ model មូលដ្ឋាន។ Beginner គួររក្សាផែនការសាមញ្ញសិន។</p>
+<h1 id="25.-daily-analysis-checklist%E1%9F%96-10-%E1%9E%93%E1%9E%B6%E1%9E%91%E1%9E%B8%E1%9E%98%E1%9E%BB%E1%9E%93%E1%9E%85%E1%9E%B6%E1%9E%94%E1%9F%8B%E1%9E%95%E1%9F%92%E1%9E%8F%E1%9E%BE%E1%9E%98" tabindex="-1">25. Daily Analysis Checklist៖ 10 នាទីមុនចាប់ផ្តើម</h1>
+<p>រាល់ថ្ងៃ សរសេរតាមនេះ៖</p>
+<ol>
+<li>Weekly/Daily structure និង major range មានរឿងអ្វី?</li>
+<li>PDH, PDL, PWH, PWL នៅទីណា?</li>
+<li>Equal highs/lows ណាច្បាស់?</li>
+<li>Liquidity មួយណាត្រូវបានយក? មួយណានៅសល់?</li>
+<li>Price នៅ premium ឬ discount ក្នុង dealing range ណា?</li>
+<li>HTF FVG/OB/imbalance ណាដែលជិត?</li>
+<li>High-impact news មានម៉ោងណា?</li>
+<li>London/New York session ខ្ញុំនឹងមើលអ្វី?</li>
+<li>Scenario A និង Scenario B ជាអ្វី?</li>
+<li>បើមិនមាន sweep + displacement + structure confirmation ខ្ញុំធ្វើអ្វី? <strong>មិន trade</strong>។</li>
+</ol>
+<p>កុំសរសេរ “ថ្ងៃនេះ Gold Buy”។ សរសេរ conditional plan៖ “If X happens, then I look for Y; if not, I stay out.”</p>
+<h1 id="26.-trade-journal%E1%9F%96-%E1%9E%80%E1%9E%93%E1%9F%92%E1%9E%9B%E1%9F%82%E1%9E%84%E1%9E%8A%E1%9F%82%E1%9E%9B-trader-%E1%9E%9A%E1%9E%B8%E1%9E%80%E1%9E%85%E1%9E%98%E1%9F%92%E1%9E%9A%E1%9E%BE%E1%9E%93%E1%9E%96%E1%9E%B7%E1%9E%8F" tabindex="-1">26. Trade Journal៖ កន្លែងដែល trader រីកចម្រើនពិត</h1>
+<p>Journal មិនមែនសរសេរតែ P/L។ P/L មួយ trade មិនប្រាប់ថាអ្នក execute ល្អឬអាក្រក់ទេ។ Trade មិនត្រឹមត្រូវអាចឈ្នះដោយសំណាង; trade ត្រឹមត្រូវអាចចាញ់ដោយសារប្រូបាប៊ីលីតេ។</p>
+<p>សម្រាប់ trade មួយ កត់៖</p>
+<ul>
+<li>Date / Session / Pair</li>
+<li>HTF narrative</li>
+<li>Liquidity target</li>
+<li>What was swept?</li>
+<li>Displacement/MSS មានឬអត់?</li>
+<li>Entry PD Array</li>
+<li>Stop / Target / Risk % / planned RR</li>
+<li>Screenshot before និង after</li>
+<li>Did I follow plan? Yes/No</li>
+<li>Emotion: calm, FOMO, revenge, fear?</li>
+<li>One lesson</li>
+</ul>
+<p>រាល់ចុងសប្តាហ៍ កុំសួរតែ “បានលុយប៉ុន្មាន?” សួរ “setup ណាដែលខ្ញុំ execute ស្រួល? mistake ណាកើតឡើងញឹកញាប់?”</p>
+<h1 id="27.-backtesting%E1%9F%96-%E1%9E%9F%E1%9E%B6%E1%9E%80%E1%9E%9B%E1%9F%92%E1%9E%94%E1%9E%84-model-%E1%9E%98%E1%9E%BB%E1%9E%93%E1%9E%87%E1%9E%BF%E1%9E%9C%E1%9E%B6" tabindex="-1">27. Backtesting៖ សាកល្បង model មុនជឿវា</h1>
+<p>Backtest = យក rule របស់អ្នកទៅសាកល្បងលើ historical charts ដោយមិនប្តូរច្បាប់ពេលឃើញលទ្ធផល។</p>
+<p>ចាប់ផ្តើម model តែមួយ។ ឧទាហរណ៍៖ “New York, PDL sweep -&gt; bullish displacement -&gt; 5M MSS -&gt; first FVG retracement -&gt; target PDH/near liquidity.”</p>
+<p>កត់យ៉ាងហោចណាស់៖ date, setup valid?, entry, stop, target, result in R, max favorable/adverse excursion, news context, screenshot។</p>
+<p><strong>កុំ backtest ដោយភ្នែកហើយរាប់តែ winners</strong>។ នោះគឺ self-deception។ Rule ត្រូវសរសេរមុន ហើយ sample size ត្រូវគ្រប់គ្រាន់ដើម្បីឃើញ pattern។</p>
+<p>Paper trading/demo មកបន្ទាប់ពី backtest ដើម្បីសាក timing និង execution live ដោយគ្មាន financial pressure។</p>
+<h1 id="28.-mistakes-12-%E1%9E%99%E1%9F%89%E1%9E%B6%E1%9E%84%E1%9E%8A%E1%9F%82%E1%9E%9B-beginner-ict-%E1%9E%92%E1%9F%92%E1%9E%9C%E1%9E%BE%E1%9E%89%E1%9E%B9%E1%9E%80%E1%9E%89%E1%9E%B6%E1%9E%94%E1%9F%8B" tabindex="-1">28. Mistakes 12 យ៉ាងដែល beginner ICT ធ្វើញឹកញាប់</h1>
+<ol>
+<li>គូរ FVG និង OB រាប់សិបលើ chart។</li>
+<li>ចូល trade ព្រោះ sweep មួយតែមួយ។</li>
+<li>មិនដឹង HTF liquidity target។</li>
+<li>ចូល 1M chart មុនយល់ Daily/4H context។</li>
+<li>Trade គ្រប់ session ពេញ 24 ម៉ោង។</li>
+<li>មិន check news។</li>
+<li>ចង់ “sniper entry” ហើយ stop តូចខុស logic។</li>
+<li>ប្តូរ bias រាល់ candle។</li>
+<li>ឃើញ concept ក្រោយ move ហើយគិតថាវាច្បាស់មុន move។</li>
+<li>Backtest តែ winners។</li>
+<li>Risk ធំព្រោះ “setup A+”។</li>
+<li>ចង់បាន profit រាល់ថ្ងៃ។</li>
+</ol>
+<p><strong>ជួសជុល</strong>៖ model មួយ, session មួយ, pair មួយ ឬពីរ, risk តូច, journal, 50-100 examples, review weekly។</p>
+<h1 id="29.-30-day-study-plan%E1%9F%96-%E1%9E%9A%E1%9F%80%E1%9E%93%E1%9E%8F%E1%9E%B6%E1%9E%98%E1%9E%9B%E1%9F%86%E1%9E%8A%E1%9E%B6%E1%9E%94%E1%9F%8B-%E1%9E%98%E1%9E%B7%E1%9E%93%E1%9E%9A%E1%9E%8F%E1%9F%8B%E1%9E%9B%E1%9E%BF%E1%9E%93" tabindex="-1">29. 30-Day Study Plan៖ រៀនតាមលំដាប់ មិនរត់លឿន</h1>
+<p><strong>ថ្ងៃ 1-5</strong>៖ Market basics, candles, timeframe, swing high/low។ រាល់ថ្ងៃ mark HH/HL/LH/LL 20 charts។</p>
+<p><strong>ថ្ងៃ 6-10</strong>៖ Liquidity. Mark PDH/PDL, PWH/PWL, EQH/EQL, Asia high/low។ កុំ trade។</p>
+<p><strong>ថ្ងៃ 11-15</strong>៖ Displacement, FVG, basic OB។ ស្វែងរក examples 10-20 ក្នុងមួយថ្ងៃ។</p>
+<p><strong>ថ្ងៃ 16-20</strong>៖ MSS, premium/discount, draw on liquidity។ សរសេរ scenario មុន replay chart។</p>
+<p><strong>Day 21-25</strong>៖ Sessions + simple 2022-style sequence។ Replay London/NY setups។</p>
+<p><strong>Day 26-30</strong>៖ Risk, journal, backtest model មួយ។ បង្កើត checklist ផ្ទាល់ខ្លួន។</p>
+<p>នៅថ្ងៃ 30 គោលដៅមិនមែន “រកបាន $X”។ គោលដៅគឺអ្នកអាចបើក chart ហើយពន្យល់ដោយខ្លួនឯង៖ <strong>where is liquidity, what is the narrative, what confirmation is required, where is invalidation, where is target?</strong></p>
+<h1 id="30.-%E1%9E%9F%E1%9F%86%E1%9E%8E%E1%9E%BD%E1%9E%9A%E1%9E%9F%E1%9E%B6%E1%9E%80%E1%9E%9B%E1%9F%92%E1%9E%94%E1%9E%84%E1%9E%81%E1%9F%92%E1%9E%9B%E1%9E%BD%E1%9E%93%E1%9E%AF%E1%9E%84" tabindex="-1">30. សំណួរសាកល្បងខ្លួនឯង</h1>
+<p>ព្យាយាមឆ្លើយដោយមិនមើល chapter មុន៖</p>
+<ol>
+<li>Buy-side liquidity ជាទូទៅស្ថិតនៅខាងណារបស់ highs/lows?</li>
+<li>Sweep មួយតែមួយគ្រប់គ្រាន់សម្រាប់ entry ទេ? ហេតុអ្វី?</li>
+<li>Displacement មានលក្ខណៈអ្វីខ្លះ?</li>
+<li>FVG គឺអ្វី? តើវាត្រូវ fill 100% គ្រប់ពេលទេ?</li>
+<li>Premium និង Discount បែងចែកដោយអ្វី?</li>
+<li>BOS និង MSS សម្រាប់សៀវភៅនេះខុសគ្នាដូចម្តេច?</li>
+<li>Draw on liquidity មានន័យអ្វី?</li>
+<li>ហេតុអ្វីពេលវេលា/session សំខាន់?</li>
+<li>Stop loss គួរចាប់ផ្តើមពី “ចំនួន pip” ឬ “invalidation level”?</li>
+<li>Setup sequence beginner 2022-style មានជំហានអ្វីខ្លះ?</li>
+</ol>
+<p><strong>ចម្លើយខ្លី</strong>៖ 1) លើ highs. 2) ទេ; ចង់ឃើញ displacement/structure confirmation. 3) move ខ្លាំង body ធំ overlap តិច និងអាច break structure/leave imbalance. 4) 3-candle imbalance; មិន fill 100% ទេ. 5) 50% equilibrium. 6) BOS continuation, MSS ជា shift ដែលយើងចង់បាន liquidity + displacement context. 7) liquidity objective. 8) activity/volatility មិនស្មើគ្នាពេញថ្ងៃ. 9) invalidation. 10) Bias -&gt; Liquidity -&gt; Time -&gt; Sweep -&gt; Displacement -&gt; MSS -&gt; FVG/OB -&gt; Entry -&gt; Target + Risk.</p>
+<h1 id="31.-glossary%E1%9F%96-%E1%9E%96%E1%9E%B6%E1%9E%80%E1%9F%92%E1%9E%99%E1%9E%8A%E1%9F%82%E1%9E%9B%E1%9E%A2%E1%9F%92%E1%9E%93%E1%9E%80%E1%9E%8F%E1%9F%92%E1%9E%9A%E1%9E%BC%E1%9E%9C%E1%9E%85%E1%9F%81%E1%9F%87" tabindex="-1">31. Glossary៖ ពាក្យដែលអ្នកត្រូវចេះ</h1>
+<p><strong>BSL</strong> - Buy-Side Liquidity: liquidity នៅលើ highs។<br>
+<strong>SSL</strong> - Sell-Side Liquidity: liquidity នៅក្រោម lows។<br>
+<strong>PDH / PDL</strong> - Previous Day High / Low។<br>
+<strong>PWH / PWL</strong> - Previous Week High / Low។<br>
+<strong>EQH / EQL</strong> - Equal Highs / Equal Lows។<br>
+<strong>FVG</strong> - Fair Value Gap, 3-candle imbalance។<br>
+<strong>OB</strong> - Order Block, zone/candle linked to displacement context។<br>
+<strong>BOS</strong> - Break of Structure។<br>
+<strong>CHoCH</strong> - Change of Character។<br>
+<strong>MSS</strong> - Market Structure Shift។<br>
+<strong>Displacement</strong> - strong directional move។<br>
+<strong>Dealing Range</strong> - range រវាង swing points ដែលយើងកំពុងវិភាគ។<br>
+<strong>Premium</strong> - upper half of dealing range។<br>
+<strong>Discount</strong> - lower half of dealing range។<br>
+<strong>Equilibrium</strong> - 50% midpoint។<br>
+<strong>Draw on Liquidity</strong> - liquidity objective ដែល narrative អាចកំពុង target។<br>
+<strong>Kill Zone</strong> - time window/session focus ក្នុង ICT teaching។<br>
+<strong>AMD / Power of 3</strong> - Accumulation, Manipulation, Distribution។<br>
+<strong>Judas Swing</strong> - deceptive/contrary move around session transition before another delivery leg។<br>
+<strong>Invalidation</strong> - level ដែលបើ price ឆ្លង នោះ trade idea មិនមាន logic ដូចមុន។<br>
+<strong>R</strong> - unit of risk; 1R = ចំនួនដែលអ្នកព្រមខាតក្នុង trade មួយ។</p>
+<h1 id="32.-%E1%9E%95%E1%9F%82%E1%9E%93%E1%9E%80%E1%9E%B6%E1%9E%9A%E1%9E%9F%E1%9E%B6%E1%9E%98%E1%9E%89%E1%9F%92%E1%9E%89%E1%9E%98%E1%9E%BD%E1%9E%99%E1%9E%8A%E1%9F%82%E1%9E%9B%E1%9E%A2%E1%9F%92%E1%9E%93%E1%9E%80%E1%9E%A2%E1%9E%B6%E1%9E%85%E1%9E%94%E1%9F%84%E1%9F%87%E1%9E%96%E1%9E%BB%E1%9E%98%E1%9F%92%E1%9E%96%E1%9E%91%E1%9E%BB%E1%9E%80%E1%9E%87%E1%9E%B7%E1%9E%8F-monitor" tabindex="-1">32. ផែនការសាមញ្ញមួយដែលអ្នកអាចបោះពុម្ពទុកជិត Monitor</h1>
+<p><strong>BEFORE MARKET</strong></p>
+<ul>
+<li><input type="checkbox" id="checkbox0"><label for="checkbox0">Mark PDH / PDL / PWH / PWL</label></li>
+<li><input type="checkbox" id="checkbox1"><label for="checkbox1">Mark EQH / EQL / Asia High-Low</label></li>
+<li><input type="checkbox" id="checkbox2"><label for="checkbox2">HTF narrative?</label></li>
+<li><input type="checkbox" id="checkbox3"><label for="checkbox3">Draw on liquidity?</label></li>
+<li><input type="checkbox" id="checkbox4"><label for="checkbox4">Premium / Discount?</label></li>
+<li><input type="checkbox" id="checkbox5"><label for="checkbox5">High-impact news?</label></li>
+</ul>
+<p><strong>WAIT</strong></p>
+<ul>
+<li><input type="checkbox" id="checkbox6"><label for="checkbox6">Correct session/time?</label></li>
+<li><input type="checkbox" id="checkbox7"><label for="checkbox7">Liquidity sweep?</label></li>
+<li><input type="checkbox" id="checkbox8"><label for="checkbox8">Strong displacement?</label></li>
+<li><input type="checkbox" id="checkbox9"><label for="checkbox9">MSS / structure confirmation?</label></li>
+<li><input type="checkbox" id="checkbox10"><label for="checkbox10">Clean FVG / OB retracement?</label></li>
+</ul>
+<p><strong>BEFORE ENTRY</strong></p>
+<ul>
+<li><input type="checkbox" id="checkbox11"><label for="checkbox11">Invalidation level?</label></li>
+<li><input type="checkbox" id="checkbox12"><label for="checkbox12">Position size calculated?</label></li>
+<li><input type="checkbox" id="checkbox13"><label for="checkbox13">Risk &lt;= my rule?</label></li>
+<li><input type="checkbox" id="checkbox14"><label for="checkbox14">Logical target liquidity?</label></li>
+<li><input type="checkbox" id="checkbox15"><label for="checkbox15">Reward worth the risk?</label></li>
+</ul>
+<p><strong>AFTER TRADE</strong></p>
+<ul>
+<li><input type="checkbox" id="checkbox16"><label for="checkbox16">Screenshot before/after</label></li>
+<li><input type="checkbox" id="checkbox17"><label for="checkbox17">Followed plan? Yes/No</label></li>
+<li><input type="checkbox" id="checkbox18"><label for="checkbox18">One mistake</label></li>
+<li><input type="checkbox" id="checkbox19"><label for="checkbox19">One thing done correctly</label></li>
+</ul>
+<p>ចុងក្រោយ៖ <strong>No setup = no trade. No trade = position. Cash is also a position.</strong></p>
+<h1 id="references-%26-notes" tabindex="-1">References &amp; Notes</h1>
+<p>សៀវភៅនេះជាការពន្យល់សាមញ្ញជាភាសាខ្មែរ ដោយរៀបលំដាប់សម្រាប់ beginner។ ពាក្យ ICT ដើមមកពីការបង្រៀនរបស់ Michael J. Huddleston (The Inner Circle Trader)។ បើការពន្យល់របស់អ្នកណាម្នាក់ខុសពី original teaching សូមយក original material ជាចំណុចយោង។</p>
+<p><strong>ប្រភពដើមសម្រាប់សិក្សាបន្ថែម</strong></p>
+<ul>
+<li>The Inner Circle Trader official site: https://www.theinnercircletrader.com/</li>
+<li>ICT Mentorship 2022 Introduction (verified YouTube channel): https://www.youtube.com/watch?v=kt6V4ai60fI</li>
+<li>2022 ICT Mentorship Episode 6 - Market Efficiency Paradigm, FVG &amp; Market Structure Shifts: https://www.youtube.com/watch?v=Bkt8B3kLATQ</li>
+<li>Official YouTube channel: https://www.youtube.com/@InnerCircleTrader</li>
+</ul>
+<p><strong>កំណត់ចំណាំអំពី terminology</strong>៖ ពាក្យដូចជា BOS, CHoCH, MSS, Order Block និង Kill Zone ត្រូវបាន community/educators មួយចំនួនប្រើខុសគ្នា។ សៀវភៅនេះគោលបំណងបង្រៀន logic និង learning sequence មិនមែនអះអាងថា label ទាំងអស់មាន definition តែមួយគត់ក្នុងគ្រប់ community។</p>
+<p><strong>Risk notice</strong>៖ Trading futures, Forex, CFDs, crypto ឬ leveraged products អាចបាត់បង់ប្រាក់យ៉ាងឆាប់។ សូមប្រើសម្រាប់ការអប់រំ, backtesting និង demo មុននឹងប្រើប្រាក់ពិត ហើយគោរពច្បាប់/លក្ខខណ្ឌ broker ក្នុងប្រទេសរបស់អ្នក។</p>
+
+    </div>
+</body>
+</html>
