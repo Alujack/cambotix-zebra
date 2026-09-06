@@ -1,0 +1,71 @@
+{
+  "id": "zebraAnalyzeV1",
+  "name": "Zebra 2 \u2014 Rules and local AI",
+  "active": false,
+  "nodes": [
+    {
+      "id": "every-15-seconds",
+      "name": "Every 15 seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "process-one-durable-signal",
+      "name": "Process one durable signal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://analyzer:8000/process",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 135000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "zebraAnalyzerAuth",
+          "name": "Zebra internal API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 seconds": {
+      "main": [
+        [
+          {
+            "node": "Process one durable signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Phnom_Penh"
+  },
+  "pinData": {},
+  "tags": []
+}

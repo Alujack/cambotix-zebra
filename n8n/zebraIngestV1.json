@@ -1,0 +1,105 @@
+{
+  "id": "zebraIngestV1",
+  "name": "Zebra 1 \u2014 TradingView intake",
+  "active": false,
+  "nodes": [
+    {
+      "id": "tradingview-webhook",
+      "name": "TradingView Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "REPLACE_WITH_GENERATED_WEBHOOK_PATH",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "cambotix-zebra-intake"
+    },
+    {
+      "id": "validate-and-persist",
+      "name": "Validate and persist",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://analyzer:8000/signals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 2000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "zebraAnalyzerAuth",
+          "name": "Zebra internal API"
+        }
+      }
+    },
+    {
+      "id": "acknowledge-durable-receipt",
+      "name": "Acknowledge durable receipt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        520,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.statusCode }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "TradingView Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate and persist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and persist": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge durable receipt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Phnom_Penh"
+  },
+  "pinData": {},
+  "tags": []
+}

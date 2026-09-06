@@ -1,0 +1,49 @@
+//@version=6
+indicator("Cambotix Zebra — XAUUSD setup candidates", overlay=true)
+
+minAdx = input.float(20, "Minimum ADX", minval=0, maxval=100)
+minAtrPercent = input.float(0.02, "Minimum ATR / price (%)", minval=0)
+maxAtrPercent = input.float(0.5, "Maximum ATR / price (%)", minval=0)
+swingBars = input.int(10, "Prior swing lookback", minval=2)
+sessionFilter = input.bool(true, "London / New York weekdays only")
+
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+rsi = ta.rsi(close, 14)
+[macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
+[diPlus, diMinus, adx] = ta.dmi(14, 14)
+atr = ta.atr(14)
+atrPercent = atr / close * 100
+priorHigh = ta.highest(high[1], swingBars)
+priorLow = ta.lowest(low[1], swingBars)
+inLondon = not na(time(timeframe.period, "0800-1700:23456", "Europe/London"))
+inNewYork = not na(time(timeframe.period, "0800-1700:23456", "America/New_York"))
+sessionOk = not sessionFilter or inLondon or inNewYork
+ready = not na(ema200) and not na(adx) and not na(atr) and not na(priorHigh) and not na(priorLow)
+chartOk = syminfo.ticker == "XAUUSD" and timeframe.isminutes and timeframe.multiplier == 15
+common = ready and chartOk and sessionOk and adx >= minAdx and atrPercent >= minAtrPercent and atrPercent <= maxAtrPercent
+longSetup = common and ema20 > ema50 and close > ema200 and rsi >= 50 and rsi <= 70 and macdHist > 0
+shortSetup = common and ema20 < ema50 and close < ema200 and rsi >= 30 and rsi <= 50 and macdHist < 0
+// Emit only on the first confirmed bar of each qualifying setup, not every bar.
+buyCandidate = barstate.isconfirmed and longSetup and not longSetup[1]
+sellCandidate = barstate.isconfirmed and shortSetup and not shortSetup[1]
+
+number(float value) => str.tostring(value, "#.########")
+
+payload(string direction) =>
+    stamp = str.tostring(int(time_close / 1000))
+    eventId = "XAUUSD-15m-" + stamp + "-" + direction
+    '{"event_id":"' + eventId + '","symbol":"XAUUSD","timeframe":"15m","bar_time":' + stamp + ',"signal":"' + direction + '","price":' + number(close) + ',"ema20":' + number(ema20) + ',"ema50":' + number(ema50) + ',"ema200":' + number(ema200) + ',"rsi":' + number(rsi) + ',"macd_hist":' + number(macdHist) + ',"adx":' + number(adx) + ',"atr":' + number(atr) + ',"swing_high":' + number(priorHigh) + ',"swing_low":' + number(priorLow) + '}'
+
+if buyCandidate
+    alert(payload("BUY_SETUP"), alert.freq_once_per_bar_close)
+if sellCandidate
+    alert(payload("SELL_SETUP"), alert.freq_once_per_bar_close)
+
+plot(ema20, "EMA 20", color=color.teal)
+plot(ema50, "EMA 50", color=color.orange)
+plot(ema200, "EMA 200", color=color.gray, linewidth=2)
+plotshape(buyCandidate, title="BUY candidate", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small)
+plotshape(sellCandidate, title="SELL candidate", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+bgcolor(not chartOk ? color.new(color.red, 90) : na, title="Use XAUUSD 15m")
