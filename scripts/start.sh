@@ -24,9 +24,40 @@ if [ ! -f .local/workflows-installed ]; then
 fi
 rm -f .local/import/credentials.json
 model=$(python3 -c 'from scripts.setup import read_env; print(read_env()["OLLAMA_MODEL"])')
-if [ "$runtime" = "native" ]; then
-  OLLAMA_HOST=127.0.0.1:11435 .local/ollama/bin/ollama pull "$model"
-else
-  docker compose exec -T ollama ollama pull "$model"
-fi
+case "$runtime" in
+  native) OLLAMA_HOST=127.0.0.1:11435 .local/ollama/bin/ollama pull "$model" ;;
+  docker) docker compose exec -T ollama ollama pull "$model" ;;
+  external)
+    # An Ollama this project does not manage (e.g. the Ollama for Windows app on the Docker host).
+    # Pull through the analyzer container so reachability is proven from where inference will run.
+    docker compose exec -T analyzer python - <<'PY'
+import json
+import os
+import urllib.error
+import urllib.request
+
+base, model = os.environ['OLLAMA_BASE_URL'].rstrip('/'), os.environ['OLLAMA_MODEL']
+request = urllib.request.Request(base + '/api/pull', data=json.dumps({'model': model, 'stream': True}).encode(),
+                                 headers={'Content-Type': 'application/json'})
+try:
+    with urllib.request.urlopen(request, timeout=120) as response:
+        last = None
+        for line in response:
+            event = json.loads(line)
+            if event.get('error'):
+                raise SystemExit(f"Ollama could not pull {model}: {event['error']}")
+            text = event.get('status', '')
+            if event.get('total'):
+                text += f" {100 * event.get('completed', 0) // event['total'] // 10 * 10}%"
+            if text != last:
+                print(text, flush=True)
+                last = text
+except (urllib.error.URLError, OSError) as error:
+    raise SystemExit(f'Ollama at {base} is not reachable from Docker ({error}). Start Ollama on the host or fix '
+                     'OLLAMA_BASE_URL (Docker Desktop: http://host.docker.internal:11434).')
+print(f'{model} is available at {base}.')
+PY
+    ;;
+  *) echo "Unknown OLLAMA_RUNTIME '$runtime' (expected native, docker, or external)." >&2; exit 1 ;;
+esac
 python3 scripts/status.py

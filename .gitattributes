@@ -1,0 +1,7 @@
+# Scripts run under bash in WSL2 on the Windows server; CRLF checkouts would break them.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.pine text eol=lf
+*.pdf binary
+*.png binary

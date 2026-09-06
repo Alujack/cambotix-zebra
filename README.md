@@ -51,6 +51,31 @@ The smoke test sends a clearly labeled weak-trend sample through the gateway and
 
 The stack uses named volumes. `docker compose down` preserves them. **`docker compose down -v` deletes the database, workflows, and Docker model weights.** Native macOS model files in `.local/ollama` are separate. Back up `.env` with the volumes: the encryption key is required to decrypt n8n credentials. Deleting volumes also requires removing `.local/workflows-installed` before the next start.
 
+## Windows laptop as a server
+
+The stack runs unchanged on Windows through WSL2; every pinned image is multi-arch (amd64 and arm64).
+
+1. Install WSL2 with Ubuntu and Docker Desktop with the WSL2 backend. In Docker Desktop enable *Start Docker Desktop when you sign in* and, under Resources, WSL integration, enable the Ubuntu distro.
+2. Clone this repository **inside the WSL filesystem** (for example `~/cambotix-zebra`), not under `/mnt/c`: bind mounts are faster there and `.env` keeps its 0600 mode. Run `bash scripts/start.sh` from the Ubuntu shell exactly as on macOS.
+3. Choose the model runtime in `.env` before the first start:
+   - `OLLAMA_RUNTIME=docker` (the default outside macOS): CPU inference in the `ollama` container. With an NVIDIA GPU and a current driver, add `COMPOSE_FILE=compose.yaml:compose.gpu.yaml` to `.env` to pass the GPU through.
+   - `OLLAMA_RUNTIME=external`: install the Ollama for Windows app (it starts at sign-in and uses NVIDIA or AMD GPUs), then set `COMPOSE_PROFILES=` and `OLLAMA_BASE_URL=http://host.docker.internal:11434`. The start script pulls the model through the analyzer container, which proves the address works from Docker.
+
+   `qwen2.5:1.5b` runs on any CPU. A 7B model needs a GPU with about 6 GB of VRAM; on CPU it approaches `AI_TIMEOUT_SECONDS`. WSL2 gives Docker half the host RAM by default; raise `memory=` in `%UserProfile%\.wslconfig` if Docker Ollama needs more.
+4. Keep the laptop awake and unattended (PowerShell as Administrator):
+
+   ```powershell
+   powercfg /change standby-timeout-ac 0
+   powercfg /change hibernate-timeout-ac 0
+   powercfg /h off
+   powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0
+   powercfg /setactive SCHEME_CURRENT
+   ```
+
+   Docker Desktop only runs inside a signed-in session, so either configure automatic sign-in (`netplwiz` or Sysinternals Autologon) and protect the disk with BitLocker, or run Docker Engine inside WSL2 with systemd and a boot-time scheduled task instead of Docker Desktop. Set Windows Update active hours so restarts fall outside the London and New York sessions. Containers return on their own (`restart: unless-stopped`); the Ollama app and the tunnel service below start with Windows.
+5. Install the tunnel as a Windows service so it survives reboots without a shell: a named Cloudflare Tunnel (`cloudflared service install <token>`) or `ngrok service install`, both pointing at `http://localhost:8787`. Docker Desktop publishes the loopback ports on the Windows side, so a Windows service reaches the gateway at that address. Set `PUBLIC_WEBHOOK_URL` and rerun `bash scripts/start.sh`.
+6. From an earlier `.env`, copy only `TELEGRAM_*`, `SYMBOLS`, and rule settings. Let `scripts/setup.py` generate fresh secrets and a new webhook path, create the n8n owner account, then create the TradingView alert with the URL in `.local/webhook-url.txt`.
+
 ## Connect TradingView
 
 1. Give `http://localhost:8787` a public HTTPS tunnel, using a stable hostname for ongoing use. Only the exact generated webhook path is proxied; other paths return 404. Do not tunnel the n8n editor or analyzer ports.
