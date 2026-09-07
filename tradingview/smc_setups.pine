@@ -1,436 +1,712 @@
 //@version=6
-indicator("Cambotix Zebra — SMC/ICT Analyst 15m", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=200)
+indicator("Cambotix Zebra — SMC Coach 15m", overlay=true, max_lines_count=300, max_labels_count=300, max_boxes_count=100, max_bars_back=1000)
 
-// ── Bias: Daily -> 4H structure (professional top-down) ────────────────────────────────────────
-biasMode = input.string("Daily and 4H agree", "HTF bias source", options=["Daily and 4H agree", "Daily only", "4H only", "Off"], group="1. Bias")
-// ── Liquidity map ──────────────────────────────────────────────────────────────────────────────
+// A rules-based chart guide. A score is NOT a win probability. No orders are placed.
+// SETUP = a future retest plan. BUY/SELL = a later confirmation at that candle's CLOSE.
+// Webhook JSON remains the original BUY_SETUP / SELL_SETUP contract (FVG midpoint).
+
+biasMode = input.string("Daily and 4H agree", "HTF bias source", options=["Daily and 4H agree", "Daily only", "4H only", "Off"], group="1. Direction")
+pivotLen = input.int(3, "Swing confirmation: candles each side", minval=1, maxval=20, tooltip="3 means a swing is known 3 candles later. Direction uses completed Daily / 4H candles.", group="1. Direction")
 asiaSession = input.session("2000-0000", "Asian range (New York time)", group="2. Liquidity")
-eqTolAtr    = input.float(0.1, "Equal highs/lows tolerance (ATR x)", minval=0, step=0.05, group="2. Liquidity")
-minRr       = input.float(1.5, "Minimum RR to the draw-on-liquidity target", minval=0.5, step=0.1, group="2. Liquidity")
-rangeBars   = input.int(96, "Dealing-range lookback (bars)", minval=10, group="2. Liquidity")
-// ── Structure / entry model ────────────────────────────────────────────────────────────────────
-pivotLen        = input.int(3, "Swing pivot length (bars each side)", minval=1, group="3. Structure")
-dispAtr         = input.float(1.0, "Displacement candle body >= ATR x", minval=0.1, step=0.1, group="3. Structure")
-minFvgAtr       = input.float(0.1, "Minimum FVG size (ATR x)", minval=0, step=0.05, group="3. Structure")
-waitBars        = input.int(12, "Bars allowed between sweep and MSS", minval=1, group="3. Structure")
-requireDiscount = input.bool(true, "Longs only in discount, shorts only in premium", group="3. Structure")
-// ── Time: killzones (New York time; match analyzer KILLZONES) ──────────────────────────────────
-useLondonKz    = input.bool(true, "London open 02:00-05:00", group="4. Killzones (New York time)")
-useNyAmKz      = input.bool(true, "New York open 08:30-11:00", group="4. Killzones (New York time)")
-useLondonClose = input.bool(false, "London close 10:00-12:00", group="4. Killzones (New York time)")
-useNyPmKz      = input.bool(false, "New York PM 13:30-16:00", group="4. Killzones (New York time)")
-cryptoAllDays  = input.bool(true, "Crypto: killzones apply on all 7 days", group="4. Killzones (New York time)")
-// ── Risk ───────────────────────────────────────────────────────────────────────────────────────
-accountSize  = input.float(0, "Account size (0 = hide position size)", minval=0, group="5. Risk")
-riskPercent  = input.float(0.5, "Risk per trade (%)", minval=0.01, step=0.05, group="5. Risk")
-contractSize = input.float(100, "Units per lot (XAUUSD 100, BTC 1)", minval=0.0001, group="5. Risk")
-// ── Analyst engine ─────────────────────────────────────────────────────────────────────────────
-wHtf   = input.int(20, "Weight: HTF bias aligned", minval=0, group="6. Analyst engine")
-wSweep = input.int(20, "Weight: liquidity swept", minval=0, group="6. Analyst engine")
-wMss   = input.int(20, "Weight: structure shift with displacement", minval=0, group="6. Analyst engine")
-wFvg   = input.int(15, "Weight: fair value gap present", minval=0, group="6. Analyst engine")
-wZone  = input.int(10, "Weight: entry in discount / premium", minval=0, group="6. Analyst engine")
-wKz    = input.int(10, "Weight: killzone open", minval=0, group="6. Analyst engine")
-wOb    = input.int(5, "Weight: order block present", minval=0, group="6. Analyst engine")
-minScore  = input.int(70, "Minimum analyst score to alert", minval=0, maxval=100, group="6. Analyst engine")
-trackBars = input.int(48, "Outcome memory: bars allowed for the entry to fill", minval=4, group="6. Analyst engine")
-// ── Chart / display ────────────────────────────────────────────────────────────────────────────
-allowedTickers = input.string("XAUUSD,BTCUSD,BTCUSDT", "Allowed tickers (match analyzer SYMBOLS)", group="7. Chart")
-tpMultiples    = input.string("1,2,3,4", "Take-profit R multiples (match TP_R_MULTIPLES)", group="7. Chart")
-levelBars = input.int(48, "Extend level lines (bars)", minval=1, maxval=500, group="7. Chart")
-showZones = input.bool(true, "Draw FVG / order block zones", group="7. Chart")
-showPools = input.bool(true, "Plot PDH/PDL, PWH/PWL, Asian range, equal highs/lows", group="7. Chart")
-showTable = input.bool(true, "Show analyst table", group="7. Chart")
+eqTolAtr = input.float(0.1, "Equal highs/lows tolerance (ATR x)", minval=0, step=0.05, group="2. Liquidity")
+rangeBars = input.int(96, "Price range lookback (candles)", minval=10, maxval=500, group="2. Liquidity")
+minRr = input.float(1.5, "Minimum reward / risk to real liquidity", minval=0.5, step=0.1, tooltip="No suitable untouched level = no setup. TP1 is never invented.", group="2. Liquidity")
+dispAtr = input.float(1.0, "Strong candle body at least ATR x", minval=0.1, step=0.1, group="3. Setup and entry")
+minFvgAtr = input.float(0.1, "Minimum FVG size (ATR x)", minval=0, step=0.05, group="3. Setup and entry")
+waitBars = input.int(12, "Maximum candles from sweep to MSS", minval=1, maxval=100, group="3. Setup and entry")
+requireDiscount = input.bool(true, "Buy in lower half / sell in upper half", group="3. Setup and entry")
+requireOb = input.bool(false, "Also require an order block", group="3. Setup and entry")
+obLookback = input.int(20, "Order block search (candles)", minval=2, maxval=100, tooltip="Full high/low of the last opposite candle between the sweep and displacement.", group="3. Setup and entry")
+trackBars = input.int(48, "Expire a plan after this many candles", minval=1, maxval=500, group="3. Setup and entry")
+outcomeBars = input.int(192, "Stop tracking an open example after candles", minval=1, maxval=2000, group="3. Setup and entry")
+useLondonKz = input.bool(true, "London open 02:00-05:00", group="4. Sessions (New York time)")
+useNyAmKz = input.bool(true, "New York open 08:30-11:00", group="4. Sessions (New York time)")
+useNyPmKz = input.bool(false, "New York PM 13:30-16:00", group="4. Sessions (New York time)")
+cryptoAllDays = input.bool(true, "Crypto: sessions on all 7 days", group="4. Sessions (New York time)")
+stopBuffer = input.float(0.1, "Stop buffer beyond sweep (ATR x)", minval=0.01, step=0.05, group="5. Risk filters")
+minRiskAtr = input.float(0.3, "Minimum stop distance (ATR x)", minval=0.01, step=0.1, group="5. Risk filters")
+maxRiskAtr = input.float(3.0, "Maximum stop distance (ATR x)", minval=0.1, step=0.1, group="5. Risk filters")
+minAtrPct = input.float(0.02, "Minimum ATR as % of price", minval=0, step=0.01, group="5. Risk filters")
+maxAtrPct = input.float(0.5, "Maximum ATR as % of price", minval=0.01, step=0.05, tooltip="Match these filters to the analyzer when using webhooks.", group="5. Risk filters")
+wHtf = input.int(20, "Weight: direction agrees", minval=0, maxval=100, group="6. Rule score (not accuracy)")
+wSweep = input.int(20, "Weight: liquidity swept", minval=0, maxval=100, group="6. Rule score (not accuracy)")
+wMss = input.int(20, "Weight: strong structure break", minval=0, maxval=100, group="6. Rule score (not accuracy)")
+wFvg = input.int(15, "Weight: fair value gap", minval=0, maxval=100, group="6. Rule score (not accuracy)")
+wZone = input.int(10, "Weight: lower / upper half", minval=0, maxval=100, group="6. Rule score (not accuracy)")
+wKz = input.int(10, "Weight: session open", minval=0, maxval=100, group="6. Rule score (not accuracy)")
+wOb = input.int(5, "Weight: order block", minval=0, maxval=100, group="6. Rule score (not accuracy)")
+minScore = input.int(70, "Minimum rule score for a setup", minval=0, maxval=100, group="6. Rule score (not accuracy)")
+allowedTickers = input.string("XAUUSD,BTCUSD,BTCUSDT", "Allowed tickers", group="7. Chart")
+levelBars = input.int(35, "Project current drawings (candles)", minval=5, maxval=100, group="7. Chart")
+showPools = input.bool(true, "Draw named liquidity levels", group="7. Chart")
+showStructure = input.bool(true, "Draw swings, sweeps and MSS", group="7. Chart")
+showZones = input.bool(true, "Draw FVG and order block boxes", group="7. Chart")
+showRange = input.bool(true, "Shade premium / discount", group="7. Chart")
+showSessions = input.bool(true, "Shade trading sessions", group="7. Chart")
+showTable = input.bool(true, "Show simple step-by-step panel", group="7. Chart")
+zoneHistory = input.int(12, "Keep recent context boxes", minval=2, maxval=40, group="7. Chart")
+eventHistory = input.int(45, "Keep recent structure labels", minval=5, maxval=100, group="7. Chart")
+panelCorner = input.string("Top right", "Panel corner", options=["Top right", "Bottom right", "Top left", "Bottom left"], group="7. Chart")
+panelFont = input.string("Small", "Panel text size", options=["Small", "Normal"], group="7. Chart")
+tpMultiples = input.string("1,2,3,4", "Extra targets in R (maximum TP4)", group="7. Chart")
 
-// ── Context ────────────────────────────────────────────────────────────────────────────────────
+color buyColor = color.rgb(19, 163, 127)
+color sellColor = color.rgb(224, 76, 98)
+color waitColor = color.rgb(210, 151, 46)
+color ink = color.rgb(19, 26, 40)
+priceText(float value) => na(value) ? "none" : str.tostring(value, format.mintick)
+biasWord(int b) => b == 1 ? "UP - look for buys" : b == -1 ? "DOWN - look for sells" : "UNCLEAR - wait"
+biasColor(int b) => b == 1 ? buyColor : b == -1 ? sellColor : waitColor
+
+// Bounded collections keep drawings below TradingView object limits.
+var array<label> events = array.new<label>()
+var array<line> structureLines = array.new<line>()
+eventMark(float y, string caption, bool below, color tone, string detail) =>
+    events.push(label.new(bar_index, y, caption, style=below ? label.style_label_up : label.style_label_down, color=tone, textcolor=color.white, size=size.small, tooltip=detail))
+    if events.size() > eventHistory
+        label.delete(events.shift())
+
+structureMark(int start, float level, string caption, bool bullish) =>
+    structureLines.push(line.new(math.max(start, bar_index - 9999), level, bar_index, level, color=bullish ? buyColor : sellColor, width=2, style=line.style_dashed))
+    if structureLines.size() > eventHistory
+        line.delete(structureLines.shift())
+    eventMark(level, caption + " " + priceText(level), bullish, bullish ? buyColor : sellColor, "Confirmed on this candle's close. MSS = market structure shift. A structure break alone is not an entry.")
+
 atr = ta.atr(14)
 atrPercent = atr / close * 100
 isCrypto = syminfo.type == "crypto"
-tickerOk = str.contains("," + str.replace_all(allowedTickers, " ", "") + ",", "," + syminfo.ticker + ",")
-chartOk = tickerOk and timeframe.isminutes and timeframe.multiplier == 15
+tickerOk = str.contains("," + str.upper(str.replace_all(allowedTickers, " ", "")) + ",", "," + str.upper(syminfo.ticker) + ",")
+chartOk = tickerOk and timeframe.isminutes and timeframe.multiplier == 15 and chart.is_standard
+inputsOk = maxRiskAtr >= minRiskAtr and maxAtrPct >= minAtrPct
+dataReady = not na(atr) and bar_index >= rangeBars
+volatilityOk = atrPercent >= minAtrPct and atrPercent <= maxAtrPct
 days = isCrypto and cryptoAllDays ? "1234567" : "23456"
 inLondonKz = useLondonKz and not na(time(timeframe.period, "0200-0500:" + days, "America/New_York"))
 inNyAmKz = useNyAmKz and not na(time(timeframe.period, "0830-1100:" + days, "America/New_York"))
-inLondonClose = useLondonClose and not na(time(timeframe.period, "1000-1200:" + days, "America/New_York"))
 inNyPmKz = useNyPmKz and not na(time(timeframe.period, "1330-1600:" + days, "America/New_York"))
-inKillzone = inLondonKz or inNyAmKz or inLondonClose or inNyPmKz
-kzName = inLondonKz ? "London" : inNyAmKz ? "NY AM" : inLondonClose ? "London close" : inNyPmKz ? "NY PM" : "none"
+inKillzone = inLondonKz or inNyAmKz or inNyPmKz
+kzName = inLondonKz ? "London" : inNyAmKz ? "NY AM" : inNyPmKz ? "NY PM" : "none"
 
-// ── 1. Bias: structure on Daily and 4H (direction of the last break of a confirmed swing) ──────
+// Completed higher-timeframe values, not the still-forming Daily or 4H bar.
 structureBias() =>
     float hph = ta.pivothigh(high, pivotLen, pivotLen)
     float hpl = ta.pivotlow(low, pivotLen, pivotLen)
-    var float sHigh = na
-    var float sLow = na
-    var int bias = 0
+    var float swingHigh = na
+    var float swingLow = na
+    var int direction = 0
     if not na(hph)
-        sHigh := hph
+        swingHigh := hph
     if not na(hpl)
-        sLow := hpl
-    if not na(sHigh) and close > sHigh
-        bias := 1
-    if not na(sLow) and close < sLow
-        bias := -1
-    bias
+        swingLow := hpl
+    if not na(swingHigh) and close > swingHigh
+        direction := 1
+    if not na(swingLow) and close < swingLow
+        direction := -1
+    direction
 
-dailyBias = request.security(syminfo.tickerid, "D", structureBias(), lookahead=barmerge.lookahead_off)
-h4Bias = request.security(syminfo.tickerid, "240", structureBias(), lookahead=barmerge.lookahead_off)
+dailyBias = request.security(syminfo.tickerid, "D", structureBias()[1], lookahead=barmerge.lookahead_on)
+h4Bias = request.security(syminfo.tickerid, "240", structureBias()[1], lookahead=barmerge.lookahead_on)
 htfBias = biasMode == "Daily and 4H agree" ? (dailyBias == h4Bias ? dailyBias : 0) : biasMode == "Daily only" ? dailyBias : biasMode == "4H only" ? h4Bias : 0
 requireHtf = biasMode != "Off"
-
-// ── 2. Liquidity map: PDH/PDL, PWH/PWL, Asian range, equal highs/lows, swings ──────────────────
 [pdh, pdl] = request.security(syminfo.tickerid, "D", [high[1], low[1]], lookahead=barmerge.lookahead_on)
 [pwh, pwl] = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_on)
+newDay = timeframe.change("D")
+newWeek = timeframe.change("W")
 inAsia = not na(time(timeframe.period, asiaSession + ":1234567", "America/New_York"))
+asiaComplete = not inAsia and inAsia[1]
 var float asiaHi = na
 var float asiaLo = na
 var float asiaHigh = na
 var float asiaLow = na
-if inAsia and not inAsia[1]
-    asiaHi := high
-    asiaLo := low
-else if inAsia
-    asiaHi := math.max(asiaHi, high)
-    asiaLo := math.min(asiaLo, low)
-if not inAsia and inAsia[1]
-    asiaHigh := asiaHi
-    asiaLow := asiaLo
+if barstate.isconfirmed
+    if inAsia and not inAsia[1]
+        asiaHi := high
+        asiaLo := low
+    else if inAsia
+        asiaHi := na(asiaHi) ? high : math.max(asiaHi, high)
+        asiaLo := na(asiaLo) ? low : math.min(asiaLo, low)
+    if asiaComplete
+        asiaHigh := asiaHi
+        asiaLow := asiaLo
 
 ph = ta.pivothigh(high, pivotLen, pivotLen)
 pl = ta.pivotlow(low, pivotLen, pivotLen)
 var float lastHigh = na
 var float lastLow = na
-var float prevHigh = na
-var float prevLow = na
 var float eqh = na
 var float eql = na
-if not na(ph)
-    prevHigh := lastHigh
-    lastHigh := ph
-    if not na(prevHigh) and math.abs(ph - prevHigh) <= eqTolAtr * atr
-        eqh := math.max(ph, prevHigh)
-if not na(pl)
-    prevLow := lastLow
-    lastLow := pl
-    if not na(prevLow) and math.abs(pl - prevLow) <= eqTolAtr * atr
-        eql := math.min(pl, prevLow)
-if not na(eqh) and close > eqh
-    eqh := na
-if not na(eql) and close < eql
-    eql := na
+var int lastHighBar = na
+var int lastLowBar = na
+var bool highBroken = false
+var bool lowBroken = false
 var int ltfBias = 0
-if not na(lastHigh) and close > lastHigh
-    ltfBias := 1
-if not na(lastLow) and close < lastLow
-    ltfBias := -1
+bool newEqHigh = false
+bool newEqLow = false
+if barstate.isconfirmed
+    if not na(ph)
+        newEqHigh := not na(lastHigh) and math.abs(ph - lastHigh) <= eqTolAtr * atr[pivotLen]
+        if newEqHigh
+            eqh := math.max(ph, lastHigh)
+        if showStructure and chartOk
+            eventMark(high, na(lastHigh) ? "Swing high confirmed" : ph > lastHigh ? "HH - higher high" : "LH - lower high", false, color.new(sellColor, 25), "Swing price " + priceText(ph) + " from " + str.tostring(pivotLen) + " candles ago. This label marks when it became known.")
+        lastHigh := ph
+        lastHighBar := bar_index - pivotLen
+        highBroken := false
+    if not na(pl)
+        newEqLow := not na(lastLow) and math.abs(pl - lastLow) <= eqTolAtr * atr[pivotLen]
+        if newEqLow
+            eql := math.min(pl, lastLow)
+        if showStructure and chartOk
+            eventMark(low, na(lastLow) ? "Swing low confirmed" : pl > lastLow ? "HL - higher low" : "LL - lower low", true, color.new(buyColor, 25), "Swing price " + priceText(pl) + " from " + str.tostring(pivotLen) + " candles ago. This label marks when it became known.")
+        lastLow := pl
+        lastLowBar := bar_index - pivotLen
+        lowBroken := false
 
 rangeHighExt = ta.highest(high, rangeBars)
 rangeLowExt = ta.lowest(low, rangeBars)
 
-// nearest liquidity pool beyond a price in one direction with reward >= minRr x risk (risk 0 = nearest pool)
-pickTarget(bool isBuy, float entry, float risk) =>
-    array<float> lv = array.from(isBuy ? prevHigh : prevLow, isBuy ? lastHigh : lastLow, isBuy ? pdh : pdl, isBuy ? pwh : pwl, isBuy ? asiaHigh : asiaLow, isBuy ? eqh : eql, isBuy ? rangeHighExt : rangeLowExt)
-    array<string> nm = array.from("swing", "swing", isBuy ? "PDH" : "PDL", isBuy ? "PWH" : "PWL", isBuy ? "Asia high" : "Asia low", isBuy ? "EQH" : "EQL", isBuy ? "range high" : "range low")
+// Each named pool can be used once until that day/week/session/swing is replaced.
+var array<float> poolValues = array.new<float>(10, na)
+var array<bool> poolFresh = array.new<bool>(10, false)
+var array<string> poolNames = array.from("PDH", "PDL", "PWH", "PWL", "Asia high", "Asia low", "EQH", "EQL", "Swing high", "Swing low")
+var array<string> poolMeaning = array.from("Previous day high", "Previous day low", "Previous week high", "Previous week low", "Completed Asian range high", "Completed Asian range low", "Equal highs", "Equal lows", "Last confirmed swing high", "Last confirmed swing low")
+string sweptLowName = ""
+string sweptHighName = ""
+if barstate.isconfirmed
+    array<float> currentPools = array.from(pdh, pdl, pwh, pwl, asiaHigh, asiaLow, eqh, eql, lastHigh, lastLow)
+    array<bool> resets = array.from(newDay, newDay, newWeek, newWeek, asiaComplete, asiaComplete, newEqHigh, newEqLow, not na(ph), not na(pl))
+    for i = 0 to 9
+        float level = currentPools.get(i)
+        float previous = poolValues.get(i)
+        if not na(level) and (na(previous) or level != previous or resets.get(i))
+            poolValues.set(i, level)
+            poolFresh.set(i, true)
+        bool upper = i % 2 == 0
+        bool touched = not na(level) and (upper ? high >= level : low <= level)
+        if poolFresh.get(i) and touched
+            if upper and high > level and close < level and sweptHighName == ""
+                sweptHighName := poolNames.get(i)
+            if not upper and low < level and close > level and sweptLowName == ""
+                sweptLowName := poolNames.get(i)
+            poolFresh.set(i, false)
+
+// Search only real, still-available levels beyond the formation candle as well as entry.
+pickTarget(bool isBuy, float entry, float risk, float beyond) =>
     float best = na
-    string bestName = ""
-    for i = 0 to lv.size() - 1
-        float level = lv.get(i)
-        if not na(level)
-            float reward = isBuy ? level - entry : entry - level
-            if reward > 0 and reward >= minRr * risk and (na(best) or (isBuy ? level < best : level > best))
+    string bestName = "none"
+    for i = 0 to 9
+        float level = poolValues.get(i)
+        bool correctSide = isBuy ? i % 2 == 0 : i % 2 == 1
+        float reward = isBuy ? level - entry : entry - level
+        bool ahead = isBuy ? level > beyond : level < beyond
+        if poolFresh.get(i) and correctSide and not na(level) and ahead and reward > 0 and reward >= minRr * risk
+            if na(best) or (isBuy ? level < best : level > best)
                 best := level
-                bestName := nm.get(i)
-    if na(best)
-        best := isBuy ? entry + 2 * risk : entry - 2 * risk
-        bestName := "2R"
+                bestName := poolNames.get(i)
     [best, bestName]
 
-poolsText(bool above) =>
-    string s = ""
-    s += not na(above ? pdh : pdl) and (above ? pdh > close : pdl < close) ? (above ? "PDH " : "PDL ") + str.tostring(above ? pdh : pdl, format.mintick) + "  " : ""
-    s += not na(above ? pwh : pwl) and (above ? pwh > close : pwl < close) ? (above ? "PWH " : "PWL ") + str.tostring(above ? pwh : pwl, format.mintick) + "  " : ""
-    s += not na(above ? asiaHigh : asiaLow) and (above ? asiaHigh > close : asiaLow < close) ? "Asia " + str.tostring(above ? asiaHigh : asiaLow, format.mintick) + "  " : ""
-    s += not na(above ? eqh : eql) ? (above ? "EQH " : "EQL ") + str.tostring(above ? eqh : eql, format.mintick) + "  " : ""
-    s += not na(above ? lastHigh : lastLow) and (above ? lastHigh > close : lastLow < close) ? "swing " + str.tostring(above ? lastHigh : lastLow, format.mintick) : ""
-    s == "" ? "none nearby" : s
-
-// ── 3. Liquidity sweep -> displacement -> MSS -> FVG ───────────────────────────────────────────
-sweptBelow(float level) => not na(level) and low < level and close > level
-sweptAbove(float level) => not na(level) and high > level and close < level
-sweptLowName = sweptBelow(eql) ? "EQL" : sweptBelow(pdl) ? "PDL" : sweptBelow(pwl) ? "PWL" : sweptBelow(asiaLow) ? "Asia low" : sweptBelow(lastLow) ? "swing low" : ""
-sweptHighName = sweptAbove(eqh) ? "EQH" : sweptAbove(pdh) ? "PDH" : sweptAbove(pwh) ? "PWH" : sweptAbove(asiaHigh) ? "Asia high" : sweptAbove(lastHigh) ? "swing high" : ""
-
+// State 1 waits for a NEW strong close through the level frozen at the sweep.
+// State 2 waits exactly one more candle to confirm the displacement's FVG.
 var int longState = 0
-var float longSweep = na
-var float longMss = na
-var int longSweepBar = na
-var string longSwept = ""
-if longState == 1 and (bar_index - longSweepBar > waitBars or close < longSweep)
-    longState := 0
-if sweptLowName != "" and not na(lastHigh)
-    longState := 1
-    longSweep := low
-    longMss := lastHigh
-    longSweepBar := bar_index
-    longSwept := sweptLowName
-else if longState == 1 and low < longSweep
-    longSweep := low
-
 var int shortState = 0
+var float longSweep = na
 var float shortSweep = na
+var float longMss = na
 var float shortMss = na
+var int longSweepBar = na
 var int shortSweepBar = na
+var int longShiftBar = na
+var int shortShiftBar = na
+var string longSwept = ""
 var string shortSwept = ""
-if shortState == 1 and (bar_index - shortSweepBar > waitBars or close > shortSweep)
-    shortState := 0
-if sweptHighName != "" and not na(lastLow)
-    shortState := 1
-    shortSweep := high
-    shortMss := lastLow
-    shortSweepBar := bar_index
-    shortSwept := sweptHighName
-else if shortState == 1 and high > shortSweep
-    shortSweep := high
+bool bullMssEvent = false
+bool bearMssEvent = false
+body = math.abs(close - open)
+bullDisplacement = close > open and body >= dispAtr * atr
+bearDisplacement = close < open and body >= dispAtr * atr
+bullFvg = low > high[2] and low - high[2] >= minFvgAtr * atr and bullDisplacement[1]
+bearFvg = high < low[2] and low[2] - high >= minFvgAtr * atr and bearDisplacement[1]
+if barstate.isconfirmed and chartOk and dataReady
+    if longState != 0 and (bar_index - longSweepBar > waitBars + (longState == 2 ? 1 : 0) or low < longSweep)
+        longState := 0
+    if shortState != 0 and (bar_index - shortSweepBar > waitBars + (shortState == 2 ? 1 : 0) or high > shortSweep)
+        shortState := 0
+    bool doubleSweep = sweptLowName != "" and sweptHighName != ""
+    if doubleSweep
+        longState := 0
+        shortState := 0
+        if showStructure
+            eventMark(high, "Both sides swept - wait", false, waitColor, "This candle swept highs and lows. Direction is ambiguous, so it cannot start a setup.")
+    else
+        if sweptLowName != "" and not na(lastHigh) and close <= lastHigh and longState == 0
+            longState := 1
+            longSweep := low
+            longMss := lastHigh
+            longSweepBar := bar_index
+            longSwept := sweptLowName
+            if showStructure
+                eventMark(low, "1. LOW SWEPT - " + sweptLowName, true, buyColor, "Price poked below liquidity and closed back above. Wait for a later strong close above " + priceText(longMss) + ".")
+        if sweptHighName != "" and not na(lastLow) and close >= lastLow and shortState == 0
+            shortState := 1
+            shortSweep := high
+            shortMss := lastLow
+            shortSweepBar := bar_index
+            shortSwept := sweptHighName
+            if showStructure
+                eventMark(high, "1. HIGH SWEPT - " + sweptHighName, false, sellColor, "Price poked above liquidity and closed back below. Wait for a later strong close below " + priceText(shortMss) + ".")
+    bullMssEvent := longState == 1 and bar_index > longSweepBar and close[1] <= longMss and close > longMss and bullDisplacement
+    bearMssEvent := shortState == 1 and bar_index > shortSweepBar and close[1] >= shortMss and close < shortMss and bearDisplacement
+    if bullMssEvent
+        longState := 2
+        longShiftBar := bar_index
+        if showStructure
+            structureMark(longSweepBar, longMss, "2. MSS UP", true)
+    if bearMssEvent
+        shortState := 2
+        shortShiftBar := bar_index
+        if showStructure
+            structureMark(shortSweepBar, shortMss, "2. MSS DOWN", false)
+    if not highBroken and not na(lastHigh) and close > lastHigh
+        if showStructure and not bullMssEvent
+            structureMark(lastHighBar, lastHigh, ltfBias == 1 ? "BOS UP" : "Structure UP", true)
+        highBroken := true
+        ltfBias := 1
+    if not lowBroken and not na(lastLow) and close < lastLow
+        if showStructure and not bearMssEvent
+            structureMark(lastLowBar, lastLow, ltfBias == -1 ? "BOS DOWN" : "Structure DOWN", false)
+        lowBroken := true
+        ltfBias := -1
 
-body1 = math.abs(close[1] - open[1])
-bullDisp = close[1] > open[1] and body1 >= dispAtr * atr
-bearDisp = close[1] < open[1] and body1 >= dispAtr * atr
-bullFvg = low > high[2] and low - high[2] >= minFvgAtr * atr
-bearFvg = high < low[2] and low[2] - high >= minFvgAtr * atr
-
-lastOpposing(bool bullish) =>
+lastOpposing(bool bullish, int sweepBar) =>
     float top = na
     float bottom = na
-    for i = 2 to 8
-        if bullish ? close[i] < open[i] : close[i] > open[i]
-            top := math.max(open[i], close[i])
-            bottom := math.min(open[i], close[i])
+    int origin = na
+    for i = 2 to obLookback
+        if not na(sweepBar) and bar_index - i >= sweepBar and (bullish ? close[i] < open[i] : close[i] > open[i])
+            top := high[i]
+            bottom := low[i]
+            origin := bar_index - i
             break
-    [top, bottom]
+    [top, bottom, origin]
 
-ceL = (low + high[2]) / 2
+type ContextZone
+    box drawing
+    bool bullish
+    bool gap
+    int created
+    bool active = true
+    bool touched = false
+var array<ContextZone> zones = array.new<ContextZone>()
+addZone(bool bullish, bool gap, int origin, float top, float bottom) =>
+    color tone = gap ? (bullish ? buyColor : sellColor) : color.rgb(75, 127, 221)
+    string caption = (bullish ? "BUY " : "SELL ") + (gap ? "FVG - possible return area" : "OB - possible reaction area")
+    box drawing = box.new(origin, top, bar_index + levelBars, bottom, border_color=color.new(tone, 40), bgcolor=color.new(tone, 88), text=caption, text_color=tone, text_size=size.small, text_halign=text.align_left)
+    zones.push(ContextZone.new(drawing, bullish, gap, bar_index))
+    if zones.size() > zoneHistory
+        ContextZone oldest = zones.shift()
+        box.delete(oldest.drawing)
+
+if barstate.isconfirmed and zones.size() > 0
+    for i = 0 to zones.size() - 1
+        ContextZone zone = zones.get(i)
+        if zone.active and bar_index > zone.created
+            float top = box.get_top(zone.drawing)
+            float bottom = box.get_bottom(zone.drawing)
+            bool invalid = zone.bullish ? close < bottom : close > top
+            bool old = bar_index - zone.created > trackBars
+            if invalid or old
+                zone.active := false
+                box.set_right(zone.drawing, bar_index)
+                box.set_bgcolor(zone.drawing, color.new(color.gray, 94))
+                box.set_border_color(zone.drawing, color.new(color.gray, 75))
+                box.set_text_color(zone.drawing, color.gray)
+                box.set_text(zone.drawing, (zone.gap ? "FVG" : "OB") + (invalid ? " - broken" : " - expired"))
+            else
+                box.set_right(zone.drawing, bar_index + levelBars)
+                if low <= top and high >= bottom and not zone.touched
+                    zone.touched := true
+                    box.set_text(zone.drawing, (zone.bullish ? "BUY " : "SELL ") + (zone.gap ? "FVG" : "OB") + " - touched; wait for signal")
+
+[obTopL, obBotL, obBarL] = lastOpposing(true, longSweepBar)
+[obTopS, obBotS, obBarS] = lastOpposing(false, shortSweepBar)
+ceL = math.round_to_mintick((low + high[2]) / 2)
+ceS = math.round_to_mintick((high + low[2]) / 2)
 eqL = (rangeHighExt + longSweep) / 2
-mssBrokenL = longState == 1 and math.max(close, close[1]) > longMss
-stopL = longSweep - 0.1 * atr
-[targetL, targetNameL] = pickTarget(true, ceL, ceL - stopL)
-
-ceS = (high + low[2]) / 2
 eqS = (shortSweep + rangeLowExt) / 2
-mssBrokenS = shortState == 1 and math.min(close, close[1]) < shortMss
-stopS = shortSweep + 0.1 * atr
-[targetS, targetNameS] = pickTarget(false, ceS, stopS - ceS)
-
-// ── 6. Analyst engine: confluence score, narrative, outcome memory ─────────────────────────────
-[obTopL, obBotL] = lastOpposing(true)
-[obTopS, obBotS] = lastOpposing(false)
-scoreTotal = wHtf + wSweep + wMss + wFvg + wZone + wKz + wOb
+stopL = math.floor((longSweep - stopBuffer * atr) / syminfo.mintick) * syminfo.mintick
+stopS = math.ceil((shortSweep + stopBuffer * atr) / syminfo.mintick) * syminfo.mintick
+[targetL, targetNameL] = pickTarget(true, ceL, ceL - stopL, high)
+[targetS, targetNameS] = pickTarget(false, ceS, stopS - ceS, low)
+candidateL = barstate.isconfirmed and longState == 2 and longShiftBar == bar_index - 1 and bullFvg and close > longMss
+candidateS = barstate.isconfirmed and shortState == 2 and shortShiftBar == bar_index - 1 and bearFvg and close < shortMss
 
 scoreFor(bool isBuy) =>
-    bool armed = isBuy ? longState == 1 : shortState == 1
-    bool shifted = isBuy ? mssBrokenL and bullDisp : mssBrokenS and bearDisp
-    bool gap = isBuy ? bullFvg : bearFvg
-    bool zoneOk = armed and (isBuy ? ceL < eqL : ceS > eqS)
+    bool shifted = isBuy ? candidateL : candidateS
+    bool armed = isBuy ? longState != 0 : shortState != 0
+    bool locationOk = isBuy ? ceL < eqL : ceS > eqS
     bool obOk = not na(isBuy ? obTopL : obTopS)
-    int points = 0
-    points += (isBuy ? htfBias == 1 : htfBias == -1) ? wHtf : 0
+    int total = (requireHtf ? wHtf : 0) + wSweep + wMss + wFvg + (requireDiscount ? wZone : 0) + wKz + wOb
+    int points = requireHtf and htfBias == (isBuy ? 1 : -1) ? wHtf : 0
     points += armed ? wSweep : 0
     points += shifted ? wMss : 0
-    points += gap ? wFvg : 0
-    points += zoneOk ? wZone : 0
+    points += shifted ? wFvg : 0
+    points += requireDiscount and locationOk ? wZone : 0
     points += inKillzone ? wKz : 0
-    points += obOk ? wOb : 0
-    scoreTotal > 0 ? math.round(100.0 * points / scoreTotal) : 0
-
+    points += obOk and shifted ? wOb : 0
+    total > 0 ? int(math.round(100.0 * points / total)) : 0
 scoreL = scoreFor(true)
 scoreS = scoreFor(false)
-grade(int score) => score >= 80 ? "A" : score >= 60 ? "B" : score >= 40 ? "C" : "D"
-biasWord(int b) => b == 1 ? "bullish" : b == -1 ? "bearish" : "neutral"
 
-narrative(bool isBuy) =>
-    bool armed = isBuy ? longState == 1 : shortState == 1
-    bool biasOk = isBuy ? htfBias == 1 : htfBias == -1
-    string read = biasOk ? "HTF " + (isBuy ? "bullish" : "bearish") + ". " : "HTF not aligned. "
-    if armed
-        read += (isBuy ? longSwept : shortSwept) + " swept at " + str.tostring(isBuy ? longSweep : shortSweep, format.mintick) + "; need displacement close " + (isBuy ? "above " : "below ") + str.tostring(isBuy ? longMss : shortMss, format.mintick) + " leaving an FVG. Draw: " + (isBuy ? targetNameL : targetNameS) + " " + str.tostring(isBuy ? targetL : targetS, format.mintick)
-    else
-        read += "Waiting for a sweep of " + (isBuy ? "sell-side" : "buy-side") + " liquidity: " + poolsText(not isBuy)
-    read
+validRisk(bool isBuy, float entry, float stop, float target) =>
+    float risk = isBuy ? entry - stop : stop - entry
+    float reward = isBuy ? target - entry : entry - target
+    not na(target) and entry > 0 and stop > 0 and target > 0 and risk >= minRiskAtr * atr and risk <= maxRiskAtr * atr and reward >= minRr * risk
 
-var array<float> mEntry = array.new<float>()
-var array<float> mStop = array.new<float>()
-var array<float> mTarget = array.new<float>()
-var array<int> mDir = array.new<int>()
-var array<int> mBar = array.new<int>()
-var array<bool> mFilled = array.new<bool>()
+// One visible plan at a time. Entry is a confirmed close AFTER the planned midpoint retest.
+type TradePlan
+    int direction = 0
+    int state = 0
+    int created = na
+    int entered = na
+    float midpoint = na
+    float entry = na
+    float stop = na
+    float target = na
+    float top = na
+    float bottom = na
+    float rangeHigh = na
+    float rangeLow = na
+    int score = 0
+    string targetName = ""
+    string message = "WAIT - no complete setup yet"
+var TradePlan plan = TradePlan.new()
 var int wins = 0
 var int losses = 0
-var int unfilled = 0
+var int expired = 0
+var int cancelled = 0
+var int ambiguous = 0
+var int unresolved = 0
 var float realizedR = 0.0
+bool buyEntry = false
+bool sellEntry = false
+bool targetEvent = false
+bool stopEvent = false
+bool cancelEvent = false
+bool busyAtBarOpen = plan.state == 1 or plan.state == 2
 
-forget(int i) =>
-    mEntry.remove(i)
-    mStop.remove(i)
-    mTarget.remove(i)
-    mDir.remove(i)
-    mBar.remove(i)
-    mFilled.remove(i)
+// Result precedence is deliberate: expiry before retest, invalidation before entry.
+// No target/stop test on an entry's closing candle. Unknown OHLC ordering is excluded.
+if barstate.isconfirmed and plan.state == 1 and bar_index > plan.created
+    bool bullish = plan.direction == 1
+    bool biasLost = requireHtf and htfBias != plan.direction
+    bool stopTouched = bullish ? low <= plan.stop : high >= plan.stop
+    bool targetTouched = bullish ? high >= plan.target : low <= plan.target
+    bool gapBroken = bullish ? close < plan.bottom : close > plan.top
+    bool tooOld = bar_index - plan.created > trackBars
+    if tooOld or biasLost or stopTouched or targetTouched or gapBroken
+        plan.state := 3
+        plan.message := tooOld ? "EXPIRED - no confirmed entry" : biasLost ? "CANCELLED - direction changed" : stopTouched ? "CANCELLED - stop reached before entry" : targetTouched ? "MISSED - target reached before entry" : "CANCELLED - FVG closed through"
+        expired += tooOld ? 1 : 0
+        cancelled += tooOld ? 0 : 1
+        cancelEvent := true
+        eventMark(bullish ? low : high, plan.message, bullish, waitColor, "No BUY/SELL entry was confirmed. This is excluded from resolved outcomes.")
+    else
+        bool retested = low <= plan.midpoint and high >= plan.midpoint
+        bool rejection = bullish ? close > open and close > plan.top : close < open and close < plan.bottom
+        float equilibrium = (plan.rangeHigh + plan.rangeLow) / 2
+        bool locationOk = not requireDiscount or (bullish ? close < equilibrium : close > equilibrium)
+        if chartOk and inputsOk and inKillzone and volatilityOk and retested and rejection and locationOk and validRisk(bullish, close, plan.stop, plan.target)
+            plan.state := 2
+            plan.entry := close
+            plan.entered := bar_index
+            plan.message := bullish ? "BUY confirmed - reference entry at close" : "SELL confirmed - reference entry at close"
+            buyEntry := bullish
+            sellEntry := not bullish
+            eventMark(bullish ? low : high, (bullish ? "BUY" : "SELL") + " CONFIRMED\nEntry " + priceText(close) + " | Stop " + priceText(plan.stop) + "\nTP1 " + priceText(plan.target), bullish, bullish ? buyColor : sellColor, "The FVG midpoint was retested, then this candle closed back beyond the FVG. Entry is this close, not a retroactive midpoint fill. No order was placed.")
 
-if barstate.isconfirmed and mEntry.size() > 0
-    for i = mEntry.size() - 1 to 0
-        float e = mEntry.get(i)
-        float s = mStop.get(i)
-        float t = mTarget.get(i)
-        int d = mDir.get(i)
-        bool filled = mFilled.get(i)
-        int age = bar_index - mBar.get(i)
-        bool done = false
-        if not filled
-            if (d == 1 ? low <= e : high >= e)
-                filled := true
-                mFilled.set(i, true)
-            else if age > trackBars
-                unfilled += 1
-                done := true
-        if filled and not done
-            bool hitStop = d == 1 ? low <= s : high >= s
-            bool hitTarget = d == 1 ? high >= t : low <= t
-            if hitStop
-                losses += 1
-                realizedR -= 1.0
-                done := true
-            else if hitTarget
-                wins += 1
-                realizedR += math.abs(t - e) / math.abs(e - s)
-                done := true
-            else if age > 4 * trackBars
-                unfilled += 1
-                done := true
-        if done
-            forget(i)
+if barstate.isconfirmed and plan.state == 2 and bar_index > plan.entered
+    bool bullish = plan.direction == 1
+    bool hitStop = bullish ? low <= plan.stop : high >= plan.stop
+    bool hitTarget = bullish ? high >= plan.target : low <= plan.target
+    bool gapped = bullish ? open < plan.stop or open > plan.target : open > plan.stop or open < plan.target
+    bool timedOut = bar_index - plan.entered > outcomeBars
+    if timedOut or gapped or (hitStop and hitTarget)
+        unresolved += timedOut ? 1 : 0
+        ambiguous += timedOut ? 0 : 1
+        plan.state := 3
+        plan.message := timedOut ? "UNRESOLVED - tracking time ended" : "UNCERTAIN - gap / both stop and TP1"
+        eventMark(close, plan.message, bullish, waitColor, "Excluded from resolved results. Candle data cannot provide a reliable fill or price ordering here.")
+    else if hitStop or hitTarget
+        wins += hitTarget ? 1 : 0
+        losses += hitStop ? 1 : 0
+        realizedR += hitTarget ? math.abs(plan.target - plan.entry) / math.abs(plan.entry - plan.stop) : -1.0
+        plan.state := 3
+        plan.message := hitTarget ? "TP1 REACHED - example finished" : "STOP REACHED - example finished"
+        targetEvent := hitTarget
+        stopEvent := hitStop
+        eventMark(hitTarget ? plan.target : plan.stop, plan.message, bullish, hitTarget ? buyColor : sellColor, "Simplified chart outcome after a close-confirmed entry. Fees, spread and slippage are not included.")
 
 samples = wins + losses
 hitRate = samples > 0 ? wins * 1.0 / samples : na
-historyText = samples > 0 ? "TP1 hit " + str.tostring(100 * hitRate, "#") + "% of " + str.tostring(samples) + ", avg " + (realizedR >= 0 ? "+" : "") + str.tostring(realizedR / samples, "#.##") + "R, " + str.tostring(unfilled) + " unfilled" : "no completed signals yet on this chart"
+longTrigger = candidateL and chartOk and inputsOk and dataReady and not busyAtBarOpen and inKillzone and volatilityOk and (not requireHtf or htfBias == 1) and (not requireDiscount or ceL < eqL) and (not requireOb or not na(obTopL)) and longSweep < ceL and ceL <= rangeHighExt and validRisk(true, ceL, stopL, targetL) and scoreL >= minScore
+shortTrigger = candidateS and chartOk and inputsOk and dataReady and not busyAtBarOpen and inKillzone and volatilityOk and (not requireHtf or htfBias == -1) and (not requireDiscount or ceS > eqS) and (not requireOb or not na(obTopS)) and shortSweep > ceS and ceS >= rangeLowExt and validRisk(false, ceS, stopS, targetS) and scoreS >= minScore
 
-remember(bool isBuy, float entry, float stop, float target) =>
-    mEntry.push(entry)
-    mStop.push(stop)
-    mTarget.push(target)
-    mDir.push(isBuy ? 1 : -1)
-    mBar.push(bar_index)
-    mFilled.push(false)
-
-// ── Triggers ───────────────────────────────────────────────────────────────────────────────────
-longTrigger = barstate.isconfirmed and chartOk and inKillzone and mssBrokenL and bullDisp and bullFvg and (not requireHtf or htfBias == 1) and (not requireDiscount or ceL < eqL) and scoreL >= minScore
-shortTrigger = barstate.isconfirmed and chartOk and inKillzone and mssBrokenS and bearDisp and bearFvg and (not requireHtf or htfBias == -1) and (not requireDiscount or ceS > eqS) and scoreS >= minScore
-
-// ── Helpers ────────────────────────────────────────────────────────────────────────────────────
-parseMultiples(string source) =>
-    array<float> out = array.new<float>()
-    array<string> parts = str.split(source, ",")
-    if parts.size() > 0
-        for i = 0 to parts.size() - 1
-            float m = str.tonumber(str.trim(parts.get(i)))
-            if not na(m) and m > 0
-                out.push(m)
-    out
-
-var array<float> tpM = parseMultiples(tpMultiples)
+// Context boxes are drawn even when a setup fails the risk, bias or session filters.
+if barstate.isconfirmed and chartOk and showZones
+    if bullFvg
+        addZone(true, true, bar_index - 2, low, high[2])
+    if bearFvg
+        addZone(false, true, bar_index - 2, low[2], high)
+    if candidateL and not na(obTopL)
+        addZone(true, false, obBarL, obTopL, obBotL)
+    if candidateS and not na(obTopS)
+        addZone(false, false, obBarS, obTopS, obBotS)
 
 number(float value) => na(value) ? "null" : str.tostring(value, "#.########")
 
+// Only the original setup JSON goes to alert(); confirmation alerts are separate below.
 payload(string direction, int score, float entry, float stop, float target, string targetName, string sweptName, float sweep, float mss, float fvgBot, float fvgTop, float obTop, float obBot, float rHigh, float rLow) =>
     stamp = str.tostring(int(time_close / 1000))
     eventId = syminfo.ticker + "-15m-smc-" + stamp + "-" + direction
     '{"event_id":"' + eventId + '","symbol":"' + syminfo.ticker + '","timeframe":"15m","bar_time":' + stamp + ',"signal":"' + direction + '","model":"smc","price":' + number(close) + ',"atr":' + number(atr) + ',"htf_bias":' + str.tostring(htfBias) + ',"daily_bias":' + str.tostring(dailyBias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"sweep_level":' + number(sweep) + ',"swept_name":"' + sweptName + '","mss_level":' + number(mss) + ',"fvg_top":' + number(fvgTop) + ',"fvg_bottom":' + number(fvgBot) + ',"ob_top":' + number(obTop) + ',"ob_bottom":' + number(obBot) + ',"range_high":' + number(rHigh) + ',"range_low":' + number(rLow) + ',"pdh":' + number(pdh) + ',"pdl":' + number(pdl) + ',"pwh":' + number(pwh) + ',"pwl":' + number(pwl) + ',"asia_high":' + number(asiaHigh) + ',"asia_low":' + number(asiaLow) + ',"entry":' + number(entry) + ',"stop":' + number(stop) + ',"target_liquidity":' + number(target) + ',"target_name":"' + targetName + '","killzone":"' + kzName + '","score":' + str.tostring(score) + ',"hit_rate":' + (samples > 0 ? str.tostring(hitRate, "#.###") : "null") + ',"samples":' + str.tostring(samples) + '}'
 
-riskText(float risk) =>
-    accountSize > 0 and risk > 0 ? "\nrisk " + str.tostring(riskPercent, "#.##") + "% = " + str.tostring(accountSize * riskPercent / 100, "#.##") + " -> " + str.tostring(accountSize * riskPercent / 100 / risk / contractSize, "#.###") + " lots" : ""
+blockedReason(bool isBuy) =>
+    string reason = "Rules passed"
+    if busyAtBarOpen
+        reason := "Already following one plan"
+    else if not inputsOk
+        reason := "Fix risk / ATR minimum and maximum"
+    else if requireHtf and htfBias != (isBuy ? 1 : -1)
+        reason := "Daily / 4H direction does not agree"
+    else if not inKillzone
+        reason := "Trading session is closed"
+    else if not volatilityOk
+        reason := "ATR volatility is outside your filter"
+    else if requireDiscount and (isBuy ? ceL >= eqL : ceS <= eqS)
+        reason := "Entry is in the wrong half of the range"
+    else if requireOb and na(isBuy ? obTopL : obTopS)
+        reason := "No order block in this move"
+    else if na(isBuy ? targetL : targetS)
+        reason := "No untouched liquidity with enough reward"
+    else if not validRisk(isBuy, isBuy ? ceL : ceS, isBuy ? stopL : stopS, isBuy ? targetL : targetS)
+        reason := "Stop distance is outside your risk filter"
+    else if (isBuy ? scoreL : scoreS) < minScore
+        reason := "Rule score is below your minimum"
+    else
+        reason := "Entry / sweep / range geometry failed"
+    reason
 
-drawSetup(bool isBuy, int score, float entry, float stop, float target, string targetName, float fvgBot, float fvgTop, float obTop, float obBot, float sweep, string sweptName) =>
-    int x2 = bar_index + levelBars
-    if showZones
-        box.new(bar_index - 2, fvgTop, x2, fvgBot, border_color=color.new(color.green, 40), bgcolor=color.new(color.green, 85), text="FVG", text_color=color.white, text_size=size.tiny, text_halign=text.align_left)
-        if not na(obTop) and not na(obBot)
-            box.new(bar_index - 2, obTop, x2, obBot, border_color=color.new(color.blue, 40), bgcolor=color.new(color.blue, 85), text="OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_left)
-    line.new(bar_index, entry, x2, entry, color=color.gray, width=2)
-    label.new(x2, entry, (isBuy ? "BUY AT " : "SELL AT ") + str.tostring(entry, format.mintick) + "  (FVG CE)", style=label.style_label_left, color=color.gray, textcolor=color.white, size=size.small)
-    line.new(bar_index, stop, x2, stop, color=color.red, style=line.style_dashed)
-    label.new(x2, stop, "SL " + str.tostring(stop, format.mintick) + "  (beyond " + sweptName + " sweep " + str.tostring(sweep, format.mintick) + ")", style=label.style_label_left, color=color.red, textcolor=color.white, size=size.small)
-    float risk = math.abs(entry - stop)
-    float liqR = risk > 0 ? math.abs(target - entry) / risk : 0
-    line.new(bar_index, target, x2, target, color=color.green, style=line.style_dotted)
-    label.new(x2, target, "TP1 " + str.tostring(target, format.mintick) + "  (" + targetName + " liquidity, +" + str.tostring(liqR, "#.#") + "R)", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
-    int sign = isBuy ? 1 : -1
-    int n = 1
-    if tpM.size() > 0
-        for i = 0 to tpM.size() - 1
-            float m = tpM.get(i)
-            if m > liqR + 0.05
-                n += 1
-                float tp = entry + sign * m * risk
-                line.new(bar_index, tp, x2, tp, color=color.green, style=line.style_dotted)
-                label.new(x2, tp, "TP" + str.tostring(n) + " " + str.tostring(tp, format.mintick) + "  (+" + str.tostring(m, "#.##") + "R)", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.small)
-    label.new(bar_index, isBuy ? low : high, (isBuy ? "BUY" : "SELL") + " SMC setup  " + str.tostring(score) + "/100 " + grade(score) + "\n" + sweptName + " sweep > MSS > FVG" + riskText(risk), style=isBuy ? label.style_label_up : label.style_label_down, color=isBuy ? color.lime : color.red, textcolor=color.black, size=size.small)
+var string lastCheck = "Waiting for sweep, strong MSS and FVG"
+var int lastCheckBar = na
+if candidateL or candidateS
+    bool bullish = candidateL
+    bool accepted = bullish ? longTrigger : shortTrigger
+    lastCheck := accepted ? (bullish ? "BUY" : "SELL") + " setup passed - wait for retest" : (bullish ? "BUY" : "SELL") + " skipped: " + blockedReason(bullish)
+    lastCheckBar := bar_index
+    if not accepted and showStructure
+        eventMark(bullish ? low : high, "SETUP SKIPPED\n" + blockedReason(bullish), bullish, waitColor, "A sweep, MSS and FVG occurred, but all entry filters must pass. A context box is not an instruction to trade.")
 
-if longTrigger
-    drawSetup(true, scoreL, ceL, stopL, targetL, targetNameL, high[2], low, obTopL, obBotL, longSweep, longSwept)
-    alert(payload("BUY_SETUP", scoreL, ceL, stopL, targetL, targetNameL, longSwept, longSweep, longMss, high[2], low, obTopL, obBotL, rangeHighExt, longSweep), alert.freq_once_per_bar_close)
-    remember(true, ceL, stopL, targetL)
-    longState := 0
-if shortTrigger
-    drawSetup(false, scoreS, ceS, stopS, targetS, targetNameS, high, low[2], obTopS, obBotS, shortSweep, shortSwept)
-    alert(payload("SELL_SETUP", scoreS, ceS, stopS, targetS, targetNameS, shortSwept, shortSweep, shortMss, high, low[2], obTopS, obBotS, shortSweep, rangeLowExt), alert.freq_once_per_bar_close)
-    remember(false, ceS, stopS, targetS)
-    shortState := 0
+if longTrigger or shortTrigger
+    bool bullish = longTrigger
+    plan := TradePlan.new(direction=bullish ? 1 : -1, state=1, created=bar_index, midpoint=bullish ? ceL : ceS, stop=bullish ? stopL : stopS, target=bullish ? targetL : targetS, top=bullish ? low : low[2], bottom=bullish ? high[2] : high, rangeHigh=bullish ? rangeHighExt : shortSweep, rangeLow=bullish ? longSweep : rangeLowExt, score=bullish ? scoreL : scoreS, targetName=bullish ? targetNameL : targetNameS, message="WAIT - retest, then a confirming close")
+    eventMark(bullish ? low : high, (bullish ? "BUY" : "SELL") + " SETUP - WAIT\nFVG midpoint " + priceText(plan.midpoint) + "\nRule score " + str.tostring(plan.score) + "/100", bullish, bullish ? buyColor : sellColor, "3. Setup ready. Wait for a later candle to touch the midpoint and close back beyond the FVG in this direction. The final entry must still pass session, direction, location and reward/risk filters.")
+    if bullish
+        alert(payload("BUY_SETUP", scoreL, ceL, stopL, targetL, targetNameL, longSwept, longSweep, longMss, high[2], low, obTopL, obBotL, rangeHighExt, longSweep), alert.freq_once_per_bar_close)
+    else
+        alert(payload("SELL_SETUP", scoreS, ceS, stopS, targetS, targetNameS, shortSwept, shortSweep, shortMss, high, low[2], obTopS, obBotS, shortSweep, rangeLowExt), alert.freq_once_per_bar_close)
 
-// ── Analyst table ──────────────────────────────────────────────────────────────────────────────
-var table panel = table.new(position.top_right, 3, 15, frame_color=color.gray, frame_width=1, border_color=color.gray, border_width=1)
+// A gap must belong to the actual MSS candle, not an unrelated later displacement.
+if barstate.isconfirmed
+    if longState == 2 and bar_index > longShiftBar
+        longState := 0
+    if shortState == 2 and bar_index > shortShiftBar
+        shortState := 0
 
-cell(int row, string name, string reading, string status, color tone) =>
-    table.cell(panel, 0, row, name, text_color=color.white, bgcolor=color.new(color.black, 15), text_size=size.small, text_halign=text.align_left)
-    table.cell(panel, 1, row, reading, text_color=color.white, bgcolor=color.new(color.black, 15), text_size=size.small, text_halign=text.align_left)
-    table.cell(panel, 2, row, status, text_color=color.white, bgcolor=tone, text_size=size.small)
+// Latest plan only; old signals stay at their actual confirmation candles.
+var array<line> planLines = array.new<line>()
+var array<label> planLabels = array.new<label>()
+var array<box> planBoxes = array.new<box>()
+var int finishedBar = na
+if barstate.isconfirmed
+    if plan.state == 1 or plan.state == 2
+        finishedBar := na
+    else if plan.state == 3 and na(finishedBar)
+        finishedBar := bar_index
 
-toneFor(int score) => score >= 80 ? color.new(color.green, 35) : score >= 60 ? color.new(color.orange, 35) : color.new(color.gray, 35)
-toneBias(int b) => b != 0 ? color.new(color.green, 35) : color.new(color.gray, 35)
+clearPlanDrawings() =>
+    while planLines.size() > 0
+        line.delete(planLines.pop())
+    while planLabels.size() > 0
+        label.delete(planLabels.pop())
+    while planBoxes.size() > 0
+        box.delete(planBoxes.pop())
 
-if showTable and barstate.islast
-    color okTone = color.new(color.green, 35)
-    color badTone = color.new(color.red, 35)
-    color waitTone = color.new(color.gray, 35)
-    [drawUp, drawUpName] = pickTarget(true, close, 0)
-    [drawDn, drawDnName] = pickTarget(false, close, 0)
-    table.cell(panel, 0, 0, "Cambotix Zebra SMC/ICT Analyst", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small, text_halign=text.align_left)
-    table.cell(panel, 1, 0, "Reading", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small, text_halign=text.align_left)
-    table.cell(panel, 2, 0, "Status", text_color=color.white, bgcolor=color.new(color.blue, 20), text_size=size.small)
-    cell(1, "Daily bias", biasWord(dailyBias) + " structure", biasWord(dailyBias), toneBias(dailyBias))
-    cell(2, "4H bias", biasWord(h4Bias) + " structure", biasWord(h4Bias), toneBias(h4Bias))
-    cell(3, "Trade bias (" + biasMode + ")", htfBias == 1 ? "look for longs only" : htfBias == -1 ? "look for shorts only" : "no agreement: stand aside", htfBias == 1 ? "BUY" : htfBias == -1 ? "SELL" : "wait", toneBias(htfBias))
-    cell(4, "Buy-side liquidity", poolsText(true), "above", waitTone)
-    cell(5, "Sell-side liquidity", poolsText(false), "below", waitTone)
-    cell(6, "Draw on liquidity", htfBias == 1 ? drawUpName + " " + str.tostring(drawUp, format.mintick) : htfBias == -1 ? drawDnName + " " + str.tostring(drawDn, format.mintick) : "up " + drawUpName + " " + str.tostring(drawUp, format.mintick) + " / down " + drawDnName + " " + str.tostring(drawDn, format.mintick), htfBias == 1 ? "buy-side" : htfBias == -1 ? "sell-side" : "either", toneBias(htfBias))
-    cell(7, "Long model", longState == 1 ? longSwept + " swept " + str.tostring(longSweep, format.mintick) + ", need close > " + str.tostring(longMss, format.mintick) : "no sweep yet", longState == 1 ? "waiting MSS" : "idle", longState == 1 ? okTone : waitTone)
-    cell(8, "Short model", shortState == 1 ? shortSwept + " swept " + str.tostring(shortSweep, format.mintick) + ", need close < " + str.tostring(shortMss, format.mintick) : "no sweep yet", shortState == 1 ? "waiting MSS" : "idle", shortState == 1 ? okTone : waitTone)
-    cell(9, "Killzone", kzName, inKillzone ? "open" : "closed", inKillzone ? okTone : badTone)
-    cell(10, "Range " + str.tostring(rangeBars) + " bars", str.tostring(rangeLowExt, format.mintick) + " - " + str.tostring(rangeHighExt, format.mintick) + "  EQ " + str.tostring((rangeHighExt + rangeLowExt) / 2, format.mintick), close < (rangeHighExt + rangeLowExt) / 2 ? "discount" : "premium", waitTone)
-    cell(11, "Chart", syminfo.ticker + " " + timeframe.period + "  ATR " + str.tostring(atrPercent, "#.##") + "%", chartOk ? "accepted" : tickerOk ? "switch to 15m" : "ticker not allowed", chartOk ? okTone : badTone)
-    cell(12, "Analyst: long", narrative(true), str.tostring(scoreL) + "/100 " + grade(scoreL), toneFor(scoreL))
-    cell(13, "Analyst: short", narrative(false), str.tostring(scoreS) + "/100 " + grade(scoreS), toneFor(scoreS))
-    cell(14, "Memory", historyText, samples > 0 ? (hitRate >= 0.5 ? "edge" : "weak") : "learning", samples > 0 ? (hitRate >= 0.5 ? okTone : badTone) : waitTone)
+planLevel(int start, int right, float level, string caption, color tone, bool dashed) =>
+    planLines.push(line.new(start, level, right, level, color=tone, width=2, style=dashed ? line.style_dashed : line.style_solid))
+    planLabels.push(label.new(right, level, caption + " " + priceText(level), style=label.style_label_left, color=tone, textcolor=color.white, size=size.small))
 
-plot(showPools ? pdh : na, "PDH", color=color.new(color.orange, 30), style=plot.style_linebr)
-plot(showPools ? pdl : na, "PDL", color=color.new(color.orange, 30), style=plot.style_linebr)
-plot(showPools ? pwh : na, "PWH", color=color.new(color.purple, 30), style=plot.style_linebr, linewidth=2)
-plot(showPools ? pwl : na, "PWL", color=color.new(color.purple, 30), style=plot.style_linebr, linewidth=2)
-plot(showPools ? asiaHigh : na, "Asia high", color=color.new(color.yellow, 40), style=plot.style_linebr)
-plot(showPools ? asiaLow : na, "Asia low", color=color.new(color.yellow, 40), style=plot.style_linebr)
-plot(showPools ? eqh : na, "Equal highs", color=color.new(color.red, 20), style=plot.style_circles)
-plot(showPools ? eql : na, "Equal lows", color=color.new(color.green, 20), style=plot.style_circles)
-plot(lastHigh, "Last swing high", color=color.new(color.red, 60), style=plot.style_linebr)
-plot(lastLow, "Last swing low", color=color.new(color.green, 60), style=plot.style_linebr)
-plotshape(longTrigger, title="BUY SMC setup", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small)
-plotshape(shortTrigger, title="SELL SMC setup", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
-bgcolor(inKillzone ? color.new(color.blue, 94) : na, title="Killzone")
-bgcolor(inAsia ? color.new(color.yellow, 96) : na, title="Asian range")
-bgcolor(not chartOk ? color.new(color.red, 90) : na, title="Use an allowed ticker on 15m")
+parseMultiples(string source) =>
+    array<float> out = array.new<float>()
+    array<string> parts = str.split(source, ",")
+    if parts.size() > 0
+        for i = 0 to math.min(parts.size() - 1, 49)
+            float multiple = str.tonumber(str.trim(parts.get(i)))
+            if not na(multiple) and multiple > 0 and multiple <= 100 and not out.includes(multiple)
+                out.push(multiple)
+    out.sort(order.ascending)
+    out
+var array<float> tpM = parseMultiples(tpMultiples)
+
+if barstate.islast
+    clearPlanDrawings()
+    if plan.state != 0
+        bool pending = plan.state == 1
+        bool done = plan.state == 3
+        bool bullish = plan.direction == 1
+        float entry = na(plan.entry) ? plan.midpoint : plan.entry
+        float risk = math.abs(entry - plan.stop)
+        float rewardR = math.abs(plan.target - entry) / risk
+        int start = math.max(na(plan.entered) ? plan.created : plan.entered, bar_index - 9999)
+        int right = done ? math.max(start + 1, nz(finishedBar, bar_index)) : bar_index + levelBars
+        color side = done ? color.gray : bullish ? buyColor : sellColor
+        string prefix = done ? "FINISHED | " : ""
+        planLevel(start, right, entry, prefix + (pending ? "WAIT: FVG MIDPOINT" : na(plan.entry) ? "UNFILLED PLAN" : bullish ? "BUY ENTRY" : "SELL ENTRY"), side, pending)
+        planLevel(start, right, plan.stop, prefix + "STOP", done ? color.gray : sellColor, true)
+        planLevel(start, right, plan.target, prefix + "TP1 (" + plan.targetName + ", " + str.tostring(rewardR, "#.##") + "R)", done ? color.gray : buyColor, true)
+        if not done
+            planBoxes.push(box.new(start, math.max(entry, plan.stop), right, math.min(entry, plan.stop), border_color=color.new(sellColor, 100), bgcolor=color.new(sellColor, 91)))
+            planBoxes.push(box.new(start, math.max(entry, plan.target), right, math.min(entry, plan.target), border_color=color.new(buyColor, 100), bgcolor=color.new(buyColor, 93)))
+            if showZones
+                planBoxes.push(box.new(plan.created - 2, plan.top, right, plan.bottom, border_color=side, border_width=2, bgcolor=color.new(side, 85), text="ENTRY FVG - " + (pending ? "wait for retest + close" : "confirmed"), text_color=side, text_size=size.small, text_halign=text.align_left))
+            int n = 1
+            if tpM.size() > 0
+                for i = 0 to tpM.size() - 1
+                    float multiple = tpM.get(i)
+                    if multiple > rewardR + 0.05 and n < 4
+                        n += 1
+                        float target = math.round_to_mintick(entry + plan.direction * multiple * risk)
+                        if target > 0
+                            planLevel(start, right, target, "TP" + str.tostring(n) + " (" + str.tostring(multiple, "#.##") + "R reference)", color.new(buyColor, 30), true)
+
+// Named current liquidity levels. Taken pools stay visible in gray and cannot trigger again.
+var array<line> mapLines = array.new<line>()
+var array<label> mapLabels = array.new<label>()
+mapLevel(int start, int right, float level, string caption, color tone, string detail) =>
+    mapLines.push(line.new(start, level, right, level, color=color.new(tone, 35), style=line.style_dotted))
+    mapLabels.push(label.new(right, level, caption + " " + priceText(level), style=label.style_label_left, color=color.new(ink, 10), textcolor=tone, size=size.small, tooltip=detail))
+if barstate.islast
+    while mapLines.size() > 0
+        line.delete(mapLines.pop())
+    while mapLabels.size() > 0
+        label.delete(mapLabels.pop())
+    if showPools
+        for i = 0 to 9
+            float level = poolValues.get(i)
+            if not na(level)
+                bool upper = i % 2 == 0
+                bool fresh = poolFresh.get(i)
+                color tone = fresh ? (upper ? sellColor : buyColor) : color.gray
+                string caption = poolNames.get(i) + (fresh ? (upper ? " | magnet above (old high)" : " | magnet below (old low)") : " | taken")
+                mapLevel(math.max(0, bar_index - rangeBars), bar_index + 5 + int(i / 2) * 5, level, caption, tone, poolMeaning.get(i) + ". " + (fresh ? "Possible stop-order area inferred from price; actual orders are unknown." : "Price already touched this pool. It is excluded from new sweeps and targets until replaced."))
+    if showStructure and chartOk and plan.state != 1 and plan.state != 2
+        if longState == 1
+            mapLevel(longSweepBar, bar_index + levelBars, longMss, "WAIT: strong close ABOVE", buyColor, "Possible BUY MSS threshold after " + longSwept + " was swept. No entry yet.")
+        if shortState == 1
+            mapLevel(shortSweepBar, bar_index + levelBars, shortMss, "WAIT: strong close BELOW", sellColor, "Possible SELL MSS threshold after " + shortSwept + " was swept. No entry yet.")
+
+// The active plan uses its frozen formation range for both the drawing and entry filter.
+var box premiumBox = na
+var box discountBox = na
+var line equilibriumLine = na
+float viewHigh = plan.state == 1 or plan.state == 2 ? plan.rangeHigh : (barstate.isconfirmed ? rangeHighExt : rangeHighExt[1])
+float viewLow = plan.state == 1 or plan.state == 2 ? plan.rangeLow : (barstate.isconfirmed ? rangeLowExt : rangeLowExt[1])
+float viewEq = (viewHigh + viewLow) / 2
+if barstate.islast
+    box.delete(premiumBox)
+    box.delete(discountBox)
+    line.delete(equilibriumLine)
+    if showRange and not na(viewHigh) and not na(viewLow)
+        int left = math.max(0, bar_index - rangeBars)
+        int right = bar_index + levelBars
+        premiumBox := box.new(left, viewHigh, right, viewEq, border_color=color.new(sellColor, 100), bgcolor=color.new(sellColor, 96), text="PREMIUM - upper half (sell location filter)", text_color=color.new(sellColor, 25), text_size=size.small, text_valign=text.align_top)
+        discountBox := box.new(left, viewEq, right, viewLow, border_color=color.new(buyColor, 100), bgcolor=color.new(buyColor, 96), text="DISCOUNT - lower half (buy location filter)", text_color=color.new(buyColor, 25), text_size=size.small, text_valign=text.align_bottom)
+        equilibriumLine := line.new(left, viewEq, right, viewEq, color=color.new(color.gray, 40), style=line.style_dashed)
+
+panelPosition = panelCorner == "Top left" ? position.top_left : panelCorner == "Bottom left" ? position.bottom_left : panelCorner == "Bottom right" ? position.bottom_right : position.top_right
+var table panel = table.new(panelPosition, 2, 18, bgcolor=ink, frame_color=color.new(color.gray, 50), frame_width=1, border_width=0)
+cell(int row, string name, string reading, color tone, string hint = "") =>
+    string font = panelFont == "Normal" ? size.normal : size.small
+    table.cell(panel, 0, row, name, text_color=color.silver, bgcolor=ink, text_size=font, text_halign=text.align_left, tooltip=hint)
+    table.cell(panel, 1, row, reading, text_color=tone, bgcolor=ink, text_size=font, text_halign=text.align_left, tooltip=hint)
+
+if barstate.islast
+    if showTable
+        [drawUp, drawUpName] = pickTarget(true, close, 0, close)
+        [drawDn, drawDnName] = pickTarget(false, close, 0, close)
+        bool pending = plan.state == 1
+        bool running = plan.state == 2
+        string action = running ? "TRACK " + (plan.direction == 1 ? "BUY" : "SELL") + " - stop and TP1 are marked" : pending ? "WAIT - touch " + priceText(plan.midpoint) + " then close " + (plan.direction == 1 ? "above " + priceText(plan.top) : "below " + priceText(plan.bottom)) : "WAIT - a new complete setup is needed"
+        if not chartOk
+            action := not chart.is_standard ? "Use standard candles (not Heikin Ashi / Renko)" : not tickerOk ? "Add this ticker to Allowed tickers" : "Switch chart to 15 minutes"
+        else if not inputsOk
+            action := "Fix settings: maximum must be >= minimum"
+        else if not dataReady
+            action := "WAIT - more chart history is needed"
+        else if not running and requireHtf and htfBias == 0
+            action := "WAIT - Daily / 4H direction is unclear"
+        else if not running and not inKillzone
+            action := "WAIT - trading session is closed"
+        else if not running and not volatilityOk
+            action := "WAIT - volatility is outside your ATR filter"
+        string longRead = longState == 2 ? "UP MSS confirmed; wait one candle for FVG" : longState == 1 ? longSwept + " swept; need strong close > " + priceText(longMss) : "Buy path: wait for a low to be swept"
+        string shortRead = shortState == 2 ? "DOWN MSS confirmed; wait one candle for FVG" : shortState == 1 ? shortSwept + " swept; need strong close < " + priceText(shortMss) : "Sell path: wait for a high to be swept"
+        float activeEntry = na(plan.entry) ? plan.midpoint : plan.entry
+        float activeRisk = math.abs(activeEntry - plan.stop)
+        string levels = plan.state == 0 ? "No plan yet" : (pending ? "Planned midpoint " : na(plan.entry) ? "Unfilled midpoint " : "Confirmed close ") + priceText(activeEntry) + " | SL " + priceText(plan.stop)
+        string targetRead = plan.state == 0 ? "Wait for an untouched target with enough room" : plan.targetName + " " + priceText(plan.target) + " | " + str.tostring(math.abs(plan.target - activeEntry) / activeRisk, "#.##") + "R"
+        string rateRead = samples > 0 ? str.tostring(100 * hitRate, "#.#") + "% TP1 first | " + str.tostring(wins) + " wins / " + str.tostring(losses) + " losses" : "No resolved confirmed entries yet"
+        string excludedRead = str.tostring(expired) + " expired | " + str.tostring(cancelled) + " cancelled/missed\n" + str.tostring(ambiguous) + " uncertain | " + str.tostring(unresolved) + " unresolved"
+        color actionColor = running ? biasColor(plan.direction) : waitColor
+        cell(0, "SMC COACH | 15m", "Read top to bottom. WAIT is a valid answer.", color.white, "Hover a row name for a plain explanation. Nothing here is advice or an order.")
+        cell(1, "WHAT TO DO NOW", action, actionColor, "The single next step. Most of the time the honest answer is WAIT.")
+        cell(2, "1. DIRECTION (bias)", requireHtf ? biasWord(htfBias) : "Filter OFF - either direction can qualify", requireHtf ? biasColor(htfBias) : waitColor, "Which way the bigger picture (Daily and 4H candles) last broke. UP = only look for buys. DOWN = only look for sells. UNCLEAR = do nothing.")
+        cell(3, "Completed Daily / 4H", biasWord(dailyBias) + " / " + biasWord(h4Bias), color.white, "Each big timeframe on its own, using only finished candles so it cannot change mid-day.")
+        cell(4, "2. LIQUIDITY above", na(drawUp) ? "No untouched high above price" : drawUpName + " " + priceText(drawUp) + " - old high, price may be pulled here", sellColor, "Liquidity = old highs and lows where many stop orders may sit. Price is often pulled toward them. The nearest untouched one above is shown.")
+        cell(5, "LIQUIDITY below", na(drawDn) ? "No untouched low below price" : drawDnName + " " + priceText(drawDn) + " - old low, price may be pulled here", buyColor, "The nearest untouched old low below price. PDL = previous day low, PWL = previous week low, EQL = equal lows, Asia low = Asian session low.")
+        cell(6, "3. SWEEP -> MSS (buy)", pending or running ? "Current plan already passed sweep + MSS" : longRead, buyColor, "SWEEP = price pokes under an old low and closes back above it. MSS = a strong candle then closes above the last swing high. Both must happen, in this order, before a buy setup exists.")
+        cell(7, "SWEEP -> MSS (sell)", pending or running ? "Follow the current plan first" : shortRead, sellColor, "SWEEP = price pokes over an old high and closes back below it. MSS = a strong candle then closes below the last swing low. Both must happen, in this order, before a sell setup exists.")
+        cell(8, "4. OB / FVG", "Blue OB = reaction area | FVG = possible return\nA box alone is not a buy or sell signal", color.white, "OB = order block, the last opposite candle before the strong move. FVG = fair value gap, a gap left by the strong move. The plan waits for price to come back into the FVG.")
+        cell(9, "5. ENTRY / STOP", levels, plan.state == 0 ? color.gray : biasColor(plan.direction), "Entry = the close of the candle that touches the FVG midpoint and closes back out of the gap. Stop = just beyond the swept low or high. Both are reference prices only.")
+        cell(10, "TP1 = real liquidity", targetRead, buyColor, "TP1 is always a real untouched old high or low, never an invented number. R = how many stop-distances away it is. No suitable level = no setup.")
+        cell(11, "Plan status", plan.message, pending ? waitColor : running ? biasColor(plan.direction) : color.silver, "WAIT = setup found, entry not yet confirmed. Confirmed = entry candle closed. Expired / cancelled = the plan died before entry and is not counted as a loss.")
+        cell(12, "Location / session", "Midline " + priceText(viewEq) + " | " + (close < viewEq ? "lower half" : "upper half") + "\n" + (inKillzone ? kzName + " OPEN" : "CLOSED") + " (New York) | ATR " + str.tostring(atrPercent, "#.###") + "%", color.white)
+        cell(13, "Last setup check", lastCheck + (na(lastCheckBar) ? "" : "\n" + str.tostring(bar_index - lastCheckBar) + " candles ago"), color.silver)
+        cell(14, "RULE SCORE != accuracy", plan.state == 0 ? "Agreement score; no win probability" : str.tostring(plan.score) + "/100 at setup; NOT a win probability", waitColor, "How many of the rules agreed when the setup formed. 80/100 does NOT mean 80% chance of winning.")
+        cell(15, "SIMULATED outcomes", rateRead + (samples > 0 ? "\nAverage " + str.tostring(realizedR / samples, "#.##") + "R per resolved entry" : ""), color.white, "Counted from this chart's own confirmed entries using candle highs and lows only. No fees, spread or slippage. Not a promise about future trades.")
+        cell(16, "Excluded from that rate", excludedRead + " | " + (pending ? "1 pending" : running ? "1 open" : "0 open"), color.silver)
+        cell(17, "Read before using", "Closed candles only. No orders placed.\nNo fees/slippage/news check here; accuracy unproven.", color.silver)
+    else
+        table.clear(panel, 0, 0, 1, 17)
+
+// Persistent historical markers are never shifted back onto earlier candles.
+plotshape(longTrigger, title="BUY setup - wait for retest", style=shape.triangleup, location=location.belowbar, color=buyColor, size=size.tiny)
+plotshape(shortTrigger, title="SELL setup - wait for retest", style=shape.triangledown, location=location.abovebar, color=sellColor, size=size.tiny)
+plotshape(buyEntry, title="BUY confirmed", text="BUY", style=shape.labelup, location=location.belowbar, color=buyColor, textcolor=color.white, size=size.small)
+plotshape(sellEntry, title="SELL confirmed", text="SELL", style=shape.labeldown, location=location.abovebar, color=sellColor, textcolor=color.white, size=size.small)
+plot(plan.state == 2 ? plan.entry : na, "Confirmed entry", display=display.data_window)
+plot(plan.state == 1 or plan.state == 2 ? plan.stop : na, "Active stop", display=display.data_window)
+plot(plan.state == 1 or plan.state == 2 ? plan.target : na, "Active TP1", display=display.data_window)
+plot(htfBias, "Confirmed higher-timeframe bias", display=display.data_window)
+bgcolor(showSessions and inKillzone ? color.new(color.blue, 95) : na, title="Trading session")
+bgcolor(showSessions and inAsia ? color.new(color.yellow, 97) : na, title="Asian range building")
+bgcolor(not chartOk ? color.new(sellColor, 92) : na, title="Unsupported chart")
+
+// Human notifications: create separate alerts for these named conditions.
+// The webhook's Any alert() function call remains setup JSON only.
+alertcondition(longTrigger, "BUY setup - wait", "BUY setup on {{ticker}} 15m. Wait for a later confirmed retest; see the chart plan.")
+alertcondition(shortTrigger, "SELL setup - wait", "SELL setup on {{ticker}} 15m. Wait for a later confirmed retest; see the chart plan.")
+alertcondition(buyEntry, "BUY confirmed", "BUY confirmed on {{ticker}} 15m at candle close {{close}}. Reference entry {{plot(\"Confirmed entry\")}}, stop {{plot(\"Active stop\")}}, TP1 {{plot(\"Active TP1\")}}. No order placed.")
+alertcondition(sellEntry, "SELL confirmed", "SELL confirmed on {{ticker}} 15m at candle close {{close}}. Reference entry {{plot(\"Confirmed entry\")}}, stop {{plot(\"Active stop\")}}, TP1 {{plot(\"Active TP1\")}}. No order placed.")
+alertcondition(targetEvent, "TP1 reached", "The active SMC example on {{ticker}} reached TP1. Check the chart.")
+alertcondition(stopEvent, "Stop reached", "The active SMC example on {{ticker}} reached its stop. Check the chart.")
+alertcondition(cancelEvent, "Plan cancelled or expired", "The pending SMC plan on {{ticker}} was cancelled, missed or expired. No entry was confirmed.")
