@@ -9,6 +9,11 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def write(path, text):
+    # Pin LF: Linux containers read these files and three are committed; Windows text mode would emit CRLF.
+    path.write_text(text, newline='\n')
+
+
 def read_env():
     result = {}
     for line in (ROOT / '.env').read_text().splitlines():
@@ -54,7 +59,7 @@ def main():
             content = content.replace('OLLAMA_RUNTIME=docker', 'OLLAMA_RUNTIME=native')
             content = content.replace('COMPOSE_PROFILES=docker-ai', 'COMPOSE_PROFILES=')
             content = content.replace('OLLAMA_BASE_URL=http://ollama:11434', 'OLLAMA_BASE_URL=http://host.docker.internal:11435')
-        env_path.write_text(content)
+        write(env_path, content)
     env_path.chmod(0o600)
     env = read_env()
     if any(not env.get(key) or env[key] == 'GENERATE' for key in
@@ -81,9 +86,9 @@ def main():
         node('Every 15 seconds', 'scheduleTrigger', {'rule': {'interval': [{'field': 'seconds', 'secondsInterval': 15}]}}, 0, version=1.2),
         http_node('Deliver one notification', '/notify', 260, timeout=20000)
     ])]
-    (imports / 'workflows.json').write_text(json.dumps(workflows, indent=2) + '\n')
+    write(imports / 'workflows.json', json.dumps(workflows, indent=2) + '\n')
     credential_path = imports / 'credentials.json'
-    credential_path.write_text(json.dumps([{'id': 'zebraAnalyzerAuth', 'name': 'Zebra internal API',
+    write(credential_path, json.dumps([{'id': 'zebraAnalyzerAuth', 'name': 'Zebra internal API',
        'type': 'httpHeaderAuth', 'data': {'name': 'X-Zebra-Token', 'value': env['ANALYZER_TOKEN']}}]))
     credential_path.chmod(0o600)
     # Public gateway only accepts the exact webhook; n8n editor and analyzer stay private.
@@ -110,14 +115,14 @@ server {
     location / { return 404; }
 }
 '''.replace('WEBHOOK_PATH', env['WEBHOOK_PATH'])
-    (local / 'gateway.conf').write_text(config)
-    (local / 'webhook-url.txt').write_text(env['PUBLIC_WEBHOOK_URL'].rstrip('/') + '/webhook/' + env['WEBHOOK_PATH'] + '\n')
+    write(local / 'gateway.conf', config)
+    write(local / 'webhook-url.txt', env['PUBLIC_WEBHOOK_URL'].rstrip('/') + '/webhook/' + env['WEBHOOK_PATH'] + '\n')
     # Committable templates contain placeholders only.
     for item in workflows:
         for entry in item['nodes']:
             if entry['type'].endswith('.webhook'):
                 entry['parameters']['path'] = 'REPLACE_WITH_GENERATED_WEBHOOK_PATH'
-        (ROOT / 'n8n' / (item['id'] + '.json')).write_text(json.dumps(item, indent=2) + '\n')
+        write(ROOT / 'n8n' / (item['id'] + '.json'), json.dumps(item, indent=2) + '\n')
     print('Prepared .env, private imports, gateway configuration, and n8n templates.')
 
 
