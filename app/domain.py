@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.news import news_status
+from app.news import news_status, next_event
 
 
 def allowed_symbols() -> set[str]:
@@ -360,6 +360,66 @@ def rule_support(signal: Signal) -> list[str]:
     return lines + [news_line(signal)]
 
 
+def session_label(symbol: str, model: str, bar_time: int) -> str:
+    """The trading window a setup belongs to, used to group its history."""
+    if model == 'smc':
+        zones = killzones(bar_time - 900, symbol)
+        return zones[0] if zones else 'outside killzones'
+    active = sessions(bar_time)
+    if len(active) == 2:
+        return 'London/New York overlap'
+    if active:
+        return active[0]
+    return '24/7 hours' if symbol in session_exempt_symbols() else 'outside sessions'
+
+
+def cautions(signal: Signal, events: list | None = None) -> list[str]:
+    """Soft warnings on a setup that passed every rule. They never block; they say what is weak about it."""
+    found = []
+    buy = signal.signal == 'BUY_SETUP'
+    plan = trade_plan(signal)
+    low, high = float(os.getenv('MIN_ATR_PERCENT', '0.02')), float(os.getenv('MAX_ATR_PERCENT', '0.5'))
+    atr_percent = signal.atr / signal.price * 100
+    if atr_percent >= 0.85 * high:
+        found.append(f'High volatility: ATR {atr_percent:.2f}% is near the {high:g}% limit; expect wide swings')
+    elif atr_percent <= 1.25 * low:
+        found.append(f'Low volatility: ATR {atr_percent:.2f}% is near the {low:g}% floor; price may stall before TP1')
+    if signal.model == 'smc':
+        reward = plan['targets'][0][0]
+        if reward < 1.5:
+            found.append(f'Thin reward: the TP1 liquidity target is only {reward:.2f}R away')
+        if plan['risk_atr'] > 2:
+            found.append(f'Wide stop: {plan["risk_atr"]:.1f} ATR; consider a smaller size')
+        elif plan['risk_atr'] < 0.5:
+            found.append(f'Tight stop: {plan["risk_atr"]:.1f} ATR; a normal wick can reach it')
+        width = signal.range_high - signal.range_low
+        position = (signal.entry - signal.range_low) / width * 100 if width else 50.0
+        if (40 <= position < 50) if buy else (50 < position <= 60):
+            found.append(f'Entry near equilibrium: {position:.0f}% of the dealing range, not deep in '
+                         + ('discount' if buy else 'premium'))
+        if signal.daily_bias is not None and signal.h4_bias is not None and signal.daily_bias != signal.h4_bias:
+            found.append('Daily and 4H structure disagree')
+        if signal.hit_rate is not None and (signal.samples or 0) >= 10 and signal.hit_rate < 0.4:
+            found.append(f'This chart reached TP1 on only {signal.hit_rate * 100:.0f}% of {signal.samples} past setups')
+    else:
+        if (signal.rsi >= 67) if buy else (signal.rsi <= 33):
+            found.append(f'Stretched momentum: RSI {signal.rsi:g} is at the edge of its band')
+        minimum = float(os.getenv('MIN_ADX', '20'))
+        if signal.adx < minimum + 3:
+            found.append(f'Weak trend: ADX {signal.adx:g} is only just above the {minimum:g} minimum')
+        extension = abs(signal.price - signal.ema20) / signal.atr
+        if extension > 1.5:
+            found.append(f'Extended: price is {extension:.1f} ATR from EMA20; a pullback is common')
+        if plan['basis'] == 'no usable prior swing':
+            found.append('No usable prior swing: the stop is a plain ATR multiple, not behind structure')
+    event = next_event(signal.bar_time, events)
+    horizon = int(os.getenv('NEWS_CAUTION_MIN', '120'))
+    if event and event['time'] - signal.bar_time <= horizon * 60:
+        found.append(f'News soon: {event["title"]} ({event["country"]}) in {(event["time"] - signal.bar_time) / 60:.0f} min; '
+                     'consider waiting or a smaller size')
+    return found
+
+
 def news_line(signal: Signal) -> str:
     status = news_status(signal.bar_time)
     prefix = {'blocked': 'News: BLOCKED, ', 'clear': 'News: clear; ', 'unknown': 'News: ', 'off': 'News: '}[status['state']]
@@ -370,7 +430,7 @@ AI_STAGE_CODES = {'ai_quality_gate_rejected', 'expired_during_analysis', 'ai_una
 
 
 def notification_text(signal: Signal, status: str, analysis: dict | None, reasons: list[str],
-                      ledger_seq: int | None = None) -> str:
+                      ledger_seq: int | None = None, warnings: list[str] | None = None) -> str:
     buy = signal.signal == 'BUY_SETUP'
     direction = 'BUY' if buy else 'SELL'
     decimals = 2 if signal.price >= 100 else 5
@@ -400,6 +460,8 @@ def notification_text(signal: Signal, status: str, analysis: dict | None, reason
             risk += (f' | {sizing["percent"]:g}% of {sizing["account"]:g} = {sizing["money"]:.2f} -> '
                      f'{sizing["lots"]:.3f} lots ({sizing["units"]:.2f} units)')
         lines += [risk, '']
+    if warnings:
+        lines += ['CAUTIONS (the setup is still valid):'] + ['⚠️ ' + item for item in warnings] + ['']
     lines.append('WHY (rules):')
     lines += ['• ' + item for item in rule_support(signal)]
     if analysis:

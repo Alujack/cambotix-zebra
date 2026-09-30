@@ -16,7 +16,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app import ledger
-from app.domain import (Analysis, Signal, allowed_symbols, freshness, gate_mode, notification_text, outcome,
+from app.domain import (Analysis, Signal, allowed_symbols, cautions, freshness, gate_mode, notification_text, outcome,
                         session_exempt_symbols, sessions, synthetic, system_prompt, technical_rules)
 from app.grader import simulate
 from app.news import news_status
@@ -113,13 +113,16 @@ def finish(signal: Signal, status: str, analysis: Analysis | None, reasons: list
         conn.execute('''UPDATE signals SET status=%s, analysis=%s, rule_reasons=%s,
             completed_at=now(), error_code=%s WHERE event_id=%s''',
             (status, Jsonb(data), Jsonb(reasons), error_code, signal.event_id))
-        seq = None
+        seq, warnings = None, []
+        if status == 'approved':
+            warnings = cautions(signal) + ledger.history_cautions(conn, signal)
         if status == 'approved' and not synthetic(signal.event_id):
             # Published in the same transaction as the approval: an approved setup is always on the record.
             now = int(time.time())
-            seq, _ = ledger.append(conn, signal.event_id, 'published', now, ledger.plan_record(signal, now))
+            seq, _ = ledger.append(conn, signal.event_id, 'published', now, ledger.plan_record(signal, now, warnings))
         conn.execute('''INSERT INTO notifications(event_id,message,status) VALUES (%s,%s,%s)
-            ON CONFLICT DO NOTHING''', (signal.event_id, notification_text(signal, status, data, reasons, ledger_seq=seq),
+            ON CONFLICT DO NOTHING''', (signal.event_id, notification_text(signal, status, data, reasons, ledger_seq=seq,
+                                                                         warnings=warnings),
                                         'pending' if telegram_enabled() else 'disabled'))
 
 
@@ -141,6 +144,13 @@ def process():
                 return {'status': 'idle'}
             signal = Signal.model_validate(row['payload'])
             reasons = technical_rules(signal)
+            limit = int(os.getenv('MAX_OPEN_SAME_DIRECTION', '1'))
+            if not reasons and limit > 0 and not synthetic(signal.event_id):
+                # One idea, one plan: a second entry in the same direction doubles the same bet.
+                direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
+                with database() as conn:
+                    if ledger.open_count(conn, signal.symbol, direction, time.time()) >= limit:
+                        reasons = ['open_plan_same_direction']
             if reasons:
                 finish(signal, 'rejected', None, reasons)
                 return {'status': 'rejected', 'event_id': signal.event_id}

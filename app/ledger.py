@@ -9,9 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timezone
 
-from app.domain import Signal, trade_plan
+from app.domain import Signal, session_label, trade_plan
 from app.grader import summarize
 
 GENESIS = '0' * 64
@@ -107,10 +108,11 @@ def verify(rows: list[dict]) -> dict:
     return {'valid': True, 'broken_at': None, 'rows': len(rows), 'head_seq': len(rows), 'head_hash': prev}
 
 
-def plan_record(signal: Signal, published_at: int) -> dict:
+def plan_record(signal: Signal, published_at: int, warnings: list[str] | None = None) -> dict:
     """The frozen plan the grader scores. Later config changes never alter a published plan."""
     plan = trade_plan(signal)
     return {'symbol': signal.symbol, 'model': signal.model, 'timeframe': signal.timeframe,
+            'session': session_label(signal.symbol, signal.model, signal.bar_time), 'cautions': warnings or [],
             'direction': 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL', 'bar_time': signal.bar_time,
             'published_at': published_at, 'entry_type': 'limit' if signal.model == 'smc' else 'market',
             'entry': plan['entry'], 'stop': plan['stop'],
@@ -135,6 +137,46 @@ def open_plans(conn, symbol: str | None = None) -> list[dict]:
     plans = [{'seq': row['seq'], 'event_id': row['event_id'], 'plan': json.loads(row['body']), 'kinds': set(row['kinds'])}
              for row in found]
     return [item for item in plans if symbol is None or item['plan']['symbol'] == symbol]
+
+
+def open_count(conn, symbol: str, direction: str, now: float) -> int:
+    """Open plans on this symbol and side that can still be live by their own frozen expiry and hold limits.
+    A plan past both limits is finished by definition, even if missing candles kept it from being graded."""
+    return sum(1 for item in open_plans(conn, symbol) if item['plan']['direction'] == direction and
+               item['plan']['published_at'] + 60 * (item['plan']['entry_expiry_minutes'] + item['plan']['max_hold_minutes']) > now)
+
+
+def closed_trades(conn) -> list[dict]:
+    """Every closed trade joined with its plan, oldest close first."""
+    plans, trades = {}, []
+    for row in rows(conn):
+        body = json.loads(row['body'])
+        if row['kind'] == 'published':
+            plans[row['event_id']] = body
+        elif row['kind'] == 'closed':
+            plan = plans[row['event_id']]
+            trades.append({**body, 'symbol': plan['symbol'], 'model': plan['model'], 'direction': plan['direction'],
+                           'session': plan.get('session') or session_label(plan['symbol'], plan['model'], plan['bar_time']),
+                           'cautioned': bool(plan.get('cautions'))})
+    return sorted(trades, key=lambda item: (item['time'], item['seq']))
+
+
+def history_cautions(conn, signal: Signal, now: float | None = None) -> list[str]:
+    """A warning when this symbol, side, model and session has lost money recently on the record itself."""
+    need, days = int(os.getenv('HISTORY_MIN_SAMPLES', '30')), int(os.getenv('HISTORY_DAYS', '60'))
+    direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
+    label = session_label(signal.symbol, signal.model, signal.bar_time)
+    since = (time.time() if now is None else now) - days * 86400
+    same = [item for item in closed_trades(conn) if item['time'] >= since and item['symbol'] == signal.symbol
+            and item['direction'] == direction and item['model'] == signal.model and item['session'] == label]
+    if len(same) < need:
+        return []
+    wins = sum(1 for item in same if item['r_tp1'] > 0)
+    expectancy = sum(item['r_tp1'] for item in same) / len(same)
+    if expectancy >= 0 and wins / len(same) >= 0.4:
+        return []
+    return [f'History: {direction} {signal.symbol} ({signal.model}) in {label} won {wins} of {len(same)} '
+            f'({wins / len(same) * 100:.0f}%) over {days} days, expectancy {expectancy:+.2f}R']
 
 
 def utc(stamp: int, pattern: str = '%Y-%m-%d %H:%M UTC') -> str:
@@ -168,17 +210,14 @@ def result_text(plan: dict, events: list[dict], published_seq: int) -> str:
 def track_record(conn) -> dict:
     """Everything the public record needs, computed from the ledger alone."""
     all_rows = rows(conn)
-    published, closed, not_filled = {}, [], {}
+    published, not_filled = {}, {}
     for row in all_rows:
         body = json.loads(row['body'])
         if row['kind'] == 'published':
             published[row['event_id']] = body
-        elif row['kind'] == 'closed':
-            closed.append({**body, 'model': published[row['event_id']]['model'],
-                           'symbol': published[row['event_id']]['symbol']})
         elif row['kind'] == 'not_filled':
             not_filled[body['reason']] = not_filled.get(body['reason'], 0) + 1
-    closed.sort(key=lambda item: (item['time'], item['seq']))
+    closed = closed_trades(conn)
     finished = {item['event_id'] for item in closed} | {json.loads(row['body'])['event_id'] for row in all_rows
                                                         if row['kind'] == 'not_filled'}
     min_trades, max_dd = int(os.getenv('GO_MIN_TRADES', '150')), float(os.getenv('GO_MAX_DRAWDOWN_R', '10'))
@@ -197,6 +236,8 @@ def track_record(conn) -> dict:
             'by_model': group(lambda item: item['model']),
             'by_symbol': group(lambda item: item['symbol']),
             'by_month': group(lambda item: utc(item['time'], '%Y-%m')),
+            'by_session': group(lambda item: f'{item["direction"]} {item["session"]}'),
+            'by_caution': group(lambda item: 'with cautions' if item['cautioned'] else 'no cautions'),
             'chain': verify(all_rows),
             'basis': ('Every published plan is graded on broker M1 candles including spread. TP1 basis closes the '
                       'whole position at TP1; scale-out closes equal parts at each target with the stop at entry '

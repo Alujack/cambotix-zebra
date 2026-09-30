@@ -36,7 +36,7 @@ def client():
 
 
 def payload(**changes):
-    return candidate(bar_time=int(time.time()), **changes).model_dump()
+    return candidate(**{'bar_time': int(time.time()), **changes}).model_dump()
 
 
 def test_authentication_and_stale_signal(client):
@@ -185,10 +185,10 @@ def test_record_cannot_be_edited_or_removed(client, monkeypatch):
     assert len(ledger_rows()) == 1
 
 
-def publish_in_past(client, monkeypatch, seconds_ago=7200):
+def publish_in_past(client, monkeypatch, seconds_ago=7200, event_id='test-1', offset=0):
     clock = [time.time() - seconds_ago]
     monkeypatch.setattr(main, 'time', SimpleNamespace(time=lambda: clock[0]))
-    signal = candidate(bar_time=int(time.time()))
+    signal = candidate(bar_time=int(time.time()) - offset, event_id=event_id)
     client.post('/signals', json=signal.model_dump())
     main.finish(signal, 'approved', analysis(), [])
     clock[0] = time.time()
@@ -274,3 +274,44 @@ def test_synthetic_signals_never_reach_the_record(client, monkeypatch):
     assert ledger_rows() == []
     with main.database() as conn:
         assert 'not recorded (synthetic test signal)' in conn.execute('SELECT message FROM notifications').fetchone()['message']
+
+
+def test_one_open_plan_per_symbol_and_side(client, monkeypatch):
+    monkeypatch.setattr(main, 'classify', lambda signal: analysis())
+    publish_in_past(client, monkeypatch, seconds_ago=600)
+    client.post('/signals', json=payload(event_id='second', bar_time=int(time.time()) - 5))
+    assert client.post('/process').json()['status'] == 'rejected'
+    assert client.get('/signals').json()[0]['rule_reasons'] == ['open_plan_same_direction']
+    now = time.time()
+    with main.database() as conn:
+        assert ledger.open_count(conn, 'XAUUSD', 'BUY', now) == 1
+        assert ledger.open_count(conn, 'XAUUSD', 'SELL', now) == 0
+        # Past its own entry expiry plus hold limit a plan cannot be live, graded or not.
+        assert ledger.open_count(conn, 'XAUUSD', 'BUY', now + (120 + 1440) * 60) == 0
+    client.post('/signals', json=payload(event_id='DEMO-SYNTHETIC-classic-XAUUSD-2-BUY_SETUP', bar_time=int(now) - 7))
+    assert client.post('/process').json()['status'] == 'approved'
+    monkeypatch.setenv('MAX_OPEN_SAME_DIRECTION', '0')
+    client.post('/signals', json=payload(event_id='third', bar_time=int(now) - 9))
+    assert client.post('/process').json()['status'] == 'approved'
+
+
+def test_losing_history_warns_the_next_signal(client, monkeypatch):
+    monkeypatch.setenv('HISTORY_MIN_SAMPLES', '2')
+    monkeypatch.setattr(main, 'classify', lambda signal: analysis())
+    for index in range(2):
+        signal, plan = publish_in_past(client, monkeypatch, seconds_ago=3600, event_id=f'loss-{index}', offset=20 + index)
+        with main.database() as conn:
+            ledger.append(conn, signal.event_id, 'closed', plan['published_at'] + 600,
+                          {'exit': 'sl', 'targets_hit': 0, 'ambiguous': False, 'r_tp1': -1.0, 'r_scaled': -1.0})
+    client.post('/signals', json=payload(event_id='next', bar_time=int(time.time()) - 5))
+    assert client.post('/process').json()['status'] == 'approved'
+    with main.database() as conn:
+        message = conn.execute("SELECT message FROM notifications WHERE event_id='next'").fetchone()['message']
+    assert 'History: BUY XAUUSD (classic) in' in message and 'won 0 of 2 (0%)' in message and 'expectancy -1.00R' in message
+    plan = json.loads(ledger_rows()[-1]['body'])
+    assert plan['event_id'] == 'next' and any(item.startswith('History:') for item in plan['cautions'])
+    record = client.get('/track-record').json()
+    # The default candidate has no prior swing, so both losses carried a caution when published.
+    assert record['by_caution'] == {'with cautions': {'closed': 2, 'wins': 0, 'win_rate': 0.0, 'total_r_tp1': -2.0,
+                                                      'expectancy_r': -1.0, 'total_r_scaled': -2.0}}
+    assert sum(item['closed'] for item in record['by_session'].values()) == 2

@@ -33,6 +33,20 @@ def _load():
         return _cache['events']
 
 
+def _relevant(events: list) -> list:
+    currencies = {c.strip().upper() for c in os.getenv('NEWS_CURRENCIES', 'USD').split(',') if c.strip()}
+    return sorted((e for e in events if e['impact'] == 'High' and e['country'] in currencies), key=lambda e: e['time'])
+
+
+def next_event(bar_time: int, events: list | None = None) -> dict | None:
+    """The next relevant high-impact event after the bar, or None (also when the filter is off or the feed is down)."""
+    if os.getenv('NEWS_FILTER', 'true').lower() != 'true':
+        return None
+    events = _load() if events is None else events
+    upcoming = [e for e in _relevant(events or []) if e['time'] > bar_time]
+    return upcoming[0] if upcoming else None
+
+
 def news_status(bar_time: int, events: list | None = None) -> dict:
     """{'state': 'off'|'clear'|'blocked'|'unknown', 'detail': str} for a bar close time in Unix seconds."""
     if os.getenv('NEWS_FILTER', 'true').lower() != 'true':
@@ -42,8 +56,7 @@ def news_status(bar_time: int, events: list | None = None) -> dict:
         return {'state': 'unknown', 'detail': 'economic calendar unavailable'}
     before = int(os.getenv('NEWS_WINDOW_BEFORE_MIN', '30')) * 60
     after = int(os.getenv('NEWS_WINDOW_AFTER_MIN', '15')) * 60
-    currencies = {c.strip().upper() for c in os.getenv('NEWS_CURRENCIES', 'USD').split(',') if c.strip()}
-    relevant = sorted((e for e in events if e['impact'] == 'High' and e['country'] in currencies), key=lambda e: e['time'])
+    relevant = _relevant(events)
     for event in relevant:
         delta = event['time'] - bar_time
         if -after <= delta <= before:

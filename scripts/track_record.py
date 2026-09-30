@@ -79,9 +79,10 @@ def report(record, chain_ok, head, rows):
           f'profit factor {h["profit_factor"] if h["profit_factor"] is not None else "n/a"}')
     print(f'  scale-out total {h["total_r_scaled"]:+.2f}R | max drawdown {h["max_drawdown_r"]:.2f}R | '
           f'ambiguous candles {h["ambiguous"]}')
-    for title, key in (('by model', 'by_model'), ('by symbol', 'by_symbol'), ('by month', 'by_month')):
-        for name, item in record[key].items():
-            print(f'  {title:<9} {name:<8} {item["closed"]:>4} closed  {percent(item["win_rate"]):>4}  '
+    for title, key in (('by model', 'by_model'), ('by symbol', 'by_symbol'), ('by month', 'by_month'),
+                       ('by session', 'by_session'), ('cautions', 'by_caution')):
+        for name, item in record.get(key, {}).items():
+            print(f'  {title:<10} {name:<28} {item["closed"]:>4} closed  {percent(item["win_rate"]):>4}  '
                   f'{item["total_r_tp1"]:+.2f}R')
     print(f'\nFORWARD TEST: {h["verdict"]} (needs {h["min_trades"]} closed trades, positive expectancy, '
           f'max drawdown <= {h["max_drawdown_limit_r"]:g}R)')
@@ -130,7 +131,7 @@ code {{ word-break:break-all; font-size:12px; }}
 <div class="wrap"><table><tr><th>Month</th><th>Closed</th><th>Wins</th><th>Win rate</th><th>Total R</th><th>Scale-out R</th></tr>{months}</table></div>
 <h2>Every plan · គ្រប់ផែនការ</h2>
 <div class="wrap"><table><tr><th>#</th><th class="l">Published (UTC)</th><th class="l">Market</th><th class="l">Side</th><th class="l">Model</th>
-<th>Entry</th><th>Stop</th><th>TP1</th><th class="l">Result</th><th>R (TP1)</th><th>R (scale-out)</th></tr>{trades}</table></div>
+<th>Entry</th><th>Stop</th><th>TP1</th><th>Cautions</th><th class="l">Result</th><th>R (TP1)</th><th>R (scale-out)</th></tr>{trades}</table></div>
 <h2>How to check this record</h2>
 <p>{basis}</p>
 <p>The record is a hash chain: each row contains the previous row's SHA-256, so changing any past result changes every
@@ -163,13 +164,14 @@ def page(record, rows, head):
                      f'<td class="l">{html.escape(plan["symbol"])}</td><td class="l">{plan["direction"]}</td>'
                      f'<td class="l">{html.escape(plan["model"])}</td><td>{plan["entry"]:.{digits}f}</td>'
                      f'<td>{plan["stop"]:.{digits}f}</td><td>{plan["targets"][0][1]:.{digits}f}</td>'
+                     f'<td title="{html.escape("; ".join(plan.get("cautions", [])))}">{len(plan.get("cautions", [])) or ""}</td>'
                      f'<td class="l {css}">{html.escape(outcome)}</td><td class="{css}">{r1}</td><td class="{css}">{rs}</td></tr>')
     return PAGE.format(generated=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M'), closed=h['closed'],
                        win_rate=percent(h['win_rate']), total=fmt(h['total_r_tp1']),
                        expectancy=f'{h["expectancy_r"]:+.3f}R', drawdown=f'{h["max_drawdown_r"]:.2f}R',
                        not_filled=record['not_filled'], open=record['open'], ambiguous=h['ambiguous'],
                        verdict=h['verdict'], min_trades=h['min_trades'], dd_limit=f'{h["max_drawdown_limit_r"]:g}',
-                       months=months, trades=''.join(lines) or '<tr><td colspan="11">No published plans yet</td></tr>',
+                       months=months, trades=''.join(lines) or '<tr><td colspan="12">No published plans yet</td></tr>',
                        basis=html.escape(record['basis']) + ' * marks a candle where the order of hits was unknown; the worse outcome is counted.',
                        head_seq=len(rows), head_hash=head)
 

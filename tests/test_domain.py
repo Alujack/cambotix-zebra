@@ -289,3 +289,47 @@ def test_liquidity_map_and_named_target():
     assert 'Draw on liquidity: PDH 3540 (TP1)' in message and 'TP1: 3540.00  (+2.89R, liquidity: PDH)' in message
     with pytest.raises(ValidationError):
         smc(target_name='<script>')
+
+
+def test_cautions_flag_weak_but_valid_setups(monkeypatch):
+    monkeypatch.setenv('MIN_ADX', '20')
+    assert domain.cautions(candidate(swing_low=3504.0, swing_high=3520.0)) == []
+    found = ' | '.join(domain.cautions(candidate(rsi=68.5, adx=21.0, price=3515.0)))
+    for text in ('Stretched momentum: RSI 68.5', 'Weak trend: ADX 21', 'Extended: price is 1.9 ATR', 'No usable prior swing'):
+        assert text in found
+    assert 'High volatility' in domain.cautions(candidate(atr=15.0, swing_low=3504.0))[0]
+    assert domain.cautions(candidate(rsi=33.0, signal='SELL_SETUP', swing_high=3517.0)) == [
+        'Stretched momentum: RSI 33 is at the edge of its band']
+
+
+def test_smc_cautions(monkeypatch):
+    assert domain.cautions(smc(stop=3503.0)) == []
+    assert 'Wide stop: 2.7 ATR' in domain.cautions(smc())[0]
+    assert 'Thin reward' in domain.cautions(smc(stop=3503.0, target_liquidity=3512.0))[0]
+    assert domain.cautions(smc(stop=3503.0, daily_bias=1, h4_bias=-1)) == ['Daily and 4H structure disagree']
+    assert 'Entry near equilibrium: 45%' in domain.cautions(smc(entry=3516.0, stop=3512.0))[0]
+    assert 'only 30% of 12' in domain.cautions(smc(stop=3503.0, hit_rate=0.3, samples=12))[0]
+
+
+def test_news_soon_caution(monkeypatch):
+    monkeypatch.setenv('NEWS_FILTER', 'true')
+    signal = candidate(swing_low=3504.0)
+    soon = [{'time': signal.bar_time + 3600, 'title': 'CPI m/m', 'country': 'USD', 'impact': 'High'}]
+    assert domain.cautions(signal, soon) == ['News soon: CPI m/m (USD) in 60 min; consider waiting or a smaller size']
+    later = [{**soon[0], 'time': signal.bar_time + 4 * 3600}]
+    assert domain.cautions(signal, later) == []
+
+
+def test_session_labels(monkeypatch):
+    assert domain.session_label('XAUUSD', 'classic', candidate().bar_time) == 'London'
+    assert domain.session_label('XAUUSD', 'smc', smc().bar_time) == 'London'
+    saturday = int(datetime(2026, 9, 5, 12).timestamp())
+    monkeypatch.setenv('SESSION_EXEMPT_SYMBOLS', 'BTCUSD')
+    assert domain.session_label('BTCUSD', 'classic', saturday) == '24/7 hours'
+    assert domain.session_label('XAUUSD', 'classic', saturday) == 'outside sessions'
+
+
+def test_cautions_appear_in_the_message():
+    message = notification_text(candidate(), 'approved', None, [], warnings=['Weak trend: ADX 21'])
+    assert 'CAUTIONS (the setup is still valid):\n⚠️ Weak trend: ADX 21' in message
+    assert message.index('CAUTIONS') < message.index('WHY (rules):')
