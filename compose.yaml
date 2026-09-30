@@ -16,7 +16,7 @@ services:
       timeout: 3s
       retries: 20
   n8n:
-    image: docker.n8n.io/n8nio/n8n@sha256:a42a47a6782f9d4419d81366199fa592e063ad41511cc80a0cd756252187c291
+    image: docker.n8n.io/n8nio/n8n@sha256:307d6065be25619aa24cfc63a7c2f04ca56d084a08c05c8e9f189a89f353b1ec
     restart: unless-stopped
     ports:
       - '127.0.0.1:${N8N_PORT:-5680}:5678'

@@ -236,6 +236,19 @@ def position_size(signal: Signal, risk_distance: float) -> dict | None:
     return {'account': account, 'percent': percent, 'money': money, 'units': units, 'lots': units / contract, 'contract': contract}
 
 
+SYNTHETIC_PREFIXES = ('demo-synthetic', 'smoke-', 'synthetic-')
+
+
+def synthetic(event_id: str) -> bool:
+    """Test traffic from scripts/demo.py, smoke.py and check-ai.sh: journaled, never put on the track record."""
+    return event_id.lower().startswith(SYNTHETIC_PREFIXES)
+
+
+def gate_mode() -> str:
+    """rules (default): the technical rules decide and the model only comments. ai: the model must also approve."""
+    return 'ai' if os.getenv('GATE_MODE', 'rules').strip().lower() == 'ai' else 'rules'
+
+
 def outcome(signal: Signal, analysis: Analysis) -> str:
     expected = 'bullish_trend' if signal.signal == 'BUY_SETUP' else 'bearish_trend'
     return 'approved' if (analysis.decision == 'APPROVE' and
@@ -356,7 +369,8 @@ def news_line(signal: Signal) -> str:
 AI_STAGE_CODES = {'ai_quality_gate_rejected', 'expired_during_analysis', 'ai_unavailable_or_invalid'}
 
 
-def notification_text(signal: Signal, status: str, analysis: dict | None, reasons: list[str]) -> str:
+def notification_text(signal: Signal, status: str, analysis: dict | None, reasons: list[str],
+                      ledger_seq: int | None = None) -> str:
     buy = signal.signal == 'BUY_SETUP'
     direction = 'BUY' if buy else 'SELL'
     decimals = 2 if signal.price >= 100 else 5
@@ -365,7 +379,12 @@ def notification_text(signal: Signal, status: str, analysis: dict | None, reason
     lines = [f'{"🟢" if buy else "🔴"} {direction} {signal.symbol} {signal.timeframe} [{tag}] | {icon} {status.upper()}'
              + (' (manual review)' if status == 'approved' else ''),
              f'Event: {signal.event_id}',
-             'Bar closed: ' + datetime.fromtimestamp(signal.bar_time, timezone.utc).strftime('%Y-%m-%d %H:%M UTC'), '']
+             'Bar closed: ' + datetime.fromtimestamp(signal.bar_time, timezone.utc).strftime('%Y-%m-%d %H:%M UTC')]
+    if ledger_seq is not None:
+        lines.append(f'Ledger: #{ledger_seq} (graded to its outcome, never removed)')
+    elif status == 'approved' and synthetic(signal.event_id):
+        lines.append('Ledger: not recorded (synthetic test signal)')
+    lines.append('')
     # Levels are shown only when the setup is structurally valid (every technical rule passed).
     if not [code for code in reasons if code not in AI_STAGE_CODES]:
         plan = trade_plan(signal)
@@ -384,7 +403,8 @@ def notification_text(signal: Signal, status: str, analysis: dict | None, reason
     lines.append('WHY (rules):')
     lines += ['• ' + item for item in rule_support(signal)]
     if analysis:
-        lines += ['', f'AI VIEW ({os.getenv("OLLAMA_MODEL", "local model")}): {analysis["decision"]} | '
+        label = 'AI VIEW' if gate_mode() == 'ai' else 'AI NOTE (commentary only; the rules decide)'
+        lines += ['', f'{label} ({os.getenv("OLLAMA_MODEL", "local model")}): {analysis["decision"]} | '
                   f'score {analysis["confidence"]}/100 (not a win probability)',
                   f'• Regime: {analysis["market_regime"]} | Quality: {analysis["setup_quality"]}']
         lines += ['• ' + item for item in analysis['reasons']]

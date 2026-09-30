@@ -84,16 +84,20 @@ def test_ai_cannot_bypass_quality_gate(changes):
     assert outcome(candidate(), analysis(**changes)) == 'rejected'
 
 
-def test_approved_message_is_manual_only():
+def test_approved_message_is_manual_only(monkeypatch):
+    monkeypatch.delenv('GATE_MODE', raising=False)
     signal, result = candidate(), analysis()
     assert outcome(signal, result) == 'approved'
-    message = notification_text(signal, 'approved', result.model_dump(), [])
+    message = notification_text(signal, 'approved', result.model_dump(), [], ledger_seq=7)
     assert 'WAITING FOR MANUAL CONFIRMATION' in message
     assert 'NOT CHECKED' in message
     assert 'not a win probability' in message
     assert 'BUY AT: 3510.25' in message and 'STOP LOSS:' in message and 'TP4:' in message
-    assert 'WHY (rules):' in message and 'AI VIEW' in message and 'RISK FLAGS:' in message
+    assert 'WHY (rules):' in message and 'AI NOTE (commentary only; the rules decide)' in message and 'RISK FLAGS:' in message
+    assert 'Ledger: #7' in message
     assert 'No order was placed' in message
+    monkeypatch.setenv('GATE_MODE', 'ai')
+    assert 'AI VIEW' in notification_text(signal, 'approved', result.model_dump(), [])
 
 
 def test_symbols_are_configurable(monkeypatch):

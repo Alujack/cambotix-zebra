@@ -3,7 +3,7 @@
 Local XAUUSD 15-minute signal analysis using TradingView, n8n, PostgreSQL, and Ollama. Telegram delivery is optional. This implements the V1 manual-review MVP: **no broker connection, paper fills, or live orders**.
 
 ```text
-TradingView Pine alert
+TradingView Pine alert (or scripts/mt5_feeder.py → analyzer /signals directly)
   → HTTPS tunnel (configure your endpoint)
   → restricted webhook gateway :8787
   → n8n intake workflow :5680
@@ -12,12 +12,19 @@ TradingView Pine alert
 
 n8n schedule every 15 seconds
   → claim a saved signal
-  → technical rules and session checks
-  → Ollama JSON classification
-  → final quality gate and PostgreSQL journal
+  → technical rules and session checks (these decide: GATE_MODE=rules)
+  → Ollama JSON commentary
+  → PostgreSQL journal; an approved plan is appended to the ledger
+
+scripts/mt5_feeder.py every minute
+  → broker M1 candles with spread → analyzer /candles
+
+n8n grader schedule every minute
+  → grade every open plan on stored candles → append fills, targets, stops, closes to the ledger
+  → daily record with the ledger chain hash
 
 n8n notification schedule
-  → PostgreSQL outbox → Telegram when explicitly enabled
+  → PostgreSQL outboxes (signals, results, daily record) → Telegram when explicitly enabled
 ```
 
 ## Start locally
@@ -47,7 +54,7 @@ docker compose start
 
 On macOS, native Ollama is a separate background process; its log and PID are in `.local/ollama/server.log` and `.local/ollama/server.pid`. Ollama also creates its standard identity key under `~/.ollama`. It does not automatically start at login. Run `bash scripts/start.sh` after a reboot. `docker compose stop` stops the containers only; to stop this project's native model server, run `kill "$(cat .local/ollama/server.pid)"` after verifying that PID still belongs to this Ollama process.
 
-The smoke test sends a clearly labeled weak-trend sample through the gateway and n8n, verifies deduplication and validation errors, and waits for a scheduled rejection. It requires Telegram disabled. `scripts/demo.py` is the opposite: it sends one coherent synthetic BUY and one SELL setup that pass every rule so the local model decides, and it will message Telegram if enabled; event IDs begin with `DEMO-SYNTHETIC`. Tests use the separate `zebra_tests` database and mocked AI; the main journal is preserved.
+The smoke test sends a clearly labeled weak-trend sample through the gateway and n8n, verifies deduplication and validation errors, and waits for a scheduled rejection. It requires Telegram disabled. `scripts/demo.py` is the opposite: it sends one coherent synthetic BUY and one SELL setup that pass every rule, so they are approved with the local model's commentary (or judged by it with `GATE_MODE=ai`), and it will message Telegram if enabled; event IDs begin with `DEMO-SYNTHETIC`. Synthetic IDs (`DEMO-SYNTHETIC`, `smoke-`, `synthetic-`) are journaled but never added to the graded ledger. Tests use the separate `zebra_tests` database and mocked AI; the main journal is preserved.
 
 The stack uses named volumes. `docker compose down` preserves them. **`docker compose down -v` deletes the database, workflows, and Docker model weights.** Native macOS model files in `.local/ollama` are separate. Back up `.env` with the volumes: the encryption key is required to decrypt n8n credentials. Deleting volumes also requires removing `.local/workflows-installed` before the next start.
 
@@ -126,9 +133,11 @@ TELEGRAM_CHAT_ID=your_chat_id
 
 Then apply with `docker compose up -d analyzer`. Subsequent completed analyses will send messages to that chat. Old notifications marked `disabled` are not replayed. Bot tokens stay in the analyzer environment, never in Pine payloads or exported n8n workflows. Message formatting is plain text, so model text cannot inject Telegram HTML.
 
-Each message has a fixed structure: direction and result header, then **reference levels** (`BUY AT`/`SELL AT`, `STOP LOSS`, `TP1`-`TP4`), a `WHY (rules)` section with factual indicator readings, the `AI VIEW` block when the model ran, any `CHECKS FAILED` codes, and the manual-review footer. Levels are computed in Python from the payload, never by the model: the stop sits beyond the prior swing plus a 0.2 ATR buffer when that lies within 1 to 3 ATR of entry, otherwise at `STOP_ATR_MULTIPLE` x ATR, and targets are `TP_R_MULTIPLES` multiples of that distance. Levels appear only when every technical rule passed; an AI-rejected setup shows them marked *reference only*. They are arithmetic on indicator values, not advice, and no order is ever placed.
+Each message has a fixed structure: direction and result header, the `Ledger: #n` line for an approved plan, then **reference levels** (`BUY AT`/`SELL AT`, `STOP LOSS`, `TP1`-`TP4`), a `WHY (rules)` section with factual indicator readings, the `AI NOTE` block when the model ran (`AI VIEW` with `GATE_MODE=ai`), any `CHECKS FAILED` codes, and the manual-review footer. Levels are computed in Python from the payload, never by the model: the stop sits beyond the prior swing plus a 0.2 ATR buffer when that lies within 1 to 3 ATR of entry, otherwise at `STOP_ATR_MULTIPLE` x ATR, and targets are `TP_R_MULTIPLES` multiples of that distance. Levels appear only when every technical rule passed; an AI-rejected setup shows them marked *reference only*. They are arithmetic on indicator values, not advice, and no order is ever placed.
 
 Delivery is deliberately conservative: an ambiguous network result becomes `unknown` and is not automatically resent. `failed` and `unknown` entries are visible in the journal and need manual inspection. This avoids duplicate notifications after a timeout; it cannot promise exactly-once delivery to Telegram.
+
+Graded results (fill, each target, stop, break-even, time limit, close) arrive as `RESULT` messages after signal alerts. The daily record arrives once per day at `DIGEST_HOUR` in `DIGEST_TIMEZONE`, to `TELEGRAM_DIGEST_CHAT_ID` when set (for example a public channel) and otherwise to `TELEGRAM_CHAT_ID`.
 
 ## Configuration and behavior
 
@@ -136,7 +145,8 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `MIN_CONFIDENCE` | 75 | Subjective AI score threshold, not win probability |
+| `GATE_MODE` | rules | `rules`: the technical rules decide and the model only comments; `ai`: the model must also approve |
+| `MIN_CONFIDENCE` | 75 | Subjective AI score threshold, not win probability (`GATE_MODE=ai` only) |
 | `MIN_ADX` | 20 | Minimum trend strength |
 | `MIN_ATR_PERCENT` / `MAX_ATR_PERCENT` | 0.02 / 0.5 | ATR divided by price, expressed as percent |
 | `FILTER_SESSIONS` | true | London 08–17 or New York 08–17, weekdays, local DST |
@@ -156,25 +166,61 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `CONTRACT_SIZES` | XAUUSD=100 | Units per lot per symbol for the lots figure |
 | `MAX_SIGNAL_AGE_SECONDS` | 300 | Maximum age from confirmed bar close |
 | `OLLAMA_MODEL` | qwen2.5:1.5b | Local model with schema-constrained JSON |
+| `ENTRY_EXPIRY_MINUTES` | 120 | SMC limit entries not filled within this time are recorded as not filled |
+| `MAX_HOLD_MINUTES` | 1440 | Open trades are closed at market after this time |
+| `GO_MIN_TRADES` / `GO_MAX_DRAWDOWN_R` | 150 / 10 | Forward-test verdict thresholds |
+| `DIGEST_HOUR` / `DIGEST_TIMEZONE` | 7 / Asia/Phnom_Penh | When the daily record is sent |
 | `AI_TIMEOUT_SECONDS` | 120 | Maximum wait per AI attempt |
 
 Use matching Pine indicator thresholds when adjusting rules. Only the 15m timeframe is accepted. `SYMBOLS` lists accepted tickers; tickers in `SESSION_EXEMPT_SYMBOLS` skip the session filter on the server, and the Pine script skips it for any `crypto` symbol. Thresholds are shared across symbols, so review the ATR band before enabling a new market. Incoming `bar_time` is the bar-close timestamp in **Unix seconds**, not milliseconds. Numeric fields must be finite JSON numbers. `macd_hist` means histogram, not the MACD line.
 
-All rules and the AI gate must pass before a candidate is labeled `approved`. The AI must approve the existing direction, report a matching market regime and good/excellent quality, and meet the configured score threshold. `approved` means ready for **manual review**, never permission to place an order. No calibrated performance or profitability claim is made.
+With the default `GATE_MODE=rules`, a candidate is `approved` when every technical rule passes. The model still runs once and its view is shown as commentary; if it is unavailable the setup is approved without it (`error_code` `ai_commentary_unavailable`). With `GATE_MODE=ai` the model must also approve the existing direction, report a matching market regime and good/excellent quality, and meet the configured score threshold, and AI failures are retried as before. `approved` means ready for **manual review**, never permission to place an order. Performance is established only by the graded ledger below, never claimed in advance.
 
 Signal identity is protected by both the primary event ID and a unique `(symbol, timeframe, bar_time, signal)` key. Concurrent inserts are atomic. A duplicate with changed values returns HTTP 409. Stale/invalid input returns 422, and database failures return 503 for retry. No successful acknowledgment is sent before database commit.
 
-The processor holds a PostgreSQL advisory lock, recovers interrupted claims, and retries failed/invalid AI responses up to three times with 30-second backoff. Age is checked again after inference. Expired signals are rejected, including after downtime. The accepted-signal journal and notification outbox are committed together. Invalid incoming requests are not stored; accepted signal history is available via `scripts/history.py` (latest 100) or PostgreSQL.
+The processor holds a PostgreSQL advisory lock, recovers interrupted claims, and (with `GATE_MODE=ai`) retries failed/invalid AI responses up to three times with 30-second backoff. Age is checked again after inference. Expired signals are rejected, including after downtime. The accepted-signal journal and notification outbox are committed together. Invalid incoming requests are not stored; accepted signal history is available via `scripts/history.py` (latest 100) or PostgreSQL.
 
 macOS setup uses `OLLAMA_RUNTIME=native`, an empty `COMPOSE_PROFILES`, and `OLLAMA_BASE_URL=http://host.docker.internal:11435`. To use Docker Ollama instead, set `OLLAMA_RUNTIME=docker`, `COMPOSE_PROFILES=docker-ai`, and `OLLAMA_BASE_URL=http://ollama:11434`, then run the start script. Docker inference on this Mac uses CPU. For a different model, change `OLLAMA_MODEL` and rerun `bash scripts/start.sh` to pull it and update the analyzer. Changing the timeout also requires regenerating and reimporting the analysis workflow.
 
+## MetaTrader 5 feeder
+
+`scripts/mt5_feeder.py` replaces the TradingView webhook for accounts without a webhook plan. It mirrors `gold_setups.pine` (the classic model) bar for bar and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`, so no tunnel is needed. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only):
+
+```powershell
+py -m pip install MetaTrader5 pandas numpy
+cd \\wsl.localhost\Ubuntu\home\<you>\cambotix-zebra
+py scripts\mt5_feeder.py --symbol XAUUSDc --once --dry-run   # check readings, send nothing
+py scripts\mt5_feeder.py --symbol XAUUSDc                    # watch: candles every minute, setups every 15m
+```
+
+Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. The SMC model is not ported to the feeder yet; it still needs `smc_setups.pine`.
+
+## Outcome grading and track record
+
+Every approved plan is appended to `ledger` in the same transaction as the approval, with its levels frozen. The grader (`POST /grade`, every minute) replays stored broker candles for each open plan and appends what happened: `filled`, `tp1`-`tp4`, `sl`, `be`, `timeout`, `not_filled`, and a final `closed` row with two scores:
+
+- **TP1 basis** (the headline): the whole position closes at TP1, or at the stop for -1R.
+- **Scale-out**: equal parts close at each target, with the stop moved to entry after TP1.
+
+Grading is deliberately conservative. A BUY fills at the ask and exits at the bid, a SELL the reverse, using each bar's spread. Classic plans fill at the open of the first minute after publication. SMC plans are limit orders at the FVG midpoint that expire after `ENTRY_EXPIRY_MINUTES`, or are recorded as not filled if TP1 prints first. A limit fill candle cannot credit targets. When one candle could have hit the stop and a target, the stop is counted and the trade is flagged ambiguous. R is measured against the actual fill. Plans without candle coverage stay open; they are never dropped.
+
+The ledger cannot be edited by the service: triggers refuse `UPDATE`, `DELETE`, and `TRUNCATE` on `ledger` and `candles` and deletion of `signals`, and stored candles are first-write-wins. Each row carries the previous row's SHA-256, and the daily Telegram record posts the chain head. A database superuser can still bypass triggers, but any rewrite changes every later hash and no longer matches the posted head.
+
+```bash
+python3 scripts/track_record.py                       # stats, forward-test verdict, independent chain check
+python3 scripts/track_record.py --expect 42:<hash>    # compare with a head posted in Telegram
+python3 scripts/track_record.py --html record.html    # full public record as one static page
+```
+
+The forward-test verdict is `GO` only with at least `GO_MIN_TRADES` closed trades, positive expectancy on the TP1 basis, and a maximum drawdown within `GO_MAX_DRAWDOWN_R`. Until then it reads `NOT ENOUGH DATA`; do not publish or charge for signals before it reads `GO`.
+
 ## Workflows and maintenance
 
-The three JSON templates in `n8n/` contain no secrets. `scripts/setup.py` renders the actual webhook and header credential into ignored `.local/import/`. The start script imports them once, publishes them, restarts n8n, and removes the plaintext credential import. Repeated starts preserve workflow edits.
+The four JSON templates in `n8n/` contain no secrets. `scripts/setup.py` renders the actual webhook and header credential into ignored `.local/import/`. The start script imports them once, publishes them, restarts n8n, and removes the plaintext credential import. Repeated starts preserve workflow edits.
 
-To deliberately replace the three project workflows after editing the generator, remove `.local/workflows-installed` and run `bash scripts/start.sh`. This overwrites these three workflow IDs. Export any UI edits you want to keep first. Rotate `WEBHOOK_PATH` using the same reimport procedure and update TradingView. Keep `N8N_ENCRYPTION_KEY` unchanged after initialization unless performing an n8n credential migration.
+An installation made before the outcome grader existed gets only the new `zebraGradeV1` workflow on its next `bash scripts/start.sh`; the other three are left as edited. To deliberately replace all four project workflows after editing the generator, remove `.local/workflows-installed` and run `bash scripts/start.sh`. This overwrites these four workflow IDs. Export any UI edits you want to keep first. Rotate `WEBHOOK_PATH` using the same reimport procedure and update TradingView. Keep `N8N_ENCRYPTION_KEY` unchanged after initialization unless performing an n8n credential migration.
 
-The pinned n8n image is version 2.26.9. Other service versions are fixed in `compose.yaml`; review updates periodically. No subscription or cloud AI key is required by this implementation. TradingView plan access, tunnel/domain arrangements, Docker licensing eligibility, electricity, and connectivity remain separate from the local software setup.
+The pinned n8n image is version 2.37.10 (multi-arch index digest). An existing n8n database is migrated forward on first start; back up the `n8n_data` and `postgres_data` volumes first. Other service versions are fixed in `compose.yaml`; review updates periodically. No subscription or cloud AI key is required by this implementation. TradingView plan access, tunnel/domain arrangements, Docker licensing eligibility, electricity, and connectivity remain separate from the local software setup.
 
 ## References
 

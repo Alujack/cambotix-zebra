@@ -85,8 +85,13 @@ def main():
     ]), workflow('zebraNotifyV1', 'Zebra 3 — Telegram outbox', [
         node('Every 15 seconds', 'scheduleTrigger', {'rule': {'interval': [{'field': 'seconds', 'secondsInterval': 15}]}}, 0, version=1.2),
         http_node('Deliver one notification', '/notify', 260, timeout=20000)
+    ]), workflow('zebraGradeV1', 'Zebra 4 — Outcome grader', [
+        node('Every minute', 'scheduleTrigger', {'rule': {'interval': [{'field': 'seconds', 'secondsInterval': 60}]}}, 0, version=1.2),
+        http_node('Grade open plans', '/grade', 260, timeout=20000)
     ])]
     write(imports / 'workflows.json', json.dumps(workflows, indent=2) + '\n')
+    # Installations made before the grader existed import only this workflow; the other three stay untouched.
+    write(imports / 'grader.json', json.dumps([workflows[-1]], indent=2) + '\n')
     credential_path = imports / 'credentials.json'
     write(credential_path, json.dumps([{'id': 'zebraAnalyzerAuth', 'name': 'Zebra internal API',
        'type': 'httpHeaderAuth', 'data': {'name': 'X-Zebra-Token', 'value': env['ANALYZER_TOKEN']}}]))

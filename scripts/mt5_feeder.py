@@ -4,6 +4,11 @@ Replaces the TradingView webhook for accounts without a webhook-capable plan.
 Mirrors tradingview/gold_setups.pine bar for bar: same indicators, same gates,
 same edge-triggered emission, same JSON contract. The analyzer re-validates
 everything server-side, exactly as it does for a TradingView payload.
+
+Every minute it also sends the broker's closed M1 candles (bid prices plus the
+bar spread) to /candles, which the analyzer uses to grade every published plan.
+The analyzer answers with the earliest time it still needs, so a feeder that was
+offline backfills the gap on its next run.
 """
 from __future__ import annotations
 
@@ -26,6 +31,8 @@ ROOT = Path(__file__).resolve().parent.parent
 BARS = 600                 # >= 200 for EMA200 plus warmup
 TF_SECONDS = 900
 DIRECTIONS = ('BUY_SETUP', 'SELL_SETUP')
+CANDLE_CHUNK = 2 * 86400   # M1 rows per request stay well under the analyzer's 1 MB limit
+FIRST_CANDLES = 3 * 3600   # history sent on the very first push
 
 
 # -- config -------------------------------------------------------------------
@@ -150,17 +157,51 @@ def payload(row: pd.Series, close_epoch: int, symbol: str, direction: str) -> di
     }
 
 
-def post(body: dict, url: str, token: str) -> tuple[int, str]:
+def post(body: dict, url: str, token: str, limit: int = 200) -> tuple[int, str]:
     request = urllib.request.Request(
         url, data=json.dumps(body).encode(),
         headers={'Content-Type': 'application/json', 'X-Zebra-Token': token})
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            return response.status, response.read().decode()[:200]
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, response.read().decode()[:limit]
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read().decode()[:200]
+        return exc.code, exc.read().decode()[:limit]
     except urllib.error.URLError as exc:
         return 0, str(exc.reason)
+
+
+def push_candles(cfg: dict, state: dict) -> None:
+    """Send closed M1 candles from the analyzer's need_from up to the last closed minute."""
+    if not mt5.initialize():
+        print(f'  candles: MT5 initialize failed: {mt5.last_error()}')
+        return
+    info = mt5.symbol_info(cfg['mt5_symbol'])
+    if info is None:
+        print(f'  candles: unknown MT5 symbol {cfg["mt5_symbol"]}')
+        return
+    end = int(time.time()) // 60 * 60
+    start = state.get('need_from') or end - FIRST_CANDLES
+    for _ in range(20):
+        start = min(start, end - 60)
+        stop = min(end, start + CANDLE_CHUNK)
+        rates = mt5.copy_rates_range(cfg['mt5_symbol'], mt5.TIMEFRAME_M1,
+                                     dt.datetime.fromtimestamp(start, dt.timezone.utc),
+                                     dt.datetime.fromtimestamp(stop, dt.timezone.utc))
+        rows = [] if rates is None else [
+            [int(r['time']), float(r['open']), float(r['high']), float(r['low']), float(r['close']),
+             round(float(r['spread']) * info.point, 8)]
+            for r in rates if start <= int(r['time']) and int(r['time']) + 60 <= stop]
+        status, text = post({'symbol': cfg['symbol'], 'start': start, 'end': stop, 'candles': rows},
+                            cfg['candles_url'], cfg['token'], limit=2000)
+        if status != 200:
+            print(f'  candles: HTTP {status} {text}')
+            return
+        reply = json.loads(text)
+        state['need_from'] = reply['need_from']
+        if reply['need_from'] >= end:
+            return
+        start = reply['need_from']
+    print('  candles: backfill continues next minute')
 
 
 def scan(cfg: dict, dry_run: bool) -> None:
@@ -202,6 +243,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Feed MT5 15m setups into the analyzer.')
     parser.add_argument('--once', action='store_true', help='scan the last closed bar and exit')
     parser.add_argument('--dry-run', action='store_true', help='print the payload instead of sending')
+    parser.add_argument('--no-candles', action='store_true', help='do not send M1 candles for outcome grading')
     parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDc'),
                         help='broker symbol as named in MT5 (default XAUUSDc)')
     args = parser.parse_args()
@@ -213,6 +255,7 @@ def main() -> None:
         # Exness suffixes gold as XAUUSDc; the analyzer only accepts [A-Z0-9]+.
         'symbol': (broker_symbol[:-1] if broker_symbol.endswith('c') else broker_symbol).upper(),
         'url': f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}/signals',
+        'candles_url': f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}/candles',
         'token': settings.get('ANALYZER_TOKEN', ''),
         'min_adx': float(settings.get('MIN_ADX', 20)),
         'min_atr': float(settings.get('MIN_ATR_PERCENT', 0.02)),
@@ -225,14 +268,24 @@ def main() -> None:
     print(f'{cfg["mt5_symbol"]} -> {cfg["symbol"]}  {cfg["url"]}  '
           f'(ADX>={cfg["min_adx"]}, ATR% {cfg["min_atr"]}-{cfg["max_atr"]})')
 
+    candles = not (args.no_candles or args.dry_run)
+    state: dict = {}
     try:
         if args.once:
+            if candles:
+                push_candles(cfg, state)
             scan(cfg, args.dry_run)
             return
-        print('watching; scanning 10s after each 15m close. Ctrl+C to stop.')
+        print('watching; candles every minute, setup scan 10s after each 15m close. Ctrl+C to stop.')
+        scanned = None
         while True:
-            time.sleep(max(5.0, TF_SECONDS - time.time() % TF_SECONDS + 10))
-            scan(cfg, args.dry_run)
+            time.sleep(max(1.0, 60 - time.time() % 60 + 10))
+            if candles:
+                push_candles(cfg, state)
+            bar = int(time.time()) // TF_SECONDS
+            if time.time() % TF_SECONDS < 60 and bar != scanned:
+                scanned = bar
+                scan(cfg, args.dry_run)
             sys.stdout.flush()
     except KeyboardInterrupt:
         print('stopped')

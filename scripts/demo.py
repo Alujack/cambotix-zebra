@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Send clearly labeled SYNTHETIC BUY and SELL setups through gateway -> n8n -> rules -> local AI -> Telegram.
 Unlike smoke.py this deliberately exercises the AI stage and, if enabled, Telegram. Event IDs start with
-DEMO-SYNTHETIC so the journal and messages cannot be mistaken for market data. No orders exist in this system.
+DEMO-SYNTHETIC so the journal and messages cannot be mistaken for market data, and such setups are never added to
+the graded ledger. No orders exist in this system.
 
 usage: python3 scripts/demo.py [SYMBOL] [classic|smc]
 """

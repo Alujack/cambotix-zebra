@@ -1,8 +1,11 @@
 import hmac
 import json
 import os
-from contextlib import contextmanager
+import time
+from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 import httpx
 import psycopg
@@ -10,12 +13,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.domain import Analysis, Signal, freshness, notification_text, outcome, session_exempt_symbols, sessions, system_prompt, technical_rules
+from app import ledger
+from app.domain import (Analysis, Signal, allowed_symbols, freshness, gate_mode, notification_text, outcome,
+                        session_exempt_symbols, sessions, synthetic, system_prompt, technical_rules)
+from app.grader import simulate
 from app.news import news_status
-
-app = FastAPI(title='Cambotix Zebra — signal analyzer', docs_url=None, redoc_url=None)
 
 
 @contextmanager
@@ -25,6 +29,16 @@ def database():
                           connect_timeout=1, options='-c statement_timeout=1500 -c lock_timeout=500',
                           row_factory=dict_row) as conn:
         yield conn
+
+
+@asynccontextmanager
+async def lifespan(_):
+    with database() as conn:
+        ledger.migrate(conn)
+    yield
+
+
+app = FastAPI(title='Cambotix Zebra — signal analyzer', docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 def authorize(x_zebra_token: Annotated[str | None, Header()] = None):
@@ -42,7 +56,7 @@ async def database_error(request, exc):
 def health():
     with database() as conn:
         conn.execute('SELECT 1')
-    return {'status': 'ok', 'mode': 'manual_review', 'execution_enabled': False}
+    return {'status': 'ok', 'mode': 'manual_review', 'gate': gate_mode(), 'execution_enabled': False}
 
 
 @app.post('/signals', dependencies=[Depends(authorize)])
@@ -89,16 +103,24 @@ def classify(signal: Signal) -> Analysis:
         return Analysis.model_validate_json(response.json()['message']['content'])
 
 
+def telegram_enabled() -> bool:
+    return os.getenv('TELEGRAM_ENABLED', 'false').lower() == 'true'
+
+
 def finish(signal: Signal, status: str, analysis: Analysis | None, reasons: list[str], error_code=None):
     data = analysis.model_dump() if analysis else None
-    enabled = os.getenv('TELEGRAM_ENABLED', 'false').lower() == 'true'
     with database() as conn:
         conn.execute('''UPDATE signals SET status=%s, analysis=%s, rule_reasons=%s,
             completed_at=now(), error_code=%s WHERE event_id=%s''',
             (status, Jsonb(data), Jsonb(reasons), error_code, signal.event_id))
+        seq = None
+        if status == 'approved' and not synthetic(signal.event_id):
+            # Published in the same transaction as the approval: an approved setup is always on the record.
+            now = int(time.time())
+            seq, _ = ledger.append(conn, signal.event_id, 'published', now, ledger.plan_record(signal, now))
         conn.execute('''INSERT INTO notifications(event_id,message,status) VALUES (%s,%s,%s)
-            ON CONFLICT DO NOTHING''', (signal.event_id, notification_text(signal, status, data, reasons),
-                                        'pending' if enabled else 'disabled'))
+            ON CONFLICT DO NOTHING''', (signal.event_id, notification_text(signal, status, data, reasons, ledger_seq=seq),
+                                        'pending' if telegram_enabled() else 'disabled'))
 
 
 @app.post('/process', dependencies=[Depends(authorize)])
@@ -126,6 +148,8 @@ def process():
                 analysis = classify(signal)
             except (httpx.HTTPError, ValidationError, ValueError, KeyError, TypeError):
                 # No raw provider errors are logged: URLs may contain credentials.
+                analysis = None
+            if analysis is None and gate_mode() == 'ai':
                 if row['attempts'] < 3:
                     with database() as conn:
                         conn.execute("UPDATE signals SET status='queued', next_attempt_at=now()+interval '30 seconds', error_code='ai_unavailable_or_invalid' WHERE event_id=%s", (signal.event_id,))
@@ -136,44 +160,179 @@ def process():
             if not freshness(signal):
                 finish(signal, 'rejected', analysis, ['expired_during_analysis'])
                 return {'status': 'rejected', 'event_id': signal.event_id}
-            status = outcome(signal, analysis)
-            finish(signal, status, analysis, [] if status == 'approved' else ['ai_quality_gate_rejected'])
+            # Rules gate: every technical rule passed, so the setup is approved; the model only comments.
+            status = outcome(signal, analysis) if gate_mode() == 'ai' else 'approved'
+            finish(signal, status, analysis, [] if status == 'approved' else ['ai_quality_gate_rejected'],
+                   None if analysis else 'ai_commentary_unavailable')
             return {'status': status, 'event_id': signal.event_id}
         finally:
             guard.execute('SELECT pg_advisory_unlock(914207)')
 
 
+def deliver(token: str, chat_id: str, text: str) -> tuple[str, str | None]:
+    try:
+        with httpx.Client(timeout=15) as client:
+            result = client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={'chat_id': chat_id, 'text': text})
+            result.raise_for_status()
+            if result.json().get('ok') is not True:
+                return 'failed', 'telegram_rejected'
+    except httpx.HTTPStatusError as exc:
+        return ('failed' if 400 <= exc.response.status_code < 500 else 'unknown'), 'telegram_http_error'
+    except (httpx.HTTPError, ValueError):
+        return 'unknown', 'telegram_result_unknown'
+    return 'sent', None
+
+
 @app.post('/notify', dependencies=[Depends(authorize)])
 def notify():
-    if os.getenv('TELEGRAM_ENABLED', 'false').lower() != 'true':
+    if not telegram_enabled():
         return {'status': 'disabled'}
     token, chat_id = os.getenv('TELEGRAM_BOT_TOKEN'), os.getenv('TELEGRAM_CHAT_ID')
     if not token or not chat_id:
         raise HTTPException(503, 'Telegram is enabled but credentials are missing')
+    chats = {'private': chat_id, 'digest': os.getenv('TELEGRAM_DIGEST_CHAT_ID') or chat_id}
     with database() as conn:
         # A send whose result was lost is never automatically resent.
-        conn.execute("UPDATE notifications SET status='unknown', error_code='interrupted_send' WHERE status='sending' AND updated_at<now()-interval '2 minutes'")
+        for table in ('notifications', 'messages'):
+            conn.execute(f"UPDATE {table} SET status='unknown', error_code='interrupted_send' "
+                         "WHERE status='sending' AND updated_at<now()-interval '2 minutes'")
         row = conn.execute('''UPDATE notifications SET status='sending', updated_at=now()
           WHERE event_id=(SELECT event_id FROM notifications WHERE status='pending'
-            ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *''').fetchone()
+            ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING event_id AS key, message''').fetchone()
+        table, column, chat = 'notifications', 'event_id', chat_id
+        if not row:
+            # Signal alerts first; results and daily digests after them.
+            row = conn.execute('''UPDATE messages SET status='sending', updated_at=now()
+              WHERE ref=(SELECT ref FROM messages WHERE status='pending'
+                ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING ref AS key, message, chat''').fetchone()
+            if row:
+                table, column, chat = 'messages', 'ref', chats[row['chat']]
     if not row:
         return {'status': 'idle'}
-    status, error = 'sent', None
-    try:
-        with httpx.Client(timeout=15) as client:
-            result = client.post(f'https://api.telegram.org/bot{token}/sendMessage',
-                                 json={'chat_id': chat_id, 'text': row['message']})
-            result.raise_for_status()
-            if result.json().get('ok') is not True:
-                status, error = 'failed', 'telegram_rejected'
-    except httpx.HTTPStatusError as exc:
-        status, error = ('failed' if 400 <= exc.response.status_code < 500 else 'unknown'), 'telegram_http_error'
-    except (httpx.HTTPError, ValueError):
-        status, error = 'unknown', 'telegram_result_unknown'
+    status, error = deliver(token, chat, row['message'])
     with database() as conn:
-        conn.execute('UPDATE notifications SET status=%s,error_code=%s,updated_at=now() WHERE event_id=%s',
-                     (status, error, row['event_id']))
-    return {'status': status, 'event_id': row['event_id']}
+        conn.execute(f'UPDATE {table} SET status=%s,error_code=%s,updated_at=now() WHERE {column}=%s',
+                     (status, error, row['key']))
+    return {'status': status, ('event_id' if table == 'notifications' else 'ref'): row['key']}
+
+
+class CandleBatch(BaseModel):
+    """Closed broker M1 candles for [start, end): rows of [open_time, open, high, low, close, spread]."""
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    symbol: str = Field(min_length=3, max_length=20, pattern=r'^[A-Z0-9]+$')
+    start: int = Field(gt=0, strict=True)
+    end: int = Field(gt=0, strict=True)
+    candles: list[tuple[int, float, float, float, float, float]] = Field(max_length=6000)
+
+
+@app.post('/candles', dependencies=[Depends(authorize)])
+async def candles(request: Request):
+    body = await request.body()
+    if len(body) > 1_000_000:
+        raise HTTPException(413, 'Payload too large')
+    try:
+        batch = CandleBatch.model_validate_json(body)
+    except ValidationError:
+        raise HTTPException(422, 'Invalid candle batch')
+    now = time.time()
+    if (batch.symbol not in allowed_symbols() or not batch.start < batch.end <= now + 60
+            or batch.end - batch.start > 7 * 86400):
+        raise HTTPException(422, 'Candle batch range or symbol is not accepted')
+    for t, o, h, l, c, spread in batch.candles:
+        if (t % 60 or not batch.start <= t <= batch.end - 60 or min(o, h, l, c) <= 0 or spread < 0
+                or h < max(o, c) or l > min(o, c)):
+            raise HTTPException(422, f'Invalid candle at {t}')
+    with database() as conn:
+        # First write wins: a stored candle is never replaced, so grading inputs cannot be revised.
+        with conn.cursor() as cursor:
+            cursor.executemany('''INSERT INTO candles(symbol,t,o,h,l,c,spread) VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT DO NOTHING''', [(batch.symbol, *row) for row in batch.candles])
+        row = conn.execute('SELECT since, through FROM coverage WHERE symbol=%s FOR UPDATE', (batch.symbol,)).fetchone()
+        if not row:
+            since, through = batch.start, batch.end
+        else:
+            since, through = row['since'], row['through']
+            # Coverage stays one contiguous window: batches extend it only where they touch it.
+            if batch.start <= through < batch.end:
+                through = batch.end
+            if batch.start < since <= batch.end:
+                since = batch.start
+        conn.execute('''INSERT INTO coverage(symbol, since, through) VALUES (%s,%s,%s) ON CONFLICT (symbol)
+            DO UPDATE SET since=excluded.since, through=excluded.through, updated_at=now()''',
+            (batch.symbol, since, through))
+        waiting = [item['plan']['published_at'] for item in ledger.open_plans(conn, batch.symbol)]
+    older = [stamp for stamp in waiting if stamp < since]
+    return {'symbol': batch.symbol, 'stored': len(batch.candles), 'since': since, 'through': through,
+            'need_from': min(older) if older else through}
+
+
+def queue_message(conn, ref: str, kind: str, chat: str, text: str):
+    conn.execute('''INSERT INTO messages(ref, kind, chat, message, status) VALUES (%s,%s,%s,%s,%s)
+        ON CONFLICT DO NOTHING''', (ref, kind, chat, text, 'pending' if telegram_enabled() else 'disabled'))
+
+
+def queue_digest(conn):
+    zone = ZoneInfo(os.getenv('DIGEST_TIMEZONE', 'Asia/Phnom_Penh'))
+    local = datetime.now(zone)
+    if local.hour < int(os.getenv('DIGEST_HOUR', '7')):
+        return
+    ref = 'digest:' + local.strftime('%Y-%m-%d')
+    if conn.execute('SELECT 1 FROM messages WHERE ref=%s', (ref,)).fetchone():
+        return
+    record = ledger.track_record(conn)
+    today = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    window = (int((today - timedelta(days=1)).timestamp()), int(today.timestamp()))
+    yesterday = [json.loads(row['body']) for row in ledger.rows(conn) if row['kind'] == 'closed']
+    yesterday = [item for item in yesterday if window[0] <= item['time'] < window[1]]
+    queue_message(conn, ref, 'digest', 'digest', ledger.digest_text(record, local.strftime('%Y-%m-%d'), yesterday))
+
+
+@app.post('/grade', dependencies=[Depends(authorize)])
+def grade():
+    with database() as guard:
+        guard.autocommit = True
+        if not guard.execute('SELECT pg_try_advisory_lock(914208) AS acquired').fetchone()['acquired']:
+            return {'status': 'busy'}
+        try:
+            recorded = 0
+            with database() as conn:
+                pending = ledger.open_plans(conn)
+            for item in pending:
+                # One short transaction per plan keeps the ledger lock brief for approvals running meanwhile.
+                with database() as conn:
+                    plan = item['plan']
+                    window = conn.execute('SELECT since, through FROM coverage WHERE symbol=%s',
+                                          (plan['symbol'],)).fetchone()
+                    if not window or window['since'] > plan['published_at']:
+                        continue   # no broker data for this plan yet; it stays open, never dropped
+                    rows = conn.execute('''SELECT t, o, h, l, c, spread FROM candles
+                        WHERE symbol=%s AND t>=%s AND t<%s ORDER BY t''',
+                        (plan['symbol'], plan['published_at'], window['through'])).fetchall()
+                    new = [event for event in simulate(plan, rows, window['through']) if event['kind'] not in item['kinds']]
+                    for event in new:
+                        ledger.append(conn, item['event_id'], event['kind'], event['time'],
+                                      {k: v for k, v in event.items() if k not in ('kind', 'time')})
+                    if new:
+                        recorded += len(new)
+                        queue_message(conn, f'result:{item["event_id"]}:{new[-1]["kind"]}', 'result', 'private',
+                                      ledger.result_text(plan, new, item['seq']))
+            with database() as conn:
+                queue_digest(conn)
+            return {'status': 'graded', 'recorded': recorded}
+        finally:
+            guard.execute('SELECT pg_advisory_unlock(914208)')
+
+
+@app.get('/track-record', dependencies=[Depends(authorize)])
+def track_record():
+    with database() as conn:
+        return ledger.track_record(conn)
+
+
+@app.get('/ledger', dependencies=[Depends(authorize)])
+def ledger_rows(after: int = 0):
+    with database() as conn:
+        return ledger.rows(conn, after=max(after, 0), limit=5000)
 
 
 @app.get('/signals', dependencies=[Depends(authorize)])

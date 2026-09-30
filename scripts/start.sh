@@ -10,17 +10,23 @@ docker compose up -d --build --wait
 if [ ! -f .local/workflows-installed ]; then
   docker compose exec -T -u root n8n n8n import:credentials --input=/imports/credentials.json
   docker compose exec -T -u root n8n n8n import:workflow --input=/imports/workflows.json
-  for workflow in zebraIngestV1 zebraAnalyzeV1 zebraNotifyV1; do
+  for workflow in zebraIngestV1 zebraAnalyzeV1 zebraNotifyV1 zebraGradeV1; do
     docker compose exec -T -u root n8n n8n publish:workflow --id="$workflow"
   done
-  published=$(docker compose exec -T postgres psql -U zebra -d n8n -tAc 'SELECT count(*) FROM workflow_entity WHERE id IN ('"'zebraIngestV1','zebraAnalyzeV1','zebraNotifyV1'"') AND "activeVersionId" IS NOT NULL')
-  if [ "$published" != "3" ]; then
+  published=$(docker compose exec -T postgres psql -U zebra -d n8n -tAc 'SELECT count(*) FROM workflow_entity WHERE id IN ('"'zebraIngestV1','zebraAnalyzeV1','zebraNotifyV1','zebraGradeV1'"') AND "activeVersionId" IS NOT NULL')
+  if [ "$published" != "4" ]; then
     echo 'Workflow publishing did not complete. Review the n8n import output.' >&2
     exit 1
   fi
   docker compose restart n8n
   docker compose up -d --wait
   touch .local/workflows-installed
+elif [ "$(docker compose exec -T postgres psql -U zebra -d n8n -tAc "SELECT count(*) FROM workflow_entity WHERE id='zebraGradeV1'")" != "1" ]; then
+  # Installed before the outcome grader existed: add only that workflow, keeping the other three as edited.
+  docker compose exec -T -u root n8n n8n import:workflow --input=/imports/grader.json
+  docker compose exec -T -u root n8n n8n publish:workflow --id=zebraGradeV1
+  docker compose restart n8n
+  docker compose up -d --wait
 fi
 rm -f .local/import/credentials.json
 model=$(python3 -c 'from scripts.setup import read_env; print(read_env()["OLLAMA_MODEL"])')
