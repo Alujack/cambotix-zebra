@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS ledger_kind_recorded_idx ON ledger (kind, recorded_at);
 CREATE OR REPLACE FUNCTION zebra_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION '% is append-only: % refused', TG_TABLE_NAME, TG_OP;
@@ -111,10 +112,14 @@ def verify(rows: list[dict]) -> dict:
 def plan_record(signal: Signal, published_at: int, warnings: list[str] | None = None) -> dict:
     """The frozen plan the grader scores. Later config changes never alter a published plan."""
     plan = trade_plan(signal)
+    session_time = signal.setup_bar_time if signal.model == 'smc' and signal.setup_bar_time else signal.bar_time
     return {'symbol': signal.symbol, 'model': signal.model, 'timeframe': signal.timeframe,
-            'session': session_label(signal.symbol, signal.model, signal.bar_time), 'cautions': warnings or [],
+            'session': session_label(signal.symbol, signal.model, session_time), 'cautions': warnings or [],
             'direction': 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL', 'bar_time': signal.bar_time,
-            'published_at': published_at, 'entry_type': 'limit' if signal.model == 'smc' else 'market',
+            'setup_bar_time': signal.setup_bar_time,
+            'published_at': published_at,
+            'entry_type': ('limit' if signal.model == 'smc' and signal.entry_mode == 'limit' else 'market'),
+            'entry_model': (signal.entry_mode if signal.model == 'smc' else 'signal_close'),
             'entry': plan['entry'], 'stop': plan['stop'],
             'targets': [[multiple, level, note] for multiple, level, note in plan['targets']],
             'entry_expiry_minutes': int(os.getenv('ENTRY_EXPIRY_MINUTES', '120')),
@@ -146,18 +151,28 @@ def open_count(conn, symbol: str, direction: str, now: float) -> int:
                item['plan']['published_at'] + 60 * (item['plan']['entry_expiry_minutes'] + item['plan']['max_hold_minutes']) > now)
 
 
-def closed_trades(conn) -> list[dict]:
-    """Every closed trade joined with its plan, oldest close first."""
-    plans, trades = {}, []
-    for row in rows(conn):
-        body = json.loads(row['body'])
-        if row['kind'] == 'published':
-            plans[row['event_id']] = body
-        elif row['kind'] == 'closed':
-            plan = plans[row['event_id']]
-            trades.append({**body, 'symbol': plan['symbol'], 'model': plan['model'], 'direction': plan['direction'],
-                           'session': plan.get('session') or session_label(plan['symbol'], plan['model'], plan['bar_time']),
-                           'cautioned': bool(plan.get('cautions'))})
+def trade_view(closed: dict, plan: dict) -> dict:
+    return {**closed, 'symbol': plan['symbol'], 'model': plan['model'], 'direction': plan['direction'],
+            'session': plan.get('session') or session_label(plan['symbol'], plan['model'], plan['bar_time']),
+            'cautioned': bool(plan.get('cautions'))}
+
+
+def closed_trades(conn, since: float | None = None) -> list[dict]:
+    """Closed trades joined with their plans, oldest close first. With `since`, only trades closed at or after
+    it: a close is recorded after it happened, so filtering on recorded_at never drops a qualifying row."""
+    if since is None:
+        closed = conn.execute("SELECT event_id, body FROM ledger WHERE kind='closed' ORDER BY seq").fetchall()
+    else:
+        closed = conn.execute("SELECT event_id, body FROM ledger WHERE kind='closed' AND recorded_at >= to_timestamp(%s) "
+                              'ORDER BY seq', (since,)).fetchall()
+    if not closed:
+        return []
+    plans = {row['event_id']: json.loads(row['body']) for row in conn.execute(
+        "SELECT event_id, body FROM ledger WHERE kind='published' AND event_id = ANY(%s)",
+        ([row['event_id'] for row in closed],)).fetchall()}
+    trades = [trade_view(json.loads(row['body']), plans[row['event_id']]) for row in closed]
+    if since is not None:
+        trades = [item for item in trades if item['time'] >= since]
     return sorted(trades, key=lambda item: (item['time'], item['seq']))
 
 
@@ -165,9 +180,10 @@ def history_cautions(conn, signal: Signal, now: float | None = None) -> list[str
     """A warning when this symbol, side, model and session has lost money recently on the record itself."""
     need, days = int(os.getenv('HISTORY_MIN_SAMPLES', '30')), int(os.getenv('HISTORY_DAYS', '60'))
     direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
-    label = session_label(signal.symbol, signal.model, signal.bar_time)
+    session_time = signal.setup_bar_time if signal.model == 'smc' and signal.setup_bar_time else signal.bar_time
+    label = session_label(signal.symbol, signal.model, session_time)
     since = (time.time() if now is None else now) - days * 86400
-    same = [item for item in closed_trades(conn) if item['time'] >= since and item['symbol'] == signal.symbol
+    same = [item for item in closed_trades(conn, since) if item['symbol'] == signal.symbol
             and item['direction'] == direction and item['model'] == signal.model and item['session'] == label]
     if len(same) < need:
         return []
@@ -209,17 +225,20 @@ def result_text(plan: dict, events: list[dict], published_seq: int) -> str:
 
 def track_record(conn) -> dict:
     """Everything the public record needs, computed from the ledger alone."""
+    # One pass over one fetch: the same rows feed the counts, the closed trades and the chain check.
     all_rows = rows(conn)
-    published, not_filled = {}, {}
+    published, not_filled, closed, finished = {}, {}, [], set()
     for row in all_rows:
-        body = json.loads(row['body'])
         if row['kind'] == 'published':
-            published[row['event_id']] = body
+            published[row['event_id']] = json.loads(row['body'])
+        elif row['kind'] == 'closed':
+            closed.append(trade_view(json.loads(row['body']), published[row['event_id']]))
+            finished.add(row['event_id'])
         elif row['kind'] == 'not_filled':
-            not_filled[body['reason']] = not_filled.get(body['reason'], 0) + 1
-    closed = closed_trades(conn)
-    finished = {item['event_id'] for item in closed} | {json.loads(row['body'])['event_id'] for row in all_rows
-                                                        if row['kind'] == 'not_filled'}
+            reason = json.loads(row['body'])['reason']
+            not_filled[reason] = not_filled.get(reason, 0) + 1
+            finished.add(row['event_id'])
+    closed.sort(key=lambda item: (item['time'], item['seq']))
     min_trades, max_dd = int(os.getenv('GO_MIN_TRADES', '150')), float(os.getenv('GO_MAX_DRAWDOWN_R', '10'))
 
     def group(key):

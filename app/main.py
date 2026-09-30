@@ -89,7 +89,14 @@ async def ingest(request: Request):
 
 def classify(signal: Signal) -> Analysis:
     schema = Analysis.model_json_schema()
-    with httpx.Client(timeout=float(os.getenv('AI_TIMEOUT_SECONDS', '120'))) as client:
+    timeout = float(os.getenv('AI_TIMEOUT_SECONDS', '120'))
+    if gate_mode() == 'rules':
+        # Commentary must never consume the signal's remaining lifetime. Leave a small
+        # reserve for the approval and outbox transaction.
+        maximum_age = int(os.getenv('MAX_SIGNAL_AGE_SECONDS', '300'))
+        remaining = maximum_age - (time.time() - signal.bar_time) - 5
+        timeout = min(timeout, max(1.0, remaining))
+    with httpx.Client(timeout=timeout) as client:
         response = client.post(os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434').rstrip('/') + '/api/chat', json={
             'model': os.getenv('OLLAMA_MODEL', 'qwen2.5:1.5b'), 'stream': False, 'format': schema,
             'options': {'temperature': 0, 'num_predict': 600, 'num_ctx': 4096},
@@ -154,24 +161,29 @@ def process():
             if reasons:
                 finish(signal, 'rejected', None, reasons)
                 return {'status': 'rejected', 'event_id': signal.event_id}
-            try:
-                analysis = classify(signal)
-            except (httpx.HTTPError, ValidationError, ValueError, KeyError, TypeError):
-                # No raw provider errors are logged: URLs may contain credentials.
-                analysis = None
-            if analysis is None and gate_mode() == 'ai':
+            mode = gate_mode()
+            commentary = os.getenv('AI_COMMENTARY', 'true').lower() == 'true'
+            analysis = None
+            if mode == 'ai' or commentary:
+                try:
+                    analysis = classify(signal)
+                except (httpx.HTTPError, ValidationError, ValueError, KeyError, TypeError):
+                    # No raw provider errors are logged: URLs may contain credentials.
+                    analysis = None
+            if analysis is None and mode == 'ai':
                 if row['attempts'] < 3:
                     with database() as conn:
                         conn.execute("UPDATE signals SET status='queued', next_attempt_at=now()+interval '30 seconds', error_code='ai_unavailable_or_invalid' WHERE event_id=%s", (signal.event_id,))
                     return {'status': 'retry_queued', 'event_id': signal.event_id}
                 finish(signal, 'error', None, ['ai_unavailable_or_invalid'], 'ai_unavailable_or_invalid')
                 return {'status': 'error', 'event_id': signal.event_id}
-            # Recheck age after inference. A slow model cannot revive an expired setup.
-            if not freshness(signal):
+            # In AI-gated mode the inference is part of the decision, so it must finish
+            # while the setup is fresh. In rules mode commentary is non-authoritative.
+            if mode == 'ai' and not freshness(signal):
                 finish(signal, 'rejected', analysis, ['expired_during_analysis'])
                 return {'status': 'rejected', 'event_id': signal.event_id}
             # Rules gate: every technical rule passed, so the setup is approved; the model only comments.
-            status = outcome(signal, analysis) if gate_mode() == 'ai' else 'approved'
+            status = outcome(signal, analysis) if mode == 'ai' else 'approved'
             finish(signal, status, analysis, [] if status == 'approved' else ['ai_quality_gate_rejected'],
                    None if analysis else 'ai_commentary_unavailable')
             return {'status': status, 'event_id': signal.event_id}
@@ -307,26 +319,26 @@ def grade():
             recorded = 0
             with database() as conn:
                 pending = ledger.open_plans(conn)
-            for item in pending:
-                # One short transaction per plan keeps the ledger lock brief for approvals running meanwhile.
-                with database() as conn:
-                    plan = item['plan']
-                    window = conn.execute('SELECT since, through FROM coverage WHERE symbol=%s',
-                                          (plan['symbol'],)).fetchone()
-                    if not window or window['since'] > plan['published_at']:
-                        continue   # no broker data for this plan yet; it stays open, never dropped
+                coverage = {row['symbol']: row for row in conn.execute('SELECT symbol, since, through FROM coverage')}
+                for item in pending:
+                    plan, window = item['plan'], coverage.get(item['plan']['symbol'])
+                    # No broker data for this plan yet: it stays open, never dropped.
+                    if not window or window['since'] > plan['published_at'] or window['through'] <= plan['published_at']:
+                        continue
                     rows = conn.execute('''SELECT t, o, h, l, c, spread FROM candles
                         WHERE symbol=%s AND t>=%s AND t<%s ORDER BY t''',
                         (plan['symbol'], plan['published_at'], window['through'])).fetchall()
                     new = [event for event in simulate(plan, rows, window['through']) if event['kind'] not in item['kinds']]
+                    if not new:
+                        continue
                     for event in new:
                         ledger.append(conn, item['event_id'], event['kind'], event['time'],
                                       {k: v for k, v in event.items() if k not in ('kind', 'time')})
-                    if new:
-                        recorded += len(new)
-                        queue_message(conn, f'result:{item["event_id"]}:{new[-1]["kind"]}', 'result', 'private',
-                                      ledger.result_text(plan, new, item['seq']))
-            with database() as conn:
+                    queue_message(conn, f'result:{item["event_id"]}:{new[-1]["kind"]}', 'result', 'private',
+                                  ledger.result_text(plan, new, item['seq']))
+                    # Commit per plan: the ledger lock stays brief for approvals running meanwhile.
+                    conn.commit()
+                    recorded += len(new)
                 queue_digest(conn)
             return {'status': 'graded', 'recorded': recorded}
         finally:

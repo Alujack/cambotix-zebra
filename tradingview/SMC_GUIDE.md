@@ -69,7 +69,7 @@ The plan can die before entry. You will then see **EXPIRED**, **CANCELLED** or *
 2. Open **Pine Editor**, paste all of `smc_setups.pine`, then **Save** and **Add to chart**.
 3. In the indicator settings, add your broker's exact ticker to **Allowed tickers** if it differs. Session times are **New York time** whatever your chart timezone.
 4. Keep the panel, liquidity lines and boxes visible while learning.
-5. Alerts. The webhook alert stays **Any alert() function call** and sends only the BUY_SETUP / SELL_SETUP JSON. For your phone, create separate alerts from the named conditions: **BUY setup - wait**, **SELL setup - wait**, **BUY confirmed**, **SELL confirmed**, **TP1 reached**, **Stop reached**, **Plan cancelled or expired**. Choose **Once Per Bar Close**. Recreate alerts after any change to the script or its settings.
+5. Alerts. The webhook alert stays **Any alert() function call**, but it now sends BUY_SETUP / SELL_SETUP JSON only after the later **BUY confirmed** or **SELL confirmed** close. A setup triangle alone sends no webhook. For your phone, create separate alerts from the named conditions: **BUY setup - wait**, **SELL setup - wait**, **BUY confirmed**, **SELL confirmed**, **TP1 reached**, **Stop reached**, **Plan cancelled or expired**. Choose **Once Per Bar Close**. Recreate alerts after this script change or any settings change.
 
 Practice on a paper-trading chart first, reading the sequence out loud: **direction → liquidity → sweep → MSS → FVG → wait for the confirming close**.
 

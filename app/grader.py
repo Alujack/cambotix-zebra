@@ -35,6 +35,10 @@ def find_fill(plan: dict, candles: list[dict], through: int, sign: int) -> tuple
         if (ask_low <= entry) if sign > 0 else (c['h'] >= entry):
             # A gap through the limit fills at the better open price.
             price = min(entry, ask_open) if sign > 0 else max(entry, c['o'])
+            if sign * (price - stop) <= 0:
+                # The market opened through both the entry and its invalidation.
+                # There is no defensible -1R fill/stop sequence from OHLC data.
+                return None, 0, [{'kind': 'not_filled', 'time': c['t'], 'reason': 'opened_beyond_stop'}]
             return {'time': c['t'], 'price': price}, index, []
         if (c['h'] >= tp1) if sign > 0 else (ask_low <= tp1):
             return None, 0, [{'kind': 'not_filled', 'time': c['t'], 'reason': 'tp1_reached_before_entry'}]

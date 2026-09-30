@@ -14,7 +14,9 @@ _lock = threading.Lock()
 
 def _load():
     with _lock:
-        if _cache['events'] is not None and time.time() - _cache['fetched'] < 3600:
+        now = time.time()
+        age = now - _cache['fetched']
+        if _cache['events'] is not None and age < 3600:
             return _cache['events']
         try:
             response = httpx.get(FEED, headers={'User-Agent': 'cambotix-zebra/1.0'}, timeout=10)
@@ -27,9 +29,12 @@ def _load():
                     continue
                 events.append({'time': stamp, 'title': str(item.get('title', ''))[:80],
                                'country': str(item.get('country', '')).upper(), 'impact': str(item.get('impact', ''))})
-            _cache.update(fetched=time.time(), events=events)
+            _cache.update(fetched=now, events=events)
         except Exception:
-            pass  # keep any stale copy; a feed outage must never crash the pipeline
+            # A short outage may use the recent cache. An arbitrarily old weekly
+            # calendar must not be described as checked and clear.
+            maximum_stale = int(os.getenv('NEWS_MAX_STALE_SECONDS', '7200'))
+            return _cache['events'] if _cache['events'] is not None and age <= maximum_stale else None
         return _cache['events']
 
 

@@ -98,8 +98,8 @@ def indicators(df: pd.DataFrame, swing_bars: int) -> pd.DataFrame:
 
 # -- gates: mirror of classic_rules / gold_setups.pine ------------------------
 def in_session(close_epoch: int) -> bool:
-    """The test the analyzer applies in domain.sessions(), on the same timestamp."""
-    stamp = dt.datetime.fromtimestamp(close_epoch, dt.timezone.utc)
+    """Pine sessions are evaluated on the 15-minute bar's open time."""
+    stamp = dt.datetime.fromtimestamp(close_epoch - TF_SECONDS, dt.timezone.utc)
     for zone in ('Europe/London', 'America/New_York'):
         local = stamp.astimezone(ZoneInfo(zone))
         if local.weekday() < 5 and 8 <= local.hour < 17:
@@ -116,9 +116,9 @@ def qualifies(row: pd.Series, cfg: dict, direction: str) -> bool:
     if not cfg['min_atr'] <= atr_percent <= cfg['max_atr'] or row['adx'] < cfg['min_adx']:
         return False
     if direction == 'BUY_SETUP':
-        return (row['ema20'] > row['ema50'] and row['close'] > row['ema200']
+        return (row['close'] > row['ema20'] > row['ema50'] > row['ema200']
                 and 50 <= row['rsi'] <= 70 and row['macd_hist'] > 0)
-    return (row['ema20'] < row['ema50'] and row['close'] < row['ema200']
+    return (row['close'] < row['ema20'] < row['ema50'] < row['ema200']
             and 30 <= row['rsi'] <= 50 and row['macd_hist'] < 0)
 
 
@@ -187,7 +187,10 @@ def push_candles(cfg: dict, state: dict) -> None:
         rates = mt5.copy_rates_range(cfg['mt5_symbol'], mt5.TIMEFRAME_M1,
                                      dt.datetime.fromtimestamp(start, dt.timezone.utc),
                                      dt.datetime.fromtimestamp(stop, dt.timezone.utc))
-        rows = [] if rates is None else [
+        if rates is None:
+            print(f'  candles: MT5 returned no result for {start}-{stop}; coverage was not advanced')
+            return
+        rows = [
             [int(r['time']), float(r['open']), float(r['high']), float(r['low']), float(r['close']),
              round(float(r['spread']) * info.point, 8)]
             for r in rates if start <= int(r['time']) and int(r['time']) + 60 <= stop]

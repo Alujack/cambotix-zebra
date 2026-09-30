@@ -90,6 +90,7 @@ def test_ai_failures_retry_then_fail_closed(client, monkeypatch):
 
 
 def test_signal_expired_during_ai_is_rejected(client, monkeypatch):
+    monkeypatch.setenv('GATE_MODE', 'ai')
     def slow_analysis(signal):
         monkeypatch.setattr(main, 'freshness', lambda signal: False)
         return analysis()
@@ -97,6 +98,22 @@ def test_signal_expired_during_ai_is_rejected(client, monkeypatch):
     client.post('/signals', json=payload())
     assert client.post('/process').json()['status'] == 'rejected'
     assert client.get('/signals').json()[0]['rule_reasons'] == ['expired_during_analysis']
+
+
+def test_rules_mode_commentary_cannot_veto_signal(client, monkeypatch):
+    def slow_commentary(signal):
+        monkeypatch.setattr(main, 'freshness', lambda signal: False)
+        return analysis()
+    monkeypatch.setattr(main, 'classify', slow_commentary)
+    client.post('/signals', json=payload())
+    assert client.post('/process').json()['status'] == 'approved'
+
+
+def test_rules_mode_can_skip_ai_commentary(client, monkeypatch):
+    monkeypatch.setenv('AI_COMMENTARY', 'false')
+    monkeypatch.setattr(main, 'classify', lambda signal: pytest.fail('commentary is disabled'))
+    client.post('/signals', json=payload())
+    assert client.post('/process').json()['status'] == 'approved'
 
 
 def test_restart_recovers_claim_and_overlapping_workers_skip(client, monkeypatch):
@@ -315,3 +332,21 @@ def test_losing_history_warns_the_next_signal(client, monkeypatch):
     assert record['by_caution'] == {'with cautions': {'closed': 2, 'wins': 0, 'win_rate': 0.0, 'total_r_tp1': -2.0,
                                                       'expectancy_r': -1.0, 'total_r_scaled': -2.0}}
     assert sum(item['closed'] for item in record['by_session'].values()) == 2
+
+
+def test_recent_history_lookup_matches_the_full_record(client, monkeypatch):
+    monkeypatch.setattr(main, 'classify', lambda signal: analysis())
+    now = int(time.time())
+    for index, age in enumerate((100 * 86400, 10 * 86400, 3600)):
+        signal, plan = publish_in_past(client, monkeypatch, seconds_ago=age, event_id=f'aged-{index}', offset=index + 1)
+        with main.database() as conn:
+            ledger.append(conn, signal.event_id, 'closed', plan['published_at'] + 600,
+                          {'exit': 'sl', 'targets_hit': 0, 'ambiguous': False, 'r_tp1': -1.0, 'r_scaled': -1.0})
+    with main.database() as conn:
+        everything = ledger.closed_trades(conn)
+        recent = ledger.closed_trades(conn, since=now - 60 * 86400)
+        assert ledger.closed_trades(conn, since=now + 86400) == []
+    assert [item['event_id'] for item in everything] == ['aged-0', 'aged-1', 'aged-2']
+    assert [item['event_id'] for item in recent] == ['aged-1', 'aged-2']
+    assert all(set(item) >= {'symbol', 'model', 'direction', 'session', 'cautioned', 'r_tp1'} for item in recent)
+    assert client.get('/track-record').json()['headline']['closed'] == 3

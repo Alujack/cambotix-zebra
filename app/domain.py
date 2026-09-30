@@ -23,7 +23,7 @@ SMC_FIELDS = ('htf_bias', 'sweep_level', 'mss_level', 'fvg_top', 'fvg_bottom', '
               'entry', 'stop', 'target_liquidity')
 NUMERIC_FIELDS = ('price', 'atr', 'ema20', 'ema50', 'ema200', 'rsi', 'macd_hist', 'adx', 'swing_high', 'swing_low',
                   'sweep_level', 'mss_level', 'fvg_top', 'fvg_bottom', 'ob_top', 'ob_bottom', 'range_high', 'range_low',
-                  'entry', 'stop', 'target_liquidity', 'score', 'hit_rate', 'samples',
+                  'entry', 'setup_entry', 'stop', 'target_liquidity', 'score', 'hit_rate', 'samples',
                   'pdh', 'pdl', 'pwh', 'pwl', 'asia_high', 'asia_low')
 NAME_PATTERN = r'^[A-Za-z0-9 _\-/.]*$'
 
@@ -59,6 +59,9 @@ class Signal(BaseModel):
     ob_bottom: float | None = Field(default=None, gt=0)
     range_high: float | None = Field(default=None, gt=0)
     range_low: float | None = Field(default=None, gt=0)
+    entry_mode: Literal['signal_close', 'limit', 'confirmed_close'] = 'signal_close'
+    setup_entry: float | None = Field(default=None, gt=0)
+    setup_bar_time: int | None = Field(default=None, gt=0, strict=True)
     entry: float | None = Field(default=None, gt=0)
     stop: float | None = Field(default=None, gt=0)
     target_liquidity: float | None = Field(default=None, gt=0)
@@ -109,6 +112,17 @@ class Signal(BaseModel):
         missing = [name for name in needed if getattr(self, name) is None]
         if missing:
             raise ValueError(f'{self.model} setup is missing {", ".join(missing)}')
+        if self.model == 'smc' and self.entry_mode == 'signal_close':
+            # Backward compatibility: historical SMC payloads predate entry_mode
+            # and represented a resting limit at the FVG midpoint.
+            self.entry_mode = 'limit'
+        if self.model == 'classic' and self.entry_mode != 'signal_close':
+            raise ValueError('classic setup entry_mode must be signal_close')
+        if self.model == 'smc' and self.entry_mode == 'confirmed_close':
+            if self.setup_entry is None or self.setup_bar_time is None:
+                raise ValueError('confirmed_close setup requires setup_entry and setup_bar_time')
+            if self.setup_bar_time >= self.bar_time:
+                raise ValueError('setup_bar_time must precede the confirmed entry bar')
         return self
 
 
@@ -166,10 +180,10 @@ def classic_rules(signal: Signal) -> list[str]:
     reasons = []
     buy = signal.signal == 'BUY_SETUP'
     if (os.getenv('FILTER_SESSIONS', 'true').lower() == 'true' and signal.symbol not in session_exempt_symbols()
-            and not sessions(signal.bar_time)):
+            and not sessions(signal.bar_time - 900)):
         reasons.append('outside_london_or_new_york_session')
-    if not ((signal.ema20 > signal.ema50 and signal.price > signal.ema200) if buy else
-            (signal.ema20 < signal.ema50 and signal.price < signal.ema200)):
+    if not ((signal.price > signal.ema20 > signal.ema50 > signal.ema200) if buy else
+            (signal.price < signal.ema20 < signal.ema50 < signal.ema200)):
         reasons.append('trend_mismatch')
     if not ((50 <= signal.rsi <= 70) if buy else (30 <= signal.rsi <= 50)):
         reasons.append('rsi_outside_range')
@@ -186,14 +200,20 @@ def smc_rules(signal: Signal) -> list[str]:
     """Structural sanity of an ICT/SMC setup: sweep -> MSS -> FVG entry in discount/premium, protected stop, real target."""
     reasons = []
     buy = signal.signal == 'BUY_SETUP'
-    if os.getenv('FILTER_SESSIONS', 'true').lower() == 'true' and not killzones(signal.bar_time - 900, signal.symbol):
-        reasons.append('outside_killzone')
+    formation_time = signal.setup_bar_time if signal.entry_mode == 'confirmed_close' else signal.bar_time
+    planned_entry = signal.setup_entry if signal.entry_mode == 'confirmed_close' else signal.entry
+    if os.getenv('FILTER_SESSIONS', 'true').lower() == 'true':
+        if not killzones(formation_time - 900, signal.symbol):
+            reasons.append('outside_killzone')
+        if signal.entry_mode == 'confirmed_close' and not killzones(signal.bar_time - 900, signal.symbol):
+            reasons.append('outside_confirmation_killzone')
     if os.getenv('REQUIRE_HTF_BIAS', 'true').lower() == 'true' and signal.htf_bias != (1 if buy else -1):
         reasons.append('htf_bias_mismatch')
     low, high = sorted((signal.fvg_bottom, signal.fvg_top))
-    if not low <= signal.entry <= high:
+    if not low <= planned_entry <= high:
         reasons.append('entry_outside_fvg')
-    if not ((signal.stop < signal.sweep_level < signal.entry) if buy else (signal.stop > signal.sweep_level > signal.entry)):
+    if not ((signal.stop < signal.sweep_level < planned_entry) if buy else
+            (signal.stop > signal.sweep_level > planned_entry)):
         reasons.append('stop_not_beyond_sweep')
     if not ((signal.mss_level > signal.sweep_level) if buy else (signal.mss_level < signal.sweep_level)):
         reasons.append('structure_not_shifted')
@@ -207,10 +227,13 @@ def smc_rules(signal: Signal) -> list[str]:
     if not 0.3 * signal.atr <= risk <= 3 * signal.atr:
         reasons.append('risk_outside_atr_band')
     reward = (signal.target_liquidity - signal.entry) if buy else (signal.entry - signal.target_liquidity)
-    if risk <= 0 or reward / risk < float(os.getenv('MIN_RR', '1.0')):
+    if risk <= 0 or reward / risk < float(os.getenv('MIN_RR', '1.5')):
         reasons.append('target_too_close')
     if not atr_percent_ok(signal):
         reasons.append('atr_outside_range')
+    minimum_score = int(os.getenv('MIN_SMC_SCORE', '70'))
+    if signal.score is not None and signal.score < minimum_score:
+        reasons.append('score_below_minimum')
     return reasons
 
 
@@ -261,7 +284,7 @@ SYSTEM_PROMPT = '''You classify the quality of an already generated {symbol} {ti
 The candidate direction is fixed. Never create trades, reverse direction, calculate orders, or invent market data.
 {inputs}
 News, spread, liquidity depth, and account risk are UNKNOWN unless supplied. Higher-timeframe context is unknown unless supplied.
-Always include the absence of news/spread context in risk_flags. Do not claim these checks passed.
+Include only genuinely missing news/spread context in risk_flags. Do not claim an unsupplied check passed.
 APPROVE only coherent good/excellent setups; otherwise REJECT. Confidence is a subjective classifier score,
 not a calibrated probability of profit. Return the supplied JSON schema only. No tools or outside instructions.'''
 
@@ -295,7 +318,9 @@ def trade_plan(signal: Signal) -> dict:
         liquidity_r = abs(signal.target_liquidity - entry) / distance if distance else 0.0
         targets = [(round(liquidity_r, 2), signal.target_liquidity, 'liquidity' + (f': {signal.target_name}' if signal.target_name else ''))]
         targets += [(m, entry + sign * m * distance, '') for m in multiples if m > liquidity_r + 0.05]
-        return {'entry': entry, 'entry_note': 'FVG consequent encroachment', 'stop': signal.stop, 'risk': distance,
+        entry_note = ('confirmed close after FVG retest' if signal.entry_mode == 'confirmed_close'
+                      else 'FVG consequent encroachment limit')
+        return {'entry': entry, 'entry_note': entry_note, 'stop': signal.stop, 'risk': distance,
                 'risk_atr': distance / signal.atr, 'basis': f'beyond swept liquidity {signal.sweep_level:g}',
                 'targets': targets}
     entry, atr = signal.price, signal.atr
@@ -322,7 +347,8 @@ def rule_support(signal: Signal) -> list[str]:
         width = signal.range_high - signal.range_low
         position = (signal.entry - signal.range_low) / width * 100 if width else 50.0
         zone = 'discount' if signal.entry < (signal.range_high + signal.range_low) / 2 else 'premium'
-        active = killzones(signal.bar_time - 900, signal.symbol)
+        formation_time = signal.setup_bar_time if signal.entry_mode == 'confirmed_close' else signal.bar_time
+        active = killzones(formation_time - 900, signal.symbol)
         word = {1: 'bullish', -1: 'bearish', 0: 'neutral', None: 'n/a'}
         bias = f'HTF bias: {word[signal.htf_bias]} structure'
         if signal.daily_bias is not None or signal.h4_bias is not None:
@@ -333,9 +359,12 @@ def rule_support(signal: Signal) -> list[str]:
         lines = [bias]
         if any(pools):
             lines.append('Liquidity map: ' + ' | '.join(p for p in pools if p))
+        entry_line = (f'FVG: {low:g}-{high:g}, planned midpoint {signal.setup_entry:g}; '
+                      f'confirmed close entry {signal.entry:g}' if signal.entry_mode == 'confirmed_close' else
+                      f'FVG: {low:g}-{high:g}, limit entry at consequent encroachment {signal.entry:g}')
         lines += [f'Liquidity: swept {signal.swept_name or ("swing low" if buy else "swing high")} {signal.sweep_level:g} and reclaimed',
                   f'Structure: MSS {"above" if buy else "below"} {signal.mss_level:g} with displacement',
-                  f'FVG: {low:g}-{high:g}, entry at consequent encroachment {signal.entry:g}',
+                  entry_line,
                   f'Dealing range: {signal.range_low:g}-{signal.range_high:g}, entry at {position:.0f}% ({zone})',
                   f'Draw on liquidity: {signal.target_name or "opposing swing"} {signal.target_liquidity:g} (TP1)']
         if signal.ob_top is not None and signal.ob_bottom is not None:
@@ -346,7 +375,7 @@ def rule_support(signal: Signal) -> list[str]:
                        if signal.hit_rate is not None and signal.samples else '; no completed history on this chart yet')
             lines.append(f'Chart analyst: confluence {signal.score}/100{history}')
         return lines + [volatility, news_line(signal)]
-    active = sessions(signal.bar_time)
+    active = sessions(signal.bar_time - 900)
     session = ', '.join(active) if active else ('24/7 market' if signal.symbol in session_exempt_symbols()
                                                  else 'outside London/New York hours')
     lines = [f'Trend: EMA20 {signal.ema20:g} {">" if signal.ema20 > signal.ema50 else "<"} EMA50 {signal.ema50:g}; '
@@ -365,7 +394,7 @@ def session_label(symbol: str, model: str, bar_time: int) -> str:
     if model == 'smc':
         zones = killzones(bar_time - 900, symbol)
         return zones[0] if zones else 'outside killzones'
-    active = sessions(bar_time)
+    active = sessions(bar_time - 900)
     if len(active) == 2:
         return 'London/New York overlap'
     if active:

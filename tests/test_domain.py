@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain import Analysis, Signal, freshness, killzones, notification_text, outcome, sessions, system_prompt, technical_rules, trade_plan
-from app import domain, news
+from app import domain, ledger, news
 from app.news import news_status
 
 
@@ -25,7 +25,8 @@ def analysis(**changes):
 
 
 def test_symbol_and_timeframe_normalized():
-    assert candidate(symbol=' OANDA:xauusd ', timeframe='15').symbol == 'XAUUSD'
+    signal = candidate(symbol=' OANDA:xauusd ', timeframe='15')
+    assert signal.symbol == 'XAUUSD' and signal.entry_mode == 'signal_close'
 
 
 @pytest.mark.parametrize('changes', [{'price': 0}, {'price': float('nan')}, {'atr': float('inf')},
@@ -54,6 +55,17 @@ def test_dst_and_weekends():
     assert sessions(ts('2026-09-06T14:00:00+00:00')) == []
 
 
+def test_classic_session_uses_bar_open_time(monkeypatch):
+    monkeypatch.setenv('FILTER_SESSIONS', 'true')
+    # On a winter London chart, the 16:45-17:00 bar belongs to the session;
+    # the 07:45-08:00 bar does not.
+    close = lambda stamp: int(datetime.fromisoformat(stamp).timestamp())
+    assert 'outside_london_or_new_york_session' not in technical_rules(
+        candidate(bar_time=close('2026-01-05T17:00:00+00:00')), close('2026-01-05T17:00:00+00:00'))
+    assert 'outside_london_or_new_york_session' in technical_rules(
+        candidate(bar_time=close('2026-01-05T08:00:00+00:00')), close('2026-01-05T08:00:00+00:00'))
+
+
 def test_rules_both_directions(monkeypatch):
     monkeypatch.setenv('FILTER_SESSIONS', 'false')
     buy = candidate()
@@ -63,6 +75,8 @@ def test_rules_both_directions(monkeypatch):
     assert technical_rules(sell, sell.bar_time) == []
     wrong = candidate(signal='SELL_SETUP')
     assert {'trend_mismatch', 'rsi_outside_range', 'macd_mismatch'} <= set(technical_rules(wrong, wrong.bar_time))
+    partial_stack = candidate(ema200=3505.0)  # price > EMA200, but EMA50 is still below EMA200
+    assert 'trend_mismatch' in technical_rules(partial_stack, partial_stack.bar_time)
 
 
 def test_volatility_and_strength(monkeypatch):
@@ -162,7 +176,7 @@ def smc(**changes):
 
 
 def test_smc_schema_requires_structure_fields():
-    assert smc().model == 'smc' and smc(ob_top=None, ob_bottom=None).ob_top is None
+    assert smc().model == 'smc' and smc().entry_mode == 'limit' and smc(ob_top=None, ob_bottom=None).ob_top is None
     for missing in ['entry', 'stop', 'sweep_level', 'fvg_top', 'range_high', 'htf_bias', 'target_liquidity']:
         with pytest.raises(ValidationError):
             smc(**{missing: None})
@@ -170,6 +184,8 @@ def test_smc_schema_requires_structure_fields():
         smc(htf_bias=2)
     with pytest.raises(ValidationError):
         smc(killzone='<b>x</b>')
+    with pytest.raises(ValidationError):
+        smc(entry_mode='confirmed_close')
 
 
 def test_killzones_new_york_time(monkeypatch):
@@ -219,7 +235,7 @@ def test_smc_plan_and_message(monkeypatch):
     assert plan['targets'][0] == (2.89, 3540.0, 'liquidity')
     assert [m for m, _, _ in plan['targets'][1:]] == [3.0, 4.0]          # 1R and 2R sit below the liquidity target
     message = notification_text(signal, 'approved', analysis().model_dump(), [])
-    assert '[SMC]' in message and 'BUY AT: 3507.00  (FVG consequent encroachment)' in message
+    assert '[SMC]' in message and 'BUY AT: 3507.00  (FVG consequent encroachment limit)' in message
     assert 'TP1: 3540.00  (+2.89R, liquidity)' in message and 'TP2: 3541.20  (+3R)' in message
     assert 'Liquidity: swept swing low 3496 and reclaimed' in message and 'Killzone: London' in message
     assert 'Dealing range: 3496-3540, entry at 25% (discount)' in message
@@ -230,6 +246,26 @@ def test_smc_plan_and_message(monkeypatch):
     assert 'confluence 95/100; no completed history on this chart yet' in fresh
     with pytest.raises(ValidationError):
         smc(score=101)
+
+
+def test_confirmed_smc_uses_close_as_market_entry(monkeypatch):
+    signal = smc(bar_time=1788509700, entry_mode='confirmed_close', setup_bar_time=1788508800,
+                 setup_entry=3507.0, entry=3509.5, price=3509.5, atr=4.7, score=90)
+    assert technical_rules(signal, signal.bar_time) == []
+    plan = trade_plan(signal)
+    assert plan['entry'] == 3509.5
+    assert plan['entry_note'] == 'confirmed close after FVG retest'
+    record = ledger.plan_record(signal, signal.bar_time + 1)
+    assert record['entry_type'] == 'market' and record['entry_model'] == 'confirmed_close'
+    assert ledger.plan_record(smc(), smc().bar_time + 1)['entry_type'] == 'limit'
+    message = notification_text(signal, 'approved', analysis().model_dump(), [])
+    assert 'confirmed close after FVG retest' in message
+
+
+def test_smc_score_is_revalidated(monkeypatch):
+    monkeypatch.setenv('MIN_SMC_SCORE', '70')
+    assert 'score_below_minimum' in technical_rules(smc(score=69), smc().bar_time)
+    assert 'score_below_minimum' not in technical_rules(smc(score=70), smc().bar_time)
 
 
 def test_news_window(monkeypatch):
@@ -252,6 +288,20 @@ def test_news_window(monkeypatch):
     assert news_status(bar)['state'] == 'unknown'
     monkeypatch.setenv('NEWS_FILTER', 'false')
     assert news_status(bar, [event(5)])['state'] == 'off'
+
+
+def test_old_news_cache_becomes_unknown(monkeypatch):
+    monkeypatch.setenv('NEWS_FILTER', 'true')
+    monkeypatch.setenv('NEWS_MAX_STALE_SECONDS', '7200')
+    monkeypatch.setitem(news._cache, 'fetched', 1_000.0)
+    monkeypatch.setitem(news._cache, 'events', [{'time': 2_000, 'title': 'old', 'country': 'USD', 'impact': 'High'}])
+    monkeypatch.setattr(news.time, 'time', lambda: 10_000.0)
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('offline')
+
+    monkeypatch.setattr(news.httpx, 'get', unavailable)
+    assert news._load() is None
 
 
 def test_news_blocks_both_models(monkeypatch):

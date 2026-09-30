@@ -81,6 +81,16 @@ def test_market_open_beyond_stop_is_not_filled():
     assert kinds(run(plan(), [candle(0, 98.5, 98.7, 98.2, 98.4)])) == ['not_filled']
 
 
+def test_limit_gap_beyond_stop_is_not_a_fake_minus_one_r():
+    buy = plan(entry_type='limit', entry=100.0)
+    assert run(buy, [candle(0, 98.5, 100.2, 98.2, 99.5)]) == [
+        {'kind': 'not_filled', 'time': BASE, 'reason': 'opened_beyond_stop'}]
+    sell = plan(direction='SELL', entry_type='limit', entry=100.0, stop=101.0,
+                targets=[[1, 99.0, 'liquidity']])
+    assert run(sell, [candle(0, 101.5, 101.8, 99.8, 100.5)]) == [
+        {'kind': 'not_filled', 'time': BASE, 'reason': 'opened_beyond_stop'}]
+
+
 def test_timeout_closes_at_market():
     events = run(plan(max_hold_minutes=2), [candle(0, 100, 100.4, 99.6, 100.2), candle(1, 100.2, 100.6, 99.8, 100.4),
                                             candle(2, 100.5, 100.7, 100.3, 100.6)])

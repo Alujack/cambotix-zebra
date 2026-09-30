@@ -3,7 +3,7 @@ indicator("Cambotix Zebra — SMC Coach 15m", overlay=true, max_lines_count=300,
 
 // A rules-based chart guide. A score is NOT a win probability. No orders are placed.
 // SETUP = a future retest plan. BUY/SELL = a later confirmation at that candle's CLOSE.
-// Webhook JSON remains the original BUY_SETUP / SELL_SETUP contract (FVG midpoint).
+// The webhook fires only for that confirmed close; the FVG midpoint remains setup context.
 
 biasMode = input.string("Daily and 4H agree", "HTF bias source", options=["Daily and 4H agree", "Daily only", "4H only", "Off"], group="1. Direction")
 pivotLen = input.int(3, "Swing confirmation: candles each side", minval=1, maxval=20, tooltip="3 means a swing is known 3 candles later. Direction uses completed Daily / 4H candles.", group="1. Direction")
@@ -368,6 +368,7 @@ type TradePlan
     int state = 0
     int created = na
     int entered = na
+    int formationTime = na
     float midpoint = na
     float entry = na
     float stop = na
@@ -376,8 +377,13 @@ type TradePlan
     float bottom = na
     float rangeHigh = na
     float rangeLow = na
+    float sweep = na
+    float mss = na
+    float obTop = na
+    float obBottom = na
     int score = 0
     string targetName = ""
+    string sweptName = ""
     string message = "WAIT - no complete setup yet"
 var TradePlan plan = TradePlan.new()
 var int wins = 0
@@ -414,7 +420,8 @@ if barstate.isconfirmed and plan.state == 1 and bar_index > plan.created
         bool retested = low <= plan.midpoint and high >= plan.midpoint
         bool rejection = bullish ? close > open and close > plan.top : close < open and close < plan.bottom
         float equilibrium = (plan.rangeHigh + plan.rangeLow) / 2
-        bool locationOk = not requireDiscount or (bullish ? close < equilibrium : close > equilibrium)
+        bool insideRange = close >= plan.rangeLow and close <= plan.rangeHigh
+        bool locationOk = insideRange and (not requireDiscount or (bullish ? close < equilibrium : close > equilibrium))
         if chartOk and inputsOk and inKillzone and volatilityOk and retested and rejection and locationOk and validRisk(bullish, close, plan.stop, plan.target)
             plan.state := 2
             plan.entry := close
@@ -464,11 +471,14 @@ if barstate.isconfirmed and chartOk and showZones
 
 number(float value) => na(value) ? "null" : str.tostring(value, "#.########")
 
-// Only the original setup JSON goes to alert(); confirmation alerts are separate below.
-payload(string direction, int score, float entry, float stop, float target, string targetName, string sweptName, float sweep, float mss, float fvgBot, float fvgTop, float obTop, float obBot, float rHigh, float rLow) =>
+// The server receives the confirmed close as entry and the original midpoint as setup context.
+payload(string direction, int score, float entry, float setupEntry, int setupStamp, float stop, float target, string targetName, string sweptName, float sweep, float mss, float fvgBot, float fvgTop, float obTop, float obBot, float rHigh, float rLow) =>
     stamp = str.tostring(int(time_close / 1000))
     eventId = syminfo.ticker + "-15m-smc-" + stamp + "-" + direction
-    '{"event_id":"' + eventId + '","symbol":"' + syminfo.ticker + '","timeframe":"15m","bar_time":' + stamp + ',"signal":"' + direction + '","model":"smc","price":' + number(close) + ',"atr":' + number(atr) + ',"htf_bias":' + str.tostring(htfBias) + ',"daily_bias":' + str.tostring(dailyBias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"sweep_level":' + number(sweep) + ',"swept_name":"' + sweptName + '","mss_level":' + number(mss) + ',"fvg_top":' + number(fvgTop) + ',"fvg_bottom":' + number(fvgBot) + ',"ob_top":' + number(obTop) + ',"ob_bottom":' + number(obBot) + ',"range_high":' + number(rHigh) + ',"range_low":' + number(rLow) + ',"pdh":' + number(pdh) + ',"pdl":' + number(pdl) + ',"pwh":' + number(pwh) + ',"pwl":' + number(pwl) + ',"asia_high":' + number(asiaHigh) + ',"asia_low":' + number(asiaLow) + ',"entry":' + number(entry) + ',"stop":' + number(stop) + ',"target_liquidity":' + number(target) + ',"target_name":"' + targetName + '","killzone":"' + kzName + '","score":' + str.tostring(score) + ',"hit_rate":' + (samples > 0 ? str.tostring(hitRate, "#.###") : "null") + ',"samples":' + str.tostring(samples) + '}'
+    '{"event_id":"' + eventId + '","symbol":"' + syminfo.ticker + '","timeframe":"15m","bar_time":' + stamp + ',"signal":"' + direction + '","model":"smc","price":' + number(close) + ',"atr":' + number(atr) + ',"entry_mode":"confirmed_close","setup_entry":' + number(setupEntry) + ',"setup_bar_time":' + str.tostring(setupStamp) + ',"htf_bias":' + str.tostring(htfBias) + ',"daily_bias":' + str.tostring(dailyBias) + ',"h4_bias":' + str.tostring(h4Bias) + ',"sweep_level":' + number(sweep) + ',"swept_name":"' + sweptName + '","mss_level":' + number(mss) + ',"fvg_top":' + number(fvgTop) + ',"fvg_bottom":' + number(fvgBot) + ',"ob_top":' + number(obTop) + ',"ob_bottom":' + number(obBot) + ',"range_high":' + number(rHigh) + ',"range_low":' + number(rLow) + ',"pdh":' + number(pdh) + ',"pdl":' + number(pdl) + ',"pwh":' + number(pwh) + ',"pwl":' + number(pwl) + ',"asia_high":' + number(asiaHigh) + ',"asia_low":' + number(asiaLow) + ',"entry":' + number(entry) + ',"stop":' + number(stop) + ',"target_liquidity":' + number(target) + ',"target_name":"' + targetName + '","killzone":"' + kzName + '","score":' + str.tostring(score) + ',"hit_rate":' + (samples > 0 ? str.tostring(hitRate, "#.###") : "null") + ',"samples":' + str.tostring(samples) + '}'
+
+if buyEntry or sellEntry
+    alert(payload(buyEntry ? "BUY_SETUP" : "SELL_SETUP", plan.score, plan.entry, plan.midpoint, plan.formationTime, plan.stop, plan.target, plan.targetName, plan.sweptName, plan.sweep, plan.mss, plan.bottom, plan.top, plan.obTop, plan.obBottom, plan.rangeHigh, plan.rangeLow), alert.freq_once_per_bar_close)
 
 blockedReason(bool isBuy) =>
     string reason = "Rules passed"
@@ -508,12 +518,8 @@ if candidateL or candidateS
 
 if longTrigger or shortTrigger
     bool bullish = longTrigger
-    plan := TradePlan.new(direction=bullish ? 1 : -1, state=1, created=bar_index, midpoint=bullish ? ceL : ceS, stop=bullish ? stopL : stopS, target=bullish ? targetL : targetS, top=bullish ? low : low[2], bottom=bullish ? high[2] : high, rangeHigh=bullish ? rangeHighExt : shortSweep, rangeLow=bullish ? longSweep : rangeLowExt, score=bullish ? scoreL : scoreS, targetName=bullish ? targetNameL : targetNameS, message="WAIT - retest, then a confirming close")
+    plan := TradePlan.new(direction=bullish ? 1 : -1, state=1, created=bar_index, formationTime=int(time_close / 1000), midpoint=bullish ? ceL : ceS, stop=bullish ? stopL : stopS, target=bullish ? targetL : targetS, top=bullish ? low : low[2], bottom=bullish ? high[2] : high, rangeHigh=bullish ? rangeHighExt : shortSweep, rangeLow=bullish ? longSweep : rangeLowExt, sweep=bullish ? longSweep : shortSweep, mss=bullish ? longMss : shortMss, obTop=bullish ? obTopL : obTopS, obBottom=bullish ? obBotL : obBotS, score=bullish ? scoreL : scoreS, targetName=bullish ? targetNameL : targetNameS, sweptName=bullish ? longSwept : shortSwept, message="WAIT - retest, then a confirming close")
     eventMark(bullish ? low : high, (bullish ? "BUY" : "SELL") + " SETUP - WAIT\nFVG midpoint " + priceText(plan.midpoint) + "\nRule score " + str.tostring(plan.score) + "/100", bullish, bullish ? buyColor : sellColor, "3. Setup ready. Wait for a later candle to touch the midpoint and close back beyond the FVG in this direction. The final entry must still pass session, direction, location and reward/risk filters.")
-    if bullish
-        alert(payload("BUY_SETUP", scoreL, ceL, stopL, targetL, targetNameL, longSwept, longSweep, longMss, high[2], low, obTopL, obBotL, rangeHighExt, longSweep), alert.freq_once_per_bar_close)
-    else
-        alert(payload("SELL_SETUP", scoreS, ceS, stopS, targetS, targetNameS, shortSwept, shortSweep, shortMss, high, low[2], obTopS, obBotS, shortSweep, rangeLowExt), alert.freq_once_per_bar_close)
 
 // A gap must belong to the actual MSS candle, not an unrelated later displacement.
 if barstate.isconfirmed
@@ -702,7 +708,7 @@ bgcolor(showSessions and inAsia ? color.new(color.yellow, 97) : na, title="Asian
 bgcolor(not chartOk ? color.new(sellColor, 92) : na, title="Unsupported chart")
 
 // Human notifications: create separate alerts for these named conditions.
-// The webhook's Any alert() function call remains setup JSON only.
+// The webhook's Any alert() function call receives confirmed-entry JSON only.
 alertcondition(longTrigger, "BUY setup - wait", "BUY setup on {{ticker}} 15m. Wait for a later confirmed retest; see the chart plan.")
 alertcondition(shortTrigger, "SELL setup - wait", "SELL setup on {{ticker}} 15m. Wait for a later confirmed retest; see the chart plan.")
 alertcondition(buyEntry, "BUY confirmed", "BUY confirmed on {{ticker}} 15m at candle close {{close}}. Reference entry {{plot(\"Confirmed entry\")}}, stop {{plot(\"Active stop\")}}, TP1 {{plot(\"Active TP1\")}}. No order placed.")

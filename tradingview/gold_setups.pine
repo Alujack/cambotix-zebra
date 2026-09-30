@@ -36,8 +36,8 @@ sessionOk = not sessionFilter or isCrypto or inLondon or inNewYork
 ready = not na(ema200) and not na(adx) and not na(atr) and not na(priorHigh) and not na(priorLow)
 tickerOk = str.contains("," + str.replace_all(allowedTickers, " ", "") + ",", "," + syminfo.ticker + ",")
 chartOk = tickerOk and timeframe.isminutes and timeframe.multiplier == 15
-trendBull = ema20 > ema50 and close > ema200
-trendBear = ema20 < ema50 and close < ema200
+trendBull = close > ema20 and ema20 > ema50 and ema50 > ema200
+trendBear = close < ema20 and ema20 < ema50 and ema50 < ema200
 rsiBuy = rsi >= 50 and rsi <= 70
 rsiSell = rsi >= 30 and rsi <= 50
 adxOk = adx >= minAdx
