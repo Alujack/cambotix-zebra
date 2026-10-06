@@ -1,9 +1,12 @@
 """Local signal source: MetaTrader 5 -> analyzer /signals.
 
 Replaces the TradingView webhook for accounts without a webhook-capable plan.
-Mirrors tradingview/gold_setups.pine bar for bar: same indicators, same gates,
-same edge-triggered emission, same JSON contract. The analyzer re-validates
-everything server-side, exactly as it does for a TradingView payload.
+Runs both detection models from the broker's own candles:
+  classic  mirrors tradingview/gold_setups.pine bar for bar (EMA/RSI/MACD/ADX/ATR)
+  smc      replays scripts/smc_engine.py, the port of tradingview/smc_setups.pine,
+           over recent 15m bars with Daily / 4H / Weekly context and posts a
+           confirmed-close entry on the bar it happens
+Same JSON contracts as the Pine webhooks; the analyzer re-validates everything.
 
 Every minute it also sends the broker's closed M1 candles (bid prices plus the
 bar spread) to /candles, which the analyzer uses to grade every published plan.
@@ -27,8 +30,13 @@ import MetaTrader5 as mt5
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from smc_engine import Config, Engine  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 BARS = 600                 # >= 200 for EMA200 plus warmup
+SMC_BARS = 1500            # ~3 weeks of 15m: pools, swings and the chart's own hit-rate memory
+SMC_CONTEXT = {'d1': (mt5.TIMEFRAME_D1, 200), 'h4': (mt5.TIMEFRAME_H4, 400), 'w1': (mt5.TIMEFRAME_W1, 60)}
 TF_SECONDS = 900
 DIRECTIONS = ('BUY_SETUP', 'SELL_SETUP')
 CANDLE_CHUNK = 2 * 86400   # M1 rows per request stay well under the analyzer's 1 MB limit
@@ -123,13 +131,13 @@ def qualifies(row: pd.Series, cfg: dict, direction: str) -> bool:
 
 
 # -- market data --------------------------------------------------------------
-def bars(symbol: str, attempts: int = 8) -> pd.DataFrame:
+def bars(symbol: str, attempts: int = 8, count: int = BARS) -> pd.DataFrame:
     """MT5 serves stale history for a few seconds after a cold terminal launch."""
     if not mt5.initialize():
         raise SystemExit(f'MT5 initialize failed: {mt5.last_error()}')
     mt5.symbol_select(symbol, True)
     for attempt in range(attempts):
-        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, BARS)
+        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, count)
         if rates is not None and len(rates) >= 250:
             df = pd.DataFrame(rates)
             age = time.time() - (int(df['time'].iloc[-1]) + TF_SECONDS)
@@ -138,6 +146,45 @@ def bars(symbol: str, attempts: int = 8) -> pd.DataFrame:
             print(f'  warmup {attempt + 1}/{attempts}: history {age / 3600:.1f}h stale, resyncing')
         time.sleep(3)
     raise SystemExit('MT5 returned stale or empty history; open the terminal and check it is connected')
+
+
+def context_bars(symbol: str, timeframe, count: int) -> list[dict]:
+    """Closed higher-timeframe bars as plain dicts; the still-forming last bar is dropped."""
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+    if rates is None or len(rates) < 10:
+        raise SystemExit(f'MT5 returned no history for {symbol} timeframe {timeframe}')
+    rows = [{'t': int(r['time']), 'o': float(r['open']), 'h': float(r['high']), 'l': float(r['low']), 'c': float(r['close'])}
+            for r in rates]
+    return rows[:-1]
+
+
+def smc_config(settings: dict, crypto: bool, tick: float) -> Config:
+    """Engine filters follow the analyzer's .env so a setup the feeder emits is one the server accepts."""
+    truthy = lambda key, default: settings.get(key, default).strip().lower() == 'true'
+    return Config(killzones=tuple(k.strip() for k in settings.get('KILLZONES', 'London,NY AM').split(',') if k.strip()),
+                  require_htf=truthy('REQUIRE_HTF_BIAS', 'true'), require_discount=truthy('REQUIRE_DISCOUNT', 'true'),
+                  min_rr=float(settings.get('MIN_RR', 1.5)), min_score=int(settings.get('MIN_SMC_SCORE', 70)),
+                  min_atr_pct=float(settings.get('MIN_ATR_PERCENT', 0.02)), max_atr_pct=float(settings.get('MAX_ATR_PERCENT', 0.5)),
+                  crypto=crypto, tick=tick)
+
+
+def scan_smc(cfg: dict, close_epoch: int, dry_run: bool) -> None:
+    """Replay the SMC engine over recent bars and post a confirmed entry only if it closed on this bar."""
+    m15 = bars(cfg['mt5_symbol'], count=SMC_BARS)
+    rows = [{'t': int(r.time), 'o': float(r.open), 'h': float(r.high), 'l': float(r.low), 'c': float(r.close)}
+            for r in m15.itertuples()][:-1]          # drop the still-forming bar
+    context = {name: context_bars(cfg['mt5_symbol'], timeframe, count) for name, (timeframe, count) in SMC_CONTEXT.items()}
+    engine = Engine(cfg['symbol'], cfg['smc'])
+    emitted = engine.run(rows, context['d1'], context['h4'], context['w1'])
+    print(f'  smc: {engine.status}; {len(emitted)} confirmed entries in the last {len(rows)} bars')
+    for body in emitted:
+        if body['bar_time'] != close_epoch:
+            continue
+        if dry_run:
+            print(f'  [dry-run] would send {body["signal"]} (smc): {json.dumps(body)}')
+            continue
+        status, text = post(body, cfg['url'], cfg['token'])
+        print(f'  sent {body["signal"]} (smc) -> HTTP {status} {text}')
 
 
 # -- emission -----------------------------------------------------------------
@@ -217,16 +264,22 @@ def scan(cfg: dict, dry_run: bool) -> None:
     print(f'bar closed {stamp:%Y-%m-%d %H:%M} UTC ({age:.0f}s ago)  close={closed["close"]:.3f}  '
           f'adx={closed["adx"]:.1f}  rsi={closed["rsi"]:.1f}  '
           f'atr%={closed["atr"] / closed["close"] * 100:.3f}')
+    if age > cfg['max_age']:
+        print(f'  bar is {age:.0f}s old; analyzer rejects beyond {cfg["max_age"]}s — nothing sent')
+        return
+    if 'smc' in cfg['models']:
+        scan_smc(cfg, close_epoch, dry_run)
+    if 'classic' in cfg['models']:
+        scan_classic(cfg, closed, previous, close_epoch, dry_run)
 
+
+def scan_classic(cfg: dict, closed: pd.Series, previous: pd.Series, close_epoch: int, dry_run: bool) -> None:
     valid = [d for d in DIRECTIONS if qualifies(closed, cfg, d)]
     if not valid:
-        print('  no qualifying setup on this bar')
+        print('  classic: no qualifying setup on this bar')
         return
     if not in_session(close_epoch):
-        print(f'  {"/".join(valid)} valid, but outside London/New York session — not sent')
-        return
-    if age > cfg['max_age']:
-        print(f'  bar is {age:.0f}s old; analyzer rejects beyond {cfg["max_age"]}s — not sent')
+        print(f'  classic: {"/".join(valid)} valid, but outside London/New York session — not sent')
         return
 
     for direction in valid:
@@ -249,11 +302,16 @@ def main() -> None:
     parser.add_argument('--no-candles', action='store_true', help='do not send M1 candles for outcome grading')
     parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDc'),
                         help='broker symbol as named in MT5 (default XAUUSDc)')
+    parser.add_argument('--models', default='classic,smc', help='detection models to run: classic, smc or both (default both)')
     args = parser.parse_args()
 
     settings = env()
     broker_symbol = args.symbol
+    models = {m.strip().lower() for m in args.models.split(',') if m.strip()}
+    if not models <= {'classic', 'smc'}:
+        raise SystemExit('--models accepts classic, smc or classic,smc')
     cfg = {
+        'models': models,
         'mt5_symbol': broker_symbol,
         # Exness suffixes gold as XAUUSDc; the analyzer only accepts [A-Z0-9]+.
         'symbol': (broker_symbol[:-1] if broker_symbol.endswith('c') else broker_symbol).upper(),
@@ -268,7 +326,15 @@ def main() -> None:
     }
     if not cfg['token']:
         raise SystemExit('ANALYZER_TOKEN missing from .env')
-    print(f'{cfg["mt5_symbol"]} -> {cfg["symbol"]}  {cfg["url"]}  '
+    if 'smc' in models:
+        if not mt5.initialize():
+            raise SystemExit(f'MT5 initialize failed: {mt5.last_error()}')
+        info = mt5.symbol_info(broker_symbol)
+        if info is None:
+            raise SystemExit(f'unknown MT5 symbol {broker_symbol}')
+        exempt = {s.strip().upper() for s in settings.get('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if s.strip()}
+        cfg['smc'] = smc_config(settings, cfg['symbol'] in exempt, float(info.trade_tick_size or info.point))
+    print(f'{cfg["mt5_symbol"]} -> {cfg["symbol"]}  {cfg["url"]}  models={",".join(sorted(models))}  '
           f'(ADX>={cfg["min_adx"]}, ATR% {cfg["min_atr"]}-{cfg["max_atr"]})')
 
     candles = not (args.no_candles or args.dry_run)

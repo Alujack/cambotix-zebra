@@ -194,7 +194,7 @@ macOS setup uses `OLLAMA_RUNTIME=native`, an empty `COMPOSE_PROFILES`, and `OLLA
 
 ## MetaTrader 5 feeder
 
-`scripts/mt5_feeder.py` replaces the TradingView webhook for accounts without a webhook plan. It mirrors `gold_setups.pine` (the classic model) bar for bar and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`, so no tunnel is needed. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only):
+`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs **both models** from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and the SMC model replays `scripts/smc_engine.py`, a pure-Python port of `smc_setups.pine` (sweep → MSS with displacement → FVG → retest → confirmed close), over the last 1,500 closed 15m bars with the broker's Daily, 4H and Weekly bars as context. Its filters are read from `.env` (`KILLZONES`, `REQUIRE_HTF_BIAS`, `REQUIRE_DISCOUNT`, `MIN_RR`, `MIN_SMC_SCORE`, ATR band) so what it emits is what the analyzer accepts; the Pine inputs it does not expose keep their chart defaults. The replay is deterministic and a payload is sent only when its confirmation bar is the bar that just closed, so a restart never re-sends history. `--models classic`, `--models smc` or the default `classic,smc` choose what runs. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only):
 
 ```powershell
 py -m pip install MetaTrader5 pandas numpy
@@ -203,7 +203,7 @@ py scripts\mt5_feeder.py --symbol XAUUSDc --once --dry-run   # check readings, s
 py scripts\mt5_feeder.py --symbol XAUUSDc                    # watch: candles every minute, setups every 15m
 ```
 
-Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. The SMC model is not ported to the feeder yet; it still needs `smc_setups.pine`.
+Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. Two known differences from the TradingView chart: Daily, 4H and Weekly bars follow the broker's day and week boundaries rather than the exchange's, and a pivot requires a strict extreme (equal highs or lows are not a swing), where Pine's tie handling is undocumented. `tests/test_smc_engine.py` drives the engine through a hand-built sweep → MSS → FVG → retest → confirmed-close scenario and checks that the emitted payload passes the analyzer's own SMC rules.
 
 ## Outcome grading and track record
 
