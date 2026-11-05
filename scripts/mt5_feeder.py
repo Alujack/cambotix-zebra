@@ -19,6 +19,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -306,6 +307,8 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = env()
+    # A remote analyzer (VPS over an SSH tunnel, see scripts/vps_feeder.ps1) overrides the local stack's address and token.
+    analyzer = os.getenv('ZEBRA_ANALYZER_URL', f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}').rstrip('/')
     broker_symbol = args.symbol
     models = {m.strip().lower() for m in args.models.split(',') if m.strip()}
     if not models <= {'classic', 'smc'}:
@@ -313,11 +316,11 @@ def main() -> None:
     cfg = {
         'models': models,
         'mt5_symbol': broker_symbol,
-        # Exness suffixes gold as XAUUSDc; the analyzer only accepts [A-Z0-9]+.
-        'symbol': (broker_symbol[:-1] if broker_symbol.endswith('c') else broker_symbol).upper(),
-        'url': f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}/signals',
-        'candles_url': f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}/candles',
-        'token': settings.get('ANALYZER_TOKEN', ''),
+        # Exness suffixes gold by account type (XAUUSDc cent, XAUUSDm standard); the analyzer only accepts [A-Z0-9]+.
+        'symbol': re.sub(r'[a-z.]+$', '', broker_symbol).upper(),
+        'url': analyzer + '/signals',
+        'candles_url': analyzer + '/candles',
+        'token': os.getenv('ZEBRA_ANALYZER_TOKEN') or settings.get('ANALYZER_TOKEN', ''),
         'min_adx': float(settings.get('MIN_ADX', 20)),
         'min_atr': float(settings.get('MIN_ATR_PERCENT', 0.02)),
         'max_atr': float(settings.get('MAX_ATR_PERCENT', 0.5)),

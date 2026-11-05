@@ -83,6 +83,22 @@ The stack runs unchanged on Windows through WSL2; every pinned image is multi-ar
 5. Install the tunnel as a Windows service so it survives reboots without a shell: a named Cloudflare Tunnel (`cloudflared service install <token>`) or `ngrok service install`, both pointing at `http://localhost:8787`. Docker Desktop publishes the loopback ports on the Windows side, so a Windows service reaches the gateway at that address. Set `PUBLIC_WEBHOOK_URL` and rerun `bash scripts/start.sh`.
 6. From an earlier `.env`, copy only `TELEGRAM_*`, `SYMBOLS`, and rule settings. Let `scripts/setup.py` generate fresh secrets and a new webhook path, create the n8n owner account, then create the TradingView alert with the URL in `.local/webhook-url.txt`.
 
+## Deploy to a Linux VPS
+
+The Docker stack can run on an Ubuntu/Debian VPS (about 4 GB RAM; key-based SSH as root or a passwordless-sudo user) while the MT5 feeder stays on the Windows PC next to the terminal:
+
+```bash
+bash scripts/deploy_vps.sh user@vps-host            # add --gpu for an NVIDIA VPS, --test to run the suite there
+```
+
+It installs Docker if missing, ships the **committed** `HEAD` with `git archive` (commit first; uncommitted edits are not deployed), and on the first run creates the VPS `.env` from the local one with fresh secrets and Docker Ollama on CPU. It then runs `scripts/start.sh` on the VPS. Reruns ship new code and restart; the VPS `.env` and volumes are never overwritten. Every port stays on the VPS loopback. The analyzer address and token are written to `.local/vps.env`. Then, on the Windows PC with MT5 logged in, stop any local feeder and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\vps_feeder.ps1        # extra arguments go to mt5_feeder.py
+```
+
+This keeps an SSH tunnel open (`127.0.0.1:18010` → VPS analyzer), reconnecting when it drops, and runs the feeder through it via `ZEBRA_ANALYZER_URL` / `ZEBRA_ANALYZER_TOKEN`. The feeder reads its rule filters from the **local** `.env`, so keep rule settings identical on both machines. Once the VPS is live, stop the local stack (`docker compose stop`) or disable Telegram locally, or the daily record is sent twice.
+
 ## Connect TradingView
 
 1. Give `http://localhost:8787` a public HTTPS tunnel, using a stable hostname for ongoing use. Only the exact generated webhook path is proxied; other paths return 404. Do not tunnel the n8n editor or analyzer ports.
