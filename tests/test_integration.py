@@ -196,7 +196,8 @@ def test_crt_signal_is_published_with_its_plan(client, monkeypatch):
     assert client.post('/process').json()['status'] == 'approved'
     plan = json.loads(ledger_rows()[0]['body'])
     assert plan['model'] == 'crt' and plan['timeframe'] == '4h' and plan['direction'] == 'BUY'
-    assert plan['entry'] == 3506.0 and plan['stop'] == 3493.4 and plan['targets'] == [[2.7, 3540.0, 'range high']]
+    assert plan['entry'] == 3506.0 and plan['stop'] == 3493.4 and plan['targets'][0] == [2.7, 3540.0, 'range high']
+    assert [m for m, _, _ in plan['targets']] == [2.7, 3.2, 3.7, 4.2]
     assert plan['entry_type'] == 'market' and plan['max_hold_minutes'] == 720
     with main.database() as conn:
         message = conn.execute('SELECT message FROM notifications').fetchone()['message']

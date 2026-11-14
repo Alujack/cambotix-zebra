@@ -127,7 +127,7 @@ Two detection models share the same pipeline, journal, AI gate, and message form
 
 1. **Candles**: H4 by default (`CRT_HTF_HOURS`; 1 = H1, 24 = D1), rebuilt from M15 in New York time with the 17:00 roll, so H4 candles open at 17, 21, 1, 5, 9 and 13 New York. Broker H4 bars (UTC on Exness) do not line up with those times. Both candles must be weekday sessions (crypto excepted), so the thin Sunday-evening open is never a range.
 2. **Signal**: posted at C2's close with `timeframe` = the range timeframe (`4h`). `range_high`/`range_low` are C1, `sweep_level` is C2's wick beyond the range, `price` is C2's close.
-3. **Plan**: market entry at that close, stop beyond C2's wick plus `CRT_STOP_BUFFER_ATR` x 15m ATR, one target at C1's opposite extreme, at least `CRT_MIN_RR` reward per unit of risk. The trade closes at market after `CRT_MAX_HOLD_CANDLES` range candles. `CRT_KEY_TIMES` can restrict which New York candles may signal (empty = all).
+3. **Plan**: market entry at that close (the signal says BUY NOW / SELL NOW; a limit at the swept level lost money in every backtest), stop beyond C2's wick plus `CRT_STOP_BUFFER_ATR` x 15m ATR, TP1 at C1's opposite extreme (TP2-TP4 at `CRT_EXTRA_TARGETS_R` beyond it), at least `CRT_MIN_RR` reward per unit of risk. The trade closes at market after `CRT_MAX_HOLD_CANDLES` range candles. `CRT_KEY_TIMES` can restrict which New York candles may signal (empty = all).
 4. **Analyzer checks** (`crt_rules`): weekday candle, key time, range swept on exactly the signalled side, close back inside, stop beyond the sweep, target at the opposite extreme, stop at least 0.3 ATR, minimum reward:risk.
 
 Both models also pass the **news** check: the analyzer reads the free ForexFactory weekly calendar and rejects any setup inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked. Every message states 1R, its percent of price, and the reward-to-risk to TP1; with `ACCOUNT_SIZE` set it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. Neither model has established live performance; both remain manual-review tools.
@@ -192,6 +192,7 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `CRT_MIN_RR` | 2.0 | CRT minimum reward to the opposite range extreme per unit of risk |
 | `CRT_STOP_BUFFER_ATR` | 0.1 | CRT stop distance beyond the sweep wick, in 15m ATR |
 | `CRT_MAX_HOLD_CANDLES` | 3 | CRT trades close at market after this many range candles |
+| `CRT_EXTRA_TARGETS_R` | 0.5,1,1.5 | CRT TP2-TP4 in R beyond TP1; stop to entry after TP1 (backtest: split result +37.8R vs +33.5R TP1-only on 3 years of gold; farther targets were worse) |
 | `NEWS_FILTER` | true | Reject setups near high-impact calendar events (both models) |
 | `NEWS_WINDOW_BEFORE_MIN` / `NEWS_WINDOW_AFTER_MIN` | 30 / 15 | Blocked minutes around an event |
 | `NEWS_CURRENCIES` | USD | Currencies whose high-impact events count |

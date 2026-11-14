@@ -278,9 +278,14 @@ def trade_plan(signal: Signal) -> dict:
         entry, distance = signal.price, abs(signal.price - signal.stop)
         reward_r = abs(signal.target_liquidity - entry) / distance if distance else 0.0
         target = signal.target_name or ('range high' if buy else 'range low')
+        # TP1 is the backtested CRT target; CRT_EXTRA_TARGETS_R adds TP2+ that many R beyond it (runners).
+        extras = [float(item) for item in os.getenv('CRT_EXTRA_TARGETS_R', '0.5,1,1.5').split(',')
+                  if item.strip().replace('.', '', 1).isdigit()]
+        targets = [(round(reward_r, 2), signal.target_liquidity, target)]
+        targets += [(round(reward_r + k, 2), signal.target_liquidity + sign * k * distance, '') for k in extras]
         return {'entry': entry, 'entry_note': 'market at the sweep candle close', 'stop': signal.stop, 'risk': distance,
                 'risk_atr': distance / signal.atr, 'basis': f'beyond the sweep wick {signal.sweep_level:g}',
-                'targets': [(round(reward_r, 2), signal.target_liquidity, target)]}
+                'targets': targets}
     entry, atr = signal.price, signal.atr
     multiple = float(os.getenv('STOP_ATR_MULTIPLE', '1.5'))
     distance, basis = multiple * atr, 'no usable prior swing'
@@ -415,11 +420,13 @@ def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: in
     lines += [head, '']
     if structural:
         plan = trade_plan(signal)
-        lines += [f'▶️ Entry:  {plan["entry"]:.{decimals}f}',
+        lines += [f'▶️ {"BUY" if buy else "SELL"} NOW (market order): {plan["entry"]:.{decimals}f}',
                   f'🛑 Stop:   {plan["stop"]:.{decimals}f}  (risk {plan["risk"]:.{decimals}f})']
         for index, (multiple, level, _) in enumerate(plan['targets'], 1):
             label = 'Target' if len(plan['targets']) == 1 else f'TP{index}'
             lines.append(f'🎯 {label}: {level:.{decimals}f}  (+{multiple:g}R)')
+        if len(plan['targets']) > 1:
+            lines.append('↪️ After TP1: close part, move stop to entry')
         sizing = position_size(signal, plan['risk'])
         if sizing:
             lines.append(f'💰 Size:   {sizing["lots"]:.2f} lots ({sizing["percent"]:g}% risk = {sizing["money"]:.2f})')

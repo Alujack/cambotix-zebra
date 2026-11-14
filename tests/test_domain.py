@@ -238,7 +238,12 @@ def test_crt_plan_message_and_ledger(monkeypatch):
     monkeypatch.delenv('CRT_MAX_HOLD_CANDLES', raising=False)
     signal = crt()
     plan = trade_plan(signal)
-    assert plan['entry'] == 3506.0 and plan['stop'] == 3493.4 and plan['targets'] == [(2.7, 3540.0, 'range high')]
+    assert plan['entry'] == 3506.0 and plan['stop'] == 3493.4
+    assert [(m, round(level, 2), note) for m, level, note in plan['targets']] == [
+        (2.7, 3540.0, 'range high'), (3.2, 3546.3, ''), (3.7, 3552.6, ''), (4.2, 3558.9, '')]
+    monkeypatch.setenv('CRT_EXTRA_TARGETS_R', '')
+    assert trade_plan(signal)['targets'] == [(2.7, 3540.0, 'range high')]
+    monkeypatch.delenv('CRT_EXTRA_TARGETS_R')
     message = notification_text(signal, 'approved', analysis().model_dump(), [])
     assert '[CRT]' in message and 'BUY AT: 3506.00  (market at the sweep candle close)' in message
     assert 'TP1: 3540.00  (+2.7R, range high)' in message
@@ -360,11 +365,15 @@ def test_compact_message_is_short_and_readable(monkeypatch):
     monkeypatch.setenv('MESSAGE_STYLE', 'compact')
     message = notification_text(crt(), 'approved', analysis().model_dump(), [], ledger_seq=3)
     assert message.splitlines()[0] == '🟢 BUY XAUUSD · CRT 4h'
-    for text in ('▶️ Entry:  3506.00', '🛑 Stop:   3493.40  (risk 12.60)', '🎯 Target: 3540.00  (+2.7R)',
+    for text in ('▶️ BUY NOW (market order): 3506.00', '🛑 Stop:   3493.40  (risk 12.60)', '🎯 TP1: 3540.00  (+2.7R)',
+                 '🎯 TP4: 3558.90  (+4.2R)', '↪️ After TP1: close part, move stop to entry',
                  'Why: price dipped below the previous 4h range low (3494) and closed back inside. Aiming for the range high.',
                  '📰 News: not checked', 'Ledger #3 · Manual review. No order placed.'):
         assert text in message
-    assert 'AI' not in message and 'WHY (rules)' not in message and len(message.splitlines()) <= 10
+    assert 'AI' not in message and 'WHY (rules)' not in message and len(message.splitlines()) <= 14
+    monkeypatch.setenv('CRT_EXTRA_TARGETS_R', '')
+    single = notification_text(crt(), 'approved', None, [])
+    assert '🎯 Target: 3540.00  (+2.7R)' in single and 'After TP1' not in single
 
 
 def test_compact_message_variants(monkeypatch):
@@ -375,6 +384,6 @@ def test_compact_message_variants(monkeypatch):
     assert 'Why: Uptrend: price above EMA20, EMA50 and EMA200, RSI 58, ADX 29' in classic
     rejected = notification_text(crt_sell(event_id='DEMO-SYNTHETIC-x'), 'rejected', None, ['target_too_close'])
     assert rejected.startswith('🧪 TEST SIGNAL (made-up prices)\n🔴 SELL XAUUSD · CRT 4h  ❌ NOT A TRADE')
-    assert 'Entry' not in rejected and 'Not valid: target too close' in rejected and rejected.endswith('No action.')
+    assert 'NOW' not in rejected and 'Not valid: target too close' in rejected and rejected.endswith('No action.')
     monkeypatch.setenv('ACCOUNT_SIZE', '10000')
     assert '💰 Size:   0.04 lots (0.5% risk = 50.00)' in notification_text(crt(), 'approved', None, [])
