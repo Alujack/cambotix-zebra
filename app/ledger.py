@@ -112,18 +112,18 @@ def verify(rows: list[dict]) -> dict:
 def plan_record(signal: Signal, published_at: int, warnings: list[str] | None = None) -> dict:
     """The frozen plan the grader scores. Later config changes never alter a published plan."""
     plan = trade_plan(signal)
-    session_time = signal.setup_bar_time if signal.model == 'smc' and signal.setup_bar_time else signal.bar_time
+    # CRT holds for CRT_MAX_HOLD_CANDLES range candles (the backtested exit); classic keeps MAX_HOLD_MINUTES.
+    hold = (int(os.getenv('CRT_MAX_HOLD_CANDLES', '3')) * signal.bar_seconds // 60 if signal.model == 'crt'
+            else int(os.getenv('MAX_HOLD_MINUTES', '1440')))
     return {'symbol': signal.symbol, 'model': signal.model, 'timeframe': signal.timeframe,
-            'session': session_label(signal.symbol, signal.model, session_time, signal.bar_seconds), 'cautions': warnings or [],
+            'session': session_label(signal.symbol, signal.model, signal.bar_time, signal.bar_seconds), 'cautions': warnings or [],
             'direction': 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL', 'bar_time': signal.bar_time,
-            'setup_bar_time': signal.setup_bar_time,
             'published_at': published_at,
-            'entry_type': ('limit' if signal.model == 'smc' and signal.entry_mode == 'limit' else 'market'),
-            'entry_model': (signal.entry_mode if signal.model == 'smc' else 'signal_close'),
+            'entry_type': 'market', 'entry_model': 'signal_close',
             'entry': plan['entry'], 'stop': plan['stop'],
             'targets': [[multiple, level, note] for multiple, level, note in plan['targets']],
             'entry_expiry_minutes': int(os.getenv('ENTRY_EXPIRY_MINUTES', '120')),
-            'max_hold_minutes': int(os.getenv('MAX_HOLD_MINUTES', '1440')),
+            'max_hold_minutes': hold,
             'gate': os.getenv('GATE_MODE', 'rules')}
 
 
@@ -180,8 +180,7 @@ def history_cautions(conn, signal: Signal, now: float | None = None) -> list[str
     """A warning when this symbol, side, model and session has lost money recently on the record itself."""
     need, days = int(os.getenv('HISTORY_MIN_SAMPLES', '30')), int(os.getenv('HISTORY_DAYS', '60'))
     direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
-    session_time = signal.setup_bar_time if signal.model == 'smc' and signal.setup_bar_time else signal.bar_time
-    label = session_label(signal.symbol, signal.model, session_time, signal.bar_seconds)
+    label = session_label(signal.symbol, signal.model, signal.bar_time, signal.bar_seconds)
     since = (time.time() if now is None else now) - days * 86400
     same = [item for item in closed_trades(conn, since) if item['symbol'] == signal.symbol
             and item['direction'] == direction and item['model'] == signal.model and item['session'] == label]

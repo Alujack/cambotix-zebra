@@ -7,7 +7,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Vps               # VPS analyzer via scripts\vps_feeder.ps1
 param(
     [string]$Symbol = 'XAUUSDc',
-    [string]$Models = 'classic,smc',
+    [string]$Models = 'classic,crt',
     [switch]$Vps
 )
 $ErrorActionPreference = 'Continue'

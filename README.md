@@ -46,7 +46,7 @@ bash scripts/test.sh
 python3 scripts/smoke.py
 bash scripts/check-ai.sh
 python3 scripts/demo.py BTCUSD        # synthetic classic BUY+SELL through rules, AI and Telegram; IDs start with DEMO-SYNTHETIC
-python3 scripts/demo.py BTCUSD smc    # same for the SMC/ICT model
+python3 scripts/demo.py XAUUSD crt    # same for the Candle Range Theory model
 docker compose logs --tail=100 analyzer n8n
 docker compose stop
 docker compose start
@@ -123,19 +123,34 @@ Two detection models share the same pipeline, journal, AI gate, and message form
 
 **classic** (`tradingview/gold_setups.pine`): complete price/EMA20/50/200 alignment, RSI band, MACD histogram sign, ADX minimum, ATR band, and the London/New York session filter evaluated on the bar open. Levels come from ATR and the prior swing.
 
-**smc** (`tradingview/smc_setups.pine`): ICT / Smart Money Concepts, detected mechanically on the 15m chart:
+**crt** (`scripts/crt_engine.py`, Candle Range Theory): the previous higher-timeframe candle's high and low are a range (C1). When the next candle (C2) trades beyond exactly one side of it, leaves the other side untouched, and **closes back inside**, the move is treated as a liquidity grab and the plan targets the **opposite side** of the range:
 
-1. **HTF bias, top-down**: structure on the Daily and the 4H (direction of the last break of a confirmed swing); by default both must agree, otherwise the indicator stands aside. The payload carries `htf_bias` plus `daily_bias` and `h4_bias`.
-2. **Liquidity map and sweep**: previous day high/low (`pdh`/`pdl`), previous week high/low (`pwh`/`pwl`), the completed Asian range (`asia_high`/`asia_low`, default 20:00-00:00 New York), equal highs/lows within a tolerance, and confirmed swings are plotted and watched. A sweep is a candle trading through one of these pools and closing back inside; the pool's name travels as `swept_name`.
-3. **Market structure shift**: within `waitBars`, a displacement candle (body at least 1 ATR) closes through the last confirmed swing high (for a buy) or swing low (for a sell), frozen at the sweep. A candle that sweeps both sides cancels the sequence.
-4. **Fair value gap**: the three-candle imbalance left by that displacement; its consequent encroachment (midpoint) is the required retest. The last opposing candle before the displacement is reported as the order block.
-5. **Premium/discount**: the entry must sit below the equilibrium of the dealing range (swept low to the `rangeBars` high) for longs, above it for shorts.
-6. **Draw on liquidity**: TP1 is the nearest opposing pool (swing, PDH/PDL, PWH/PWL, Asian range, equal highs/lows) that is still untouched and offers at least `minRr` reward per unit of risk; its name travels as `target_name`. A pool that price has already touched is marked *taken* and is never reused as a sweep or a target. With no qualifying pool there is no setup; the indicator never invents a target. The panel shows the nearest untouched pool above and below price.
-7. **Time**: the setup bar must open inside an enabled ICT killzone in New York time (London open, New York open, optional New York PM); crypto tickers use all seven days.
-8. **News**: the analyzer checks the free ForexFactory weekly calendar and rejects any setup (both models) inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked.
-9. **Risk**: every message states 1R, its percent of price, and the reward-to-risk to TP1. With `ACCOUNT_SIZE` set, it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. Position sizing is server-side only; the chart shows levels and R multiples.
+1. **Candles**: H4 by default (`CRT_HTF_HOURS`; 1 = H1, 24 = D1), rebuilt from M15 in New York time with the 17:00 roll, so H4 candles open at 17, 21, 1, 5, 9 and 13 New York. Broker H4 bars (UTC on Exness) do not line up with those times. Both candles must be weekday sessions (crypto excepted), so the thin Sunday-evening open is never a range.
+2. **Signal**: posted at C2's close with `timeframe` = the range timeframe (`4h`). `range_high`/`range_low` are C1, `sweep_level` is C2's wick beyond the range, `price` is C2's close.
+3. **Plan**: market entry at that close, stop beyond C2's wick plus `CRT_STOP_BUFFER_ATR` x 15m ATR, one target at C1's opposite extreme, at least `CRT_MIN_RR` reward per unit of risk. The trade closes at market after `CRT_MAX_HOLD_CANDLES` range candles. `CRT_KEY_TIMES` can restrict which New York candles may signal (empty = all).
+4. **Analyzer checks** (`crt_rules`): weekday candle, key time, range swept on exactly the signalled side, close back inside, stop beyond the sweep, target at the opposite extreme, stop at least 0.3 ATR, minimum reward:risk.
 
-The chart first draws a **SETUP** plan and sends nothing to the server. A later **BUY / SELL confirmed** candle must touch the FVG midpoint, close back beyond the gap, remain inside the frozen range and correct premium/discount half, and still pass direction, session, volatility and reward/risk filters. Only then does *Any alert() function call* post JSON. `entry` is that confirmed close; `setup_entry` is the original FVG midpoint and `setup_bar_time` identifies its formation bar. The payload also carries the stop, liquidity target, FVG, order block, range, sweep/MSS, HTF bias, killzone and **rule score**. The analyzer independently revalidates formation and confirmation killzones, FVG midpoint, stop/sweep geometry, structure direction, confirmed-entry location/risk/reward, HTF bias, ATR and minimum score before the model sees it. Legacy payloads without `entry_mode` remain midpoint-limit plans for backward compatibility. `hit_rate` and `samples` are the chart's simulated confirmed-entry memory; expired, cancelled, missed and ambiguous plans are excluded. `tradingview/SMC_GUIDE.md` explains every label. Pine cannot run a language model; Ollama remains server-side. `python3 scripts/demo.py BTCUSD smc` exercises the legacy synthetic compatibility path. Neither model has established performance; both remain manual-review tools.
+Both models also pass the **news** check: the analyzer reads the free ForexFactory weekly calendar and rejects any setup inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked. Every message states 1R, its percent of price, and the reward-to-risk to TP1; with `ACCOUNT_SIZE` set it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. Neither model has established live performance; both remain manual-review tools.
+
+### Backtesting
+
+`scripts/backtest.py` replays saved broker history through the analyzer's own code: the feeder's detection, `app.domain` rules, `app.ledger.plan_record`, and the M1 grader with spread. Pull history on Windows with MT5 open (set *Tools > Options > Charts > Max bars in chart* to Unlimited and restart MT5, or M1 stops at 100,000 bars), then run it in the analyzer image:
+
+```powershell
+py -3.13 scripts\pull_history.py --symbol XAUUSDm --days 1100
+docker compose run --rm --no-deps -v "${PWD}:/work" -w /work analyzer python scripts/backtest.py --symbol XAUUSD --models crt
+docker compose run --rm --no-deps -v "${PWD}:/work" -w /work analyzer python scripts/backtest.py --symbol XAUUSD --models crt --sweep "CRT_MIN_RR=1.0|2.0"
+```
+
+`--set KEY=VALUE` overrides a setting for one run; `--sweep` ranks settings on the first two thirds of the history and shows the unseen last third beside each. Evidence so far (Exness MT5, H4 defaults above):
+
+| Market and period | Trades | Result | Note |
+|---|---|---|---|
+| XAUUSD Nov 2023 - Nov 2026 | 375 | +33.5R, PF 1.13, max drawdown 24R | Nov 2023 - Oct 2024 +19.7R and Nov 2024 - Oct 2025 -9.3R were never used for tuning |
+| EURUSD, GBPUSD, USDJPY, USTEC, XAGUSD, BTCUSD, 1 year | 107-216 each | -15R to -44R each | the same settings lose on every one |
+| US30, 1 year | 122 | +13.3R | all of it in the last third |
+
+So the edge, if real, is gold-only and thin, with losing years. Treat CRT as a forward-test candidate on a demo account, judged by the graded ledger below. Judge any new variant on all of these symbols at once, never on gold alone. The `classic` model lost 9.75R on the same gold year.
 
 ## Telegram
 
@@ -171,11 +186,11 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `SESSION_EXEMPT_SYMBOLS` | BTCUSD,BTCUSDT | Around-the-clock markets that skip the session filter |
 | `STOP_ATR_MULTIPLE` | 1.5 | Stop distance in ATR when no usable prior swing exists |
 | `TP_R_MULTIPLES` | 1,2,3,4 | Take-profit levels as multiples of the stop distance (R) |
-| `KILLZONES` | London,NY AM | SMC model: ICT killzones (New York time) a setup must open inside |
-| `REQUIRE_HTF_BIAS` | true | SMC model: higher-timeframe structure must agree with the direction |
-| `REQUIRE_DISCOUNT` | true | SMC model: longs only below range equilibrium, shorts only above |
-| `MIN_RR` | 1.5 | SMC model: minimum reward to TP1 (liquidity) per unit of risk |
-| `MIN_SMC_SCORE` | 70 | Server-side minimum for a supplied Pine confluence score (not a win probability) |
+| `CRT_HTF_HOURS` | 4 | CRT range candle in hours (4 = H4, 1 = H1, 24 = D1), New York 17:00 roll |
+| `CRT_KEY_TIMES` | (all) | New York open hours of the sweep candle that may signal, e.g. `1,5,9` |
+| `CRT_MIN_RR` | 2.0 | CRT minimum reward to the opposite range extreme per unit of risk |
+| `CRT_STOP_BUFFER_ATR` | 0.1 | CRT stop distance beyond the sweep wick, in 15m ATR |
+| `CRT_MAX_HOLD_CANDLES` | 3 | CRT trades close at market after this many range candles |
 | `NEWS_FILTER` | true | Reject setups near high-impact calendar events (both models) |
 | `NEWS_WINDOW_BEFORE_MIN` / `NEWS_WINDOW_AFTER_MIN` | 30 / 15 | Blocked minutes around an event |
 | `NEWS_CURRENCIES` | USD | Currencies whose high-impact events count |
@@ -188,19 +203,19 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `MAX_OPEN_SAME_DIRECTION` | 1 | Reject a setup while this many plans on the same symbol and side are still open (`0` = no limit) |
 | `NEWS_CAUTION_MIN` | 120 | Caution when a high-impact event is due within this many minutes (beyond the blocking window) |
 | `HISTORY_MIN_SAMPLES` / `HISTORY_DAYS` | 30 / 60 | History warning once the record has this many closed trades for the same symbol, side, model and session |
-| `ENTRY_EXPIRY_MINUTES` | 120 | Legacy SMC midpoint-limit entries not filled within this time are recorded as not filled |
-| `MAX_HOLD_MINUTES` | 1440 | Open trades are closed at market after this time |
+| `ENTRY_EXPIRY_MINUTES` | 120 | Limit entries not filled within this time are recorded as not filled (both models currently enter at market) |
+| `MAX_HOLD_MINUTES` | 1440 | Open classic trades are closed at market after this time |
 | `GO_MIN_TRADES` / `GO_MAX_DRAWDOWN_R` | 150 / 10 | Forward-test verdict thresholds |
 | `DIGEST_HOUR` / `DIGEST_TIMEZONE` | 7 / Asia/Phnom_Penh | When the daily record is sent |
 | `AI_TIMEOUT_SECONDS` | 120 | Maximum wait per AI attempt |
 
-Use matching Pine indicator thresholds when adjusting rules. Only the 15m timeframe is accepted. `SYMBOLS` lists accepted tickers; tickers in `SESSION_EXEMPT_SYMBOLS` skip the session filter on the server, and the Pine script skips it for any `crypto` symbol. Thresholds are shared across symbols, so review the ATR band before enabling a new market. Incoming `bar_time` is the bar-close timestamp in **Unix seconds**, not milliseconds. Numeric fields must be finite JSON numbers. `macd_hist` means histogram, not the MACD line.
+Use matching Pine indicator thresholds when adjusting rules. Classic accepts only the 15m timeframe; CRT accepts its range timeframe (`1h`, `4h` or `1d`). `SYMBOLS` lists accepted tickers; tickers in `SESSION_EXEMPT_SYMBOLS` skip the session filter on the server, and the Pine script skips it for any `crypto` symbol. Thresholds are shared across symbols, so review the ATR band before enabling a new market. Incoming `bar_time` is the bar-close timestamp in **Unix seconds**, not milliseconds. Numeric fields must be finite JSON numbers. `macd_hist` means histogram, not the MACD line.
 
 With the default `GATE_MODE=rules`, a candidate is `approved` when every technical rule passes. When `AI_COMMENTARY=true`, the model gets only the remaining freshness window minus a transaction reserve; its failure or latency cannot veto the deterministic result. Set it false for the fastest path. With `GATE_MODE=ai` the model must also approve the existing direction, report a matching market regime and good/excellent quality, and meet the configured confidence threshold; failures retry up to three times. `approved` means ready for **manual review**, never permission to place an order. Performance is established only by the graded ledger below, never claimed in advance.
 
 **One idea, one plan.** While a plan on the same symbol and side is still open, a new setup in that direction is rejected with `open_plan_same_direction` (`MAX_OPEN_SAME_DIRECTION`). Stacking near-identical entries turns one idea into several losses when it fails. A plan counts as open until it closes, is not filled, or passes its own entry-expiry plus hold limit, so a stopped feeder cannot block a symbol forever. Synthetic test signals skip this check.
 
-**Cautions** never block. An approved setup lists what is weak about it: RSI at the edge of its band, ADX just above the minimum, price extended from EMA20, a stop without a prior swing (classic); thin reward to TP1, a wide or tight stop, entry near equilibrium, Daily and 4H disagreeing, weak chart history (SMC); volatility near either ATR limit and high-impact news within `NEWS_CAUTION_MIN` (both). Once the record holds `HISTORY_MIN_SAMPLES` closed trades for the same symbol, side, model and session within `HISTORY_DAYS`, a losing group (negative expectancy or under 40% wins) adds a `History:` warning from the ledger itself. Cautions are stored with the published plan, and the track record splits results into *with cautions* and *no cautions* so their value can be measured.
+**Cautions** never block. An approved setup lists what is weak about it: RSI at the edge of its band, ADX just above the minimum, price extended from EMA20, a stop without a prior swing (classic); a target under 2.5R away or a close already past the range midpoint (CRT); volatility near either ATR limit and high-impact news within `NEWS_CAUTION_MIN` (both). Once the record holds `HISTORY_MIN_SAMPLES` closed trades for the same symbol, side, model and session within `HISTORY_DAYS`, a losing group (negative expectancy or under 40% wins) adds a `History:` warning from the ledger itself. Cautions are stored with the published plan, and the track record splits results into *with cautions* and *no cautions* so their value can be measured.
 
 Signal identity is protected by both the primary event ID and a unique `(symbol, timeframe, bar_time, signal)` key. Concurrent inserts are atomic. A duplicate with changed values returns HTTP 409. Stale/invalid input returns 422, and database failures return 503 for retry. No successful acknowledgment is sent before database commit.
 
@@ -210,7 +225,7 @@ macOS setup uses `OLLAMA_RUNTIME=native`, an empty `COMPOSE_PROFILES`, and `OLLA
 
 ## MetaTrader 5 feeder
 
-`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs **both models** from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and the SMC model replays `scripts/smc_engine.py`, a pure-Python port of `smc_setups.pine` (sweep → MSS with displacement → FVG → retest → confirmed close), over the last 1,500 closed 15m bars with the broker's Daily, 4H and Weekly bars as context. Its filters are read from `.env` (`KILLZONES`, `REQUIRE_HTF_BIAS`, `REQUIRE_DISCOUNT`, `MIN_RR`, `MIN_SMC_SCORE`, ATR band) so what it emits is what the analyzer accepts; the Pine inputs it does not expose keep their chart defaults. The replay is deterministic and a payload is sent only when its confirmation bar is the bar that just closed, so a restart never re-sends history. `--models classic`, `--models smc` or the default `classic,smc` choose what runs. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only):
+`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs **both models** from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and on every M15 close that also closes a New York-aligned H4 candle it runs `scripts/crt_engine.py` over the last 600 closed M15 bars and posts a CRT setup if that candle swept the previous one and closed back inside. CRT settings are read from `.env` (`CRT_*`) so what it emits is what the analyzer accepts, and a payload is sent only for the candle that just closed, so a restart never re-sends history. `--models classic`, `--models crt` or the default `classic,crt` choose what runs. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only). If `mt5.initialize()` reports `IPC timeout`, untick *Tools > Options > Expert Advisors > Disable algorithmic trading via external Python API*:
 
 ```powershell
 py -m pip install MetaTrader5 pandas numpy
@@ -228,7 +243,7 @@ Get-Content .local\feeder.log -Tail 30 -Wait                                    
 
 The task "Cambotix Zebra Feeder" runs `scripts\feeder_service.ps1` hidden 30 seconds after you sign in. It starts Docker Desktop if it is not running, waits for the analyzer, runs the feeder (MT5 launches the saved terminal itself), and restarts it 30 seconds after any exit. Task Scheduler also restarts the service if PowerShell dies. Output goes to `.local\feeder.log` (rotated at 10 MB). Close any feeder you started by hand first; reinstalling stops old feeders. With `-Vps` it runs `scripts\vps_feeder.ps1` instead.
 
-Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. Two known differences from the TradingView chart: Daily, 4H and Weekly bars follow the broker's day and week boundaries rather than the exchange's, and a pivot requires a strict extreme (equal highs or lows are not a swing), where Pine's tie handling is undocumented. `tests/test_smc_engine.py` drives the engine through a hand-built sweep → MSS → FVG → retest → confirmed-close scenario and checks that the emitted payload passes the analyzer's own SMC rules.
+Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. `tests/test_crt_engine.py` builds H4 candles from hand-made M15 bars and checks that an emitted CRT payload passes the analyzer's own `crt_rules`.
 
 ## Outcome grading and track record
 
@@ -237,7 +252,7 @@ Every approved plan is appended to `ledger` in the same transaction as the appro
 - **TP1 basis** (the headline): the whole position closes at TP1, or at the stop for -1R.
 - **Scale-out**: equal parts close at each target, with the stop moved to entry after TP1.
 
-Grading is deliberately conservative. A BUY fills at the ask and exits at the bid, a SELL the reverse, using each bar's spread. Classic and confirmed-close SMC plans fill at the open of the first minute after publication; the SMC reference entry remains the confirmed 15m close shown in the alert. Legacy SMC midpoint-limit payloads expire after `ENTRY_EXPIRY_MINUTES`, or are recorded as not filled if TP1 prints first. A gap through both a legacy limit entry and its stop is `not_filled`, because OHLC cannot support a defensible -1R sequence. A limit fill candle cannot credit targets. When one candle could have hit the stop and a target, the stop is counted and the trade is flagged ambiguous. R is measured against the actual fill. Plans without candle coverage stay open; they are never dropped.
+Grading is deliberately conservative. A BUY fills at the ask and exits at the bid, a SELL the reverse, using each bar's spread. Classic and CRT plans fill at the open of the first minute after publication. Limit plans (none are emitted today; the grader keeps the rules) expire after `ENTRY_EXPIRY_MINUTES` or are not filled if TP1 prints first, a gap through both a limit entry and its stop is `not_filled`, and a limit fill candle cannot credit targets. When one candle could have hit the stop and a target, the stop is counted and the trade is flagged ambiguous. R is measured against the actual fill. Plans without candle coverage stay open; they are never dropped.
 
 The ledger cannot be edited by the service: triggers refuse `UPDATE`, `DELETE`, and `TRUNCATE` on `ledger` and `candles` and deletion of `signals`, and stored candles are first-write-wins. Each row carries the previous row's SHA-256, and the daily Telegram record posts the chain head. A database superuser can still bypass triggers, but any rewrite changes every later hash and no longer matches the posted head.
 

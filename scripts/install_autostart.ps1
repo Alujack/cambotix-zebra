@@ -8,7 +8,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
 param(
     [string]$Symbol = 'XAUUSDc',
-    [string]$Models = 'classic,smc',
+    [string]$Models = 'classic,crt',
     [switch]$Vps,
     [switch]$Uninstall
 )

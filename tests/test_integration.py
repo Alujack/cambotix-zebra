@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import ledger, main
-from tests.test_domain import analysis, candidate
+from tests.test_domain import analysis, candidate, crt
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +21,12 @@ def isolated_database(monkeypatch):
     monkeypatch.setenv('NEWS_FILTER', 'false')
     monkeypatch.setenv('DIGEST_HOUR', '24')
     monkeypatch.delenv('GATE_MODE', raising=False)
+    # Plan geometry the assertions below are written for, independent of the local .env.
+    monkeypatch.setenv('TP_R_MULTIPLES', '1,2,3,4')
+    monkeypatch.setenv('STOP_ATR_MULTIPLE', '1.5')
+    monkeypatch.delenv('CRT_KEY_TIMES', raising=False)
+    monkeypatch.delenv('CRT_MIN_RR', raising=False)
+    monkeypatch.delenv('CRT_MAX_HOLD_CANDLES', raising=False)
     with main.database() as conn:
         ledger.migrate(conn)
         # Test-only reset: replica mode skips the append-only triggers, which requires a database superuser.
@@ -182,6 +188,25 @@ def test_rules_gate_publishes_when_ai_is_down(client, monkeypatch):
     assert 'Ledger: #1' in message
 
 
+def test_crt_signal_is_published_with_its_plan(client, monkeypatch):
+    monkeypatch.setenv('SESSION_EXEMPT_SYMBOLS', 'XAUUSD')      # the run may fall on a weekend
+    monkeypatch.setattr(main, 'classify', lambda signal: analysis())
+    client.post('/signals', json=crt(bar_time=int(time.time())).model_dump())
+    assert client.post('/process').json()['status'] == 'approved'
+    plan = json.loads(ledger_rows()[0]['body'])
+    assert plan['model'] == 'crt' and plan['timeframe'] == '4h' and plan['direction'] == 'BUY'
+    assert plan['entry'] == 3506.0 and plan['stop'] == 3493.4 and plan['targets'] == [[2.7, 3540.0, 'range high']]
+    assert plan['entry_type'] == 'market' and plan['max_hold_minutes'] == 720
+    with main.database() as conn:
+        message = conn.execute('SELECT message FROM notifications').fetchone()['message']
+    assert '[CRT]' in message and 'TP1: 3540.00  (+2.7R, range high)' in message
+
+
+def test_smc_payloads_are_refused(client):
+    body = {**crt(bar_time=int(time.time())).model_dump(), 'model': 'smc'}
+    assert client.post('/signals', json=body).status_code == 422
+
+
 def test_ai_gate_rejection_is_not_published(client, monkeypatch):
     monkeypatch.setenv('GATE_MODE', 'ai')
     monkeypatch.setattr(main, 'classify', lambda signal: analysis(decision='REJECT'))
@@ -338,7 +363,9 @@ def test_recent_history_lookup_matches_the_full_record(client, monkeypatch):
     monkeypatch.setattr(main, 'classify', lambda signal: analysis())
     now = int(time.time())
     for index, age in enumerate((100 * 86400, 10 * 86400, 3600)):
-        signal, plan = publish_in_past(client, monkeypatch, seconds_ago=age, event_id=f'aged-{index}', offset=index + 1)
+        # Offsets 60 s apart (and under the 300 s freshness limit): a second ticking between iterations must not give
+        # two signals the same bar_time, which the signals table refuses as a duplicate.
+        signal, plan = publish_in_past(client, monkeypatch, seconds_ago=age, event_id=f'aged-{index}', offset=index * 60 + 1)
         with main.database() as conn:
             ledger.append(conn, signal.event_id, 'closed', plan['published_at'] + 600,
                           {'exit': 'sl', 'targets_hit': 0, 'ambiguous': False, 'r_tp1': -1.0, 'r_scaled': -1.0})

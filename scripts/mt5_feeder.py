@@ -3,10 +3,10 @@
 Replaces the TradingView webhook for accounts without a webhook-capable plan.
 Runs both detection models from the broker's own candles:
   classic  mirrors tradingview/gold_setups.pine bar for bar (EMA/RSI/MACD/ADX/ATR)
-  smc      replays scripts/smc_engine.py, the port of tradingview/smc_setups.pine,
-           over recent 15m bars with Daily / 4H / Weekly context and posts a
-           confirmed-close entry on the bar it happens
-Same JSON contracts as the Pine webhooks; the analyzer re-validates everything.
+  crt      Candle Range Theory via scripts/crt_engine.py: on each New York-aligned
+           H4 close, posts a setup when that candle swept one side of the previous
+           H4 range and closed back inside it
+Same JSON contract as the analyzer's /signals; the analyzer re-validates everything.
 
 Every minute it also sends the broker's closed M1 candles (bid prices plus the
 bar spread) to /candles, which the analyzer uses to grade every published plan.
@@ -32,12 +32,10 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from smc_engine import Config, Engine  # noqa: E402
+from crt_engine import CrtConfig, detect, slot_closes  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BARS = 600                 # >= 200 for EMA200 plus warmup
-SMC_BARS = 1500            # ~3 weeks of 15m: pools, swings and the chart's own hit-rate memory
-SMC_CONTEXT = {'d1': (mt5.TIMEFRAME_D1, 200), 'h4': (mt5.TIMEFRAME_H4, 400), 'w1': (mt5.TIMEFRAME_W1, 60)}
 TF_SECONDS = 900
 DIRECTIONS = ('BUY_SETUP', 'SELL_SETUP')
 CANDLE_CHUNK = 2 * 86400   # M1 rows per request stay well under the analyzer's 1 MB limit
@@ -149,46 +147,31 @@ def bars(symbol: str, attempts: int = 8, count: int = BARS) -> pd.DataFrame:
     raise SystemExit('MT5 returned stale or empty history; open the terminal and check it is connected')
 
 
-def context_bars(symbol: str, timeframe, count: int) -> list[dict]:
-    """Closed higher-timeframe bars as plain dicts; the still-forming last bar is dropped."""
-    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
-    if rates is None or len(rates) < 10:
-        raise SystemExit(f'MT5 returned no history for {symbol} timeframe {timeframe}')
-    rows = [{'t': int(r['time']), 'o': float(r['open']), 'h': float(r['high']), 'l': float(r['low']), 'c': float(r['close'])}
-            for r in rates]
-    return rows[:-1]
+def crt_config(settings: dict, crypto: bool) -> CrtConfig:
+    """Detection follows the analyzer's .env so a setup the feeder emits is one the server accepts."""
+    keys = settings.get('CRT_KEY_TIMES', '')
+    return CrtConfig(htf_hours=int(settings.get('CRT_HTF_HOURS', 4)),
+                     key_times=tuple(int(k) for k in keys.split(',') if k.strip().isdigit()),
+                     min_rr=float(settings.get('CRT_MIN_RR', 2.0)),
+                     stop_buffer_atr=float(settings.get('CRT_STOP_BUFFER_ATR', 0.1)), crypto=crypto)
 
 
-def smc_config(settings: dict, crypto: bool, tick: float) -> Config:
-    """Engine filters follow the analyzer's .env so a setup the feeder emits is one the server accepts."""
-    truthy = lambda key, default: settings.get(key, default).strip().lower() == 'true'
-    return Config(killzones=tuple(k.strip() for k in settings.get('KILLZONES', 'London,NY AM').split(',') if k.strip()),
-                  require_htf=truthy('REQUIRE_HTF_BIAS', 'true'), require_discount=truthy('REQUIRE_DISCOUNT', 'true'),
-                  min_rr=float(settings.get('MIN_RR', 1.5)), min_score=int(settings.get('MIN_SMC_SCORE', 70)),
-                  min_atr_pct=float(settings.get('MIN_ATR_PERCENT', 0.02)), max_atr_pct=float(settings.get('MAX_ATR_PERCENT', 0.5)),
-                  crypto=crypto, tick=tick,
-                  entry_mode=settings.get('SMC_ENTRY_MODE', 'confirmed_close').strip(),
-                  fvg_window=int(settings.get('SMC_FVG_WINDOW', 1)), disp_atr=float(settings.get('SMC_DISP_ATR', 1.0)),
-                  limit_expiry_bars=max(1, int(settings.get('ENTRY_EXPIRY_MINUTES', 120)) // 15))
-
-
-def scan_smc(cfg: dict, close_epoch: int, dry_run: bool) -> None:
-    """Replay the SMC engine over recent bars and post a confirmed entry only if it closed on this bar."""
-    m15 = bars(cfg['mt5_symbol'], count=SMC_BARS)
+def scan_crt(cfg: dict, df: pd.DataFrame, close_epoch: int, dry_run: bool) -> None:
+    """Post a CRT setup only when the bar that just closed also closed an HTF candle that swept the previous range."""
+    crt = cfg['crt']
+    if not slot_closes(close_epoch - TF_SECONDS, crt.htf_hours):
+        return
     rows = [{'t': int(r.time), 'o': float(r.open), 'h': float(r.high), 'l': float(r.low), 'c': float(r.close)}
-            for r in m15.itertuples()][:-1]          # drop the still-forming bar
-    context = {name: context_bars(cfg['mt5_symbol'], timeframe, count) for name, (timeframe, count) in SMC_CONTEXT.items()}
-    engine = Engine(cfg['symbol'], cfg['smc'])
-    emitted = engine.run(rows, context['d1'], context['h4'], context['w1'])
-    print(f'  smc: {engine.status}; {len(emitted)} confirmed entries in the last {len(rows)} bars')
-    for body in emitted:
-        if body['bar_time'] != close_epoch:
-            continue
+            for r in df.itertuples()][:-1]           # drop the still-forming bar
+    setups = [body for body in detect(cfg['symbol'], rows, crt) if body['bar_time'] == close_epoch]
+    if not setups:
+        print(f'  crt: H{crt.htf_hours} candle closed; no sweep-and-close-back setup')
+    for body in setups:
         if dry_run:
-            print(f'  [dry-run] would send {body["signal"]} (smc): {json.dumps(body)}')
+            print(f'  [dry-run] would send {body["signal"]} (crt): {json.dumps(body)}')
             continue
         status, text = post(body, cfg['url'], cfg['token'])
-        print(f'  sent {body["signal"]} (smc) -> HTTP {status} {text}')
+        print(f'  sent {body["signal"]} (crt) -> HTTP {status} {text}')
 
 
 # -- emission -----------------------------------------------------------------
@@ -271,8 +254,8 @@ def scan(cfg: dict, dry_run: bool) -> None:
     if age > cfg['max_age']:
         print(f'  bar is {age:.0f}s old; analyzer rejects beyond {cfg["max_age"]}s — nothing sent')
         return
-    if 'smc' in cfg['models']:
-        scan_smc(cfg, close_epoch, dry_run)
+    if 'crt' in cfg['models']:
+        scan_crt(cfg, df, close_epoch, dry_run)
     if 'classic' in cfg['models']:
         scan_classic(cfg, closed, previous, close_epoch, dry_run)
 
@@ -306,7 +289,7 @@ def main() -> None:
     parser.add_argument('--no-candles', action='store_true', help='do not send M1 candles for outcome grading')
     parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDc'),
                         help='broker symbol as named in MT5 (default XAUUSDc)')
-    parser.add_argument('--models', default='classic,smc', help='detection models to run: classic, smc or both (default both)')
+    parser.add_argument('--models', default='classic,crt', help='detection models to run: classic, crt or both (default both)')
     args = parser.parse_args()
 
     settings = env()
@@ -314,8 +297,8 @@ def main() -> None:
     analyzer = os.getenv('ZEBRA_ANALYZER_URL', f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}').rstrip('/')
     broker_symbol = args.symbol
     models = {m.strip().lower() for m in args.models.split(',') if m.strip()}
-    if not models <= {'classic', 'smc'}:
-        raise SystemExit('--models accepts classic, smc or classic,smc')
+    if not models <= {'classic', 'crt'}:
+        raise SystemExit('--models accepts classic, crt or classic,crt')
     cfg = {
         'models': models,
         'mt5_symbol': broker_symbol,
@@ -332,14 +315,9 @@ def main() -> None:
     }
     if not cfg['token']:
         raise SystemExit('ANALYZER_TOKEN missing from .env')
-    if 'smc' in models:
-        if not mt5.initialize():
-            raise SystemExit(f'MT5 initialize failed: {mt5.last_error()}')
-        info = mt5.symbol_info(broker_symbol)
-        if info is None:
-            raise SystemExit(f'unknown MT5 symbol {broker_symbol}')
+    if 'crt' in models:
         exempt = {s.strip().upper() for s in settings.get('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if s.strip()}
-        cfg['smc'] = smc_config(settings, cfg['symbol'] in exempt, float(info.trade_tick_size or info.point))
+        cfg['crt'] = crt_config(settings, cfg['symbol'] in exempt)
     print(f'{cfg["mt5_symbol"]} -> {cfg["symbol"]}  {cfg["url"]}  models={",".join(sorted(models))}  '
           f'(ADX>={cfg["min_adx"]}, ATR% {cfg["min_atr"]}-{cfg["max_atr"]})')
 
