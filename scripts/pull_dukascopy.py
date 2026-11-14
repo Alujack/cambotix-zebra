@@ -36,7 +36,11 @@ PERIOD = {'m15': 900, 'h4': 14400, 'd1': 86400}
 WEEK, SUNDAY = 604800, 3 * 86400            # 1970-01-04 (epoch + 3 days) was a Sunday
 
 
-def fetch(path: str, retries: int = 10) -> bytes:
+class Refused(Exception):
+    """Dukascopy did not serve a file after all retries (it throttles with 503s); a rerun picks it up."""
+
+
+def fetch(path: str, retries: int = 6) -> bytes:
     """Return the decompressed file at datafeed/<path>, cached on disk; b'' when Dukascopy has no data."""
     cached = CACHE / path
     if cached.exists():
@@ -45,20 +49,19 @@ def fetch(path: str, retries: int = 10) -> bytes:
         request = urllib.request.Request(f'{URL}/{path}', headers={'User-Agent': 'Mozilla/5.0'})
         for attempt in range(retries):
             try:
-                with urllib.request.urlopen(request, timeout=30) as response:
+                with urllib.request.urlopen(request, timeout=60) as response:
                     raw = response.read()
                 break
             except urllib.error.HTTPError as error:
                 if error.code == 404:
                     raw = b''
                     break
-                if attempt == retries - 1:
-                    raise SystemExit(f'Dukascopy keeps refusing {path} (HTTP {error.code}); rerun later - '
-                                     'finished files are cached')
-            except (urllib.error.URLError, TimeoutError) as error:
-                if attempt == retries - 1:
-                    raise SystemExit(f'cannot reach Dukascopy for {path}: {error}')
-            time.sleep(min(30, 1.5 ** attempt))
+                problem = f'HTTP {error.code}'
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+                problem = str(error)
+            if attempt == retries - 1:
+                raise Refused(f'{path}: {problem}')
+            time.sleep(min(60, 2 ** (attempt + 1)))
         cached.parent.mkdir(parents=True, exist_ok=True)
         cached.write_bytes(raw)
     return lzma.decompress(raw) if raw else b''
@@ -82,15 +85,19 @@ def epoch(day: date) -> int:
     return int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp())
 
 
-def minute_bars(instrument: str, day: date, scale: float) -> list[dict]:
+def minute_bars(instrument: str, day: date, scale: float, spread: float | None) -> list[dict]:
     bid = candles(day_path(instrument, day, 'BID'), epoch(day), scale)
+    if spread is not None:                                  # fixed spread: no ASK download
+        for b in bid:
+            b['spread'] = spread
+        return bid
     ask = {b['t']: b['o'] for b in candles(day_path(instrument, day, 'ASK'), epoch(day), scale)}
     for b in bid:
         b['spread'] = round(max(0.0, ask.get(b['t'], b['o']) - b['o']), 8)
     return bid
 
 
-def hour_bars(instrument: str, month: date, scale: float) -> list[dict]:
+def hour_bars(instrument: str, month: date, scale: float, _spread=None) -> list[dict]:
     bars = candles(f'{instrument}/{month.year}/{month.month - 1:02d}/BID_candles_hour_1.bi5', epoch(month), scale)
     for b in bars:
         b['spread'] = 0.0
@@ -129,33 +136,43 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--symbol', default='XAUUSD', help='Dukascopy instrument, e.g. XAUUSD, EURUSD, BTCUSD')
     parser.add_argument('--days', type=int, default=365, help='how far back to pull (default 365)')
-    parser.add_argument('--workers', type=int, default=4, help='parallel downloads (Dukascopy throttles above ~6)')
+    parser.add_argument('--workers', type=int, default=2, help='parallel downloads (Dukascopy throttles with 503s)')
+    parser.add_argument('--spread', type=float, metavar='PRICE',
+                        help='use this fixed spread (e.g. 0.20) instead of downloading ASK candles - half the files')
     args = parser.parse_args()
 
     symbol = args.symbol.upper()
     scale = SCALE.get(symbol, 1000 if symbol.endswith('JPY') else 100000)
+    weekends = symbol in ('BTCUSD', 'ETHUSD')                   # everything else is shut all Saturday
     end = datetime.now(timezone.utc).date()                     # today is incomplete: stop at yesterday
     start = end - timedelta(days=args.days)
     m1_days = [start - timedelta(days=WARMUP_DAYS['m15']) + timedelta(days=i)
                for i in range(args.days + WARMUP_DAYS['m15'])]
+    m1_days = [d for d in m1_days if weekends or d.weekday() != 5]
     context_months = [m for m in months(start - timedelta(days=WARMUP_DAYS['w1']), end)
                       if epoch(m) < epoch(m1_days[0])]
 
     jobs = [(minute_bars, d) for d in m1_days] + [(hour_bars, m) for m in context_months]
-    done = 0
+    done, failed = 0, []
 
     def run(job):
         nonlocal done
-        result = job[0](symbol, job[1], scale)
+        try:
+            result = job[0](symbol, job[1], scale, args.spread)
+        except Refused as error:
+            failed.append(str(error))
+            result = []
         done += 1
-        if done % 25 == 0 or done == len(jobs):
-            print(f'\r  {done}/{len(jobs)} files', end='', file=sys.stderr, flush=True)
+        print(f'\r  {done}/{len(jobs)} days/months, {len(failed)} refused', end='', file=sys.stderr, flush=True)
         return result
 
     print(f'{symbol}: {len(m1_days)} days of M1 + {len(context_months)} months of H1 from Dukascopy', file=sys.stderr)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = list(pool.map(run, jobs))
     print(file=sys.stderr)
+    if failed:
+        raise SystemExit(f'{len(failed)} files refused by Dukascopy (first: {failed[0]}). Nothing written; '
+                         'rerun the same command - the other files are cached, only these get fetched again.')
 
     minute = [b for r in results[:len(m1_days)] for b in r]
     if not minute:
