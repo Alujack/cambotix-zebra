@@ -130,11 +130,20 @@ def qualifies(row: pd.Series, cfg: dict, direction: str) -> bool:
 
 
 # -- market data --------------------------------------------------------------
+class NoFreshBars(Exception):
+    """No recent closed bar: market closed (weekend, holiday, daily break) or the feed stalled. Wait, don't exit."""
+
+
 def bars(symbol: str, attempts: int = 8, count: int = BARS) -> pd.DataFrame:
-    """MT5 serves stale history for a few seconds after a cold terminal launch."""
+    """MT5 serves stale history for a few seconds after a cold terminal launch, while ticks are already current.
+    Without recent ticks the market is closed or the feed is down, so retrying now cannot help."""
     if not mt5.initialize():
         raise SystemExit(f'MT5 initialize failed: {mt5.last_error()}')
     mt5.symbol_select(symbol, True)
+    tick = mt5.symbol_info_tick(symbol)
+    tick_age = time.time() - tick.time if tick is not None and tick.time else float('inf')
+    if tick_age > 2 * TF_SECONDS:
+        raise NoFreshBars(f'no ticks for {tick_age / 3600:.1f}h: market closed or the feed is stalled')
     for attempt in range(attempts):
         rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, count)
         if rates is not None and len(rates) >= 250:
@@ -144,7 +153,7 @@ def bars(symbol: str, attempts: int = 8, count: int = BARS) -> pd.DataFrame:
                 return df
             print(f'  warmup {attempt + 1}/{attempts}: history {age / 3600:.1f}h stale, resyncing')
         time.sleep(3)
-    raise SystemExit('MT5 returned stale or empty history; open the terminal and check it is connected')
+    raise NoFreshBars('ticks are current but MT5 history stays stale; check the terminal is connected')
 
 
 def crt_config(settings: dict, crypto: bool) -> CrtConfig:
@@ -242,7 +251,12 @@ def push_candles(cfg: dict, state: dict) -> None:
 
 
 def scan(cfg: dict, dry_run: bool) -> None:
-    df = indicators(bars(cfg['mt5_symbol']), cfg['swing_bars'])
+    try:
+        raw = bars(cfg['mt5_symbol'])
+    except NoFreshBars as reason:
+        print(f'{dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC  no fresh bars ({reason}); next check at the next 15m close')
+        return
+    df = indicators(raw, cfg['swing_bars'])
     closed, previous = df.iloc[-2], df.iloc[-3]      # -1 is the still-forming bar
     close_epoch = int(closed['time']) + TF_SECONDS
     stamp = dt.datetime.fromtimestamp(close_epoch, dt.timezone.utc)
