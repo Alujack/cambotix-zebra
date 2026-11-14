@@ -384,8 +384,61 @@ def news_line(signal: Signal) -> str:
 AI_STAGE_CODES = {'ai_quality_gate_rejected', 'expired_during_analysis', 'ai_unavailable_or_invalid'}
 
 
+def message_style() -> str:
+    """compact (default): a short phone-readable alert. detailed: every rule reading and the AI commentary."""
+    return 'detailed' if os.getenv('MESSAGE_STYLE', 'compact').strip().lower() == 'detailed' else 'compact'
+
+
+def plain_reason(signal: Signal) -> str:
+    """One sentence a person can read on a phone: why this setup exists."""
+    buy = signal.signal == 'BUY_SETUP'
+    if signal.model == 'crt':
+        side, other = ('low', 'high') if buy else ('high', 'low')
+        verb = 'dipped below' if buy else 'pushed above'
+        return (f'price {verb} the previous {signal.timeframe} range {side} ({signal.sweep_level:g}) and closed back inside. '
+                f'Aiming for the range {other}.')
+    trend = 'Uptrend' if buy else 'Downtrend'
+    return (f'{trend}: price {"above" if buy else "below"} EMA20, EMA50 and EMA200, '
+            f'RSI {signal.rsi:.0f}, ADX {signal.adx:.0f} (trend strength).')
+
+
+def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: int | None,
+                 warnings: list[str] | None) -> str:
+    buy = signal.signal == 'BUY_SETUP'
+    decimals = 2 if signal.price >= 100 else 5
+    tag = 'CRT' if signal.model == 'crt' else 'Classic'
+    structural = not [code for code in reasons if code not in AI_STAGE_CODES]
+    lines = ['🧪 TEST SIGNAL (made-up prices)'] if synthetic(signal.event_id) else []
+    head = f'{"🟢 BUY" if buy else "🔴 SELL"} {signal.symbol} · {tag} {signal.timeframe}'
+    if status != 'approved':
+        head += '  ❌ NOT A TRADE'
+    lines += [head, '']
+    if structural:
+        plan = trade_plan(signal)
+        lines += [f'▶️ Entry:  {plan["entry"]:.{decimals}f}',
+                  f'🛑 Stop:   {plan["stop"]:.{decimals}f}  (risk {plan["risk"]:.{decimals}f})']
+        for index, (multiple, level, _) in enumerate(plan['targets'], 1):
+            label = 'Target' if len(plan['targets']) == 1 else f'TP{index}'
+            lines.append(f'🎯 {label}: {level:.{decimals}f}  (+{multiple:g}R)')
+        sizing = position_size(signal, plan['risk'])
+        if sizing:
+            lines.append(f'💰 Size:   {sizing["lots"]:.2f} lots ({sizing["percent"]:g}% risk = {sizing["money"]:.2f})')
+        lines.append('')
+    lines.append('Why: ' + plain_reason(signal))
+    lines += ['⚠️ ' + item for item in warnings or []]
+    if reasons:
+        lines.append('Not valid: ' + ', '.join(code.replace('_', ' ') for code in reasons))
+    news = news_status(signal.bar_time)
+    lines.append({'blocked': f'📰 News: BLOCKED ({news["detail"]})', 'clear': '📰 News: clear'}.get(news['state'], '📰 News: not checked'))
+    footer = f'Ledger #{ledger_seq} · ' if ledger_seq is not None else ''
+    lines += ['', footer + ('Manual review. No order placed.' if status == 'approved' else 'No action.')]
+    return '\n'.join(lines)[:4000]
+
+
 def notification_text(signal: Signal, status: str, analysis: dict | None, reasons: list[str],
                       ledger_seq: int | None = None, warnings: list[str] | None = None) -> str:
+    if message_style() == 'compact':
+        return compact_text(signal, status, reasons, ledger_seq, warnings)
     buy = signal.signal == 'BUY_SETUP'
     direction = 'BUY' if buy else 'SELL'
     decimals = 2 if signal.price >= 100 else 5

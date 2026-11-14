@@ -11,6 +11,7 @@ from app.news import news_status
 @pytest.fixture(autouse=True)
 def offline_news(monkeypatch):
     monkeypatch.setenv('NEWS_FILTER', 'false')
+    monkeypatch.setenv('MESSAGE_STYLE', 'detailed')      # most tests read the full breakdown; compact has its own tests
 
 
 def candidate(**changes):
@@ -353,3 +354,27 @@ def test_cautions_appear_in_the_message():
     message = notification_text(candidate(), 'approved', None, [], warnings=['Weak trend: ADX 21'])
     assert 'CAUTIONS (the setup is still valid):\n⚠️ Weak trend: ADX 21' in message
     assert message.index('CAUTIONS') < message.index('WHY (rules):')
+
+
+def test_compact_message_is_short_and_readable(monkeypatch):
+    monkeypatch.setenv('MESSAGE_STYLE', 'compact')
+    message = notification_text(crt(), 'approved', analysis().model_dump(), [], ledger_seq=3)
+    assert message.splitlines()[0] == '🟢 BUY XAUUSD · CRT 4h'
+    for text in ('▶️ Entry:  3506.00', '🛑 Stop:   3493.40  (risk 12.60)', '🎯 Target: 3540.00  (+2.7R)',
+                 'Why: price dipped below the previous 4h range low (3494) and closed back inside. Aiming for the range high.',
+                 '📰 News: not checked', 'Ledger #3 · Manual review. No order placed.'):
+        assert text in message
+    assert 'AI' not in message and 'WHY (rules)' not in message and len(message.splitlines()) <= 10
+
+
+def test_compact_message_variants(monkeypatch):
+    monkeypatch.setenv('MESSAGE_STYLE', 'compact')
+    monkeypatch.setenv('TP_R_MULTIPLES', '1,2')
+    classic = notification_text(candidate(), 'approved', None, [], warnings=['Weak trend: ADX 21'])
+    assert '🎯 TP1:' in classic and '🎯 TP2:' in classic and '⚠️ Weak trend: ADX 21' in classic
+    assert 'Why: Uptrend: price above EMA20, EMA50 and EMA200, RSI 58, ADX 29' in classic
+    rejected = notification_text(crt_sell(event_id='DEMO-SYNTHETIC-x'), 'rejected', None, ['target_too_close'])
+    assert rejected.startswith('🧪 TEST SIGNAL (made-up prices)\n🔴 SELL XAUUSD · CRT 4h  ❌ NOT A TRADE')
+    assert 'Entry' not in rejected and 'Not valid: target too close' in rejected and rejected.endswith('No action.')
+    monkeypatch.setenv('ACCOUNT_SIZE', '10000')
+    assert '💰 Size:   0.04 lots (0.5% risk = 50.00)' in notification_text(crt(), 'approved', None, [])

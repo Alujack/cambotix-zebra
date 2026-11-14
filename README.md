@@ -176,6 +176,7 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 
 | Setting | Default | Purpose |
 |---|---|---|
+| `MESSAGE_STYLE` | compact | Telegram alert layout: `compact` (entry, stop, target, one-line reason) or `detailed` (every rule reading and the AI note) |
 | `GATE_MODE` | rules | `rules`: the technical rules decide and the model only comments; `ai`: the model must also approve |
 | `AI_COMMENTARY` | true | Run optional model commentary in `rules` mode; failures and latency never reject the signal |
 | `MIN_CONFIDENCE` | 75 | Subjective AI score threshold, not win probability (`GATE_MODE=ai` only) |

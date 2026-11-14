@@ -21,6 +21,7 @@ def isolated_database(monkeypatch):
     monkeypatch.setenv('NEWS_FILTER', 'false')
     monkeypatch.setenv('DIGEST_HOUR', '24')
     monkeypatch.delenv('GATE_MODE', raising=False)
+    monkeypatch.setenv('MESSAGE_STYLE', 'detailed')
     # Plan geometry the assertions below are written for, independent of the local .env.
     monkeypatch.setenv('TP_R_MULTIPLES', '1,2,3,4')
     monkeypatch.setenv('STOP_ATR_MULTIPLE', '1.5')
