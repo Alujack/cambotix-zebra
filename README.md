@@ -79,7 +79,7 @@ The stack runs unchanged on Windows through WSL2; every pinned image is multi-ar
    powercfg /setactive SCHEME_CURRENT
    ```
 
-   Docker Desktop only runs inside a signed-in session, so either configure automatic sign-in (`netplwiz` or Sysinternals Autologon) and protect the disk with BitLocker, or run Docker Engine inside WSL2 with systemd and a boot-time scheduled task instead of Docker Desktop. Set Windows Update active hours so restarts fall outside the London and New York sessions. Containers return on their own (`restart: unless-stopped`); the Ollama app and the tunnel service below start with Windows.
+   Docker Desktop only runs inside a signed-in session, so either configure automatic sign-in (`netplwiz` or Sysinternals Autologon) and protect the disk with BitLocker, or run Docker Engine inside WSL2 with systemd and a boot-time scheduled task instead of Docker Desktop. Set Windows Update active hours so restarts fall outside the London and New York sessions. Containers return on their own (`restart: unless-stopped`); the Ollama app and the tunnel service below start with Windows. Run `scripts\install_autostart.ps1` once (see [MetaTrader 5 feeder](#metatrader-5-feeder)) so the feeder, and Docker Desktop with it, also come back after every sign-in with nothing to run by hand.
 5. Install the tunnel as a Windows service so it survives reboots without a shell: a named Cloudflare Tunnel (`cloudflared service install <token>`) or `ngrok service install`, both pointing at `http://localhost:8787`. Docker Desktop publishes the loopback ports on the Windows side, so a Windows service reaches the gateway at that address. Set `PUBLIC_WEBHOOK_URL` and rerun `bash scripts/start.sh`.
 6. From an earlier `.env`, copy only `TELEGRAM_*`, `SYMBOLS`, and rule settings. Let `scripts/setup.py` generate fresh secrets and a new webhook path, create the n8n owner account, then create the TradingView alert with the URL in `.local/webhook-url.txt`.
 
@@ -218,6 +218,15 @@ cd \\wsl.localhost\Ubuntu\home\<you>\cambotix-zebra
 py scripts\mt5_feeder.py --symbol XAUUSDc --once --dry-run   # check readings, send nothing
 py scripts\mt5_feeder.py --symbol XAUUSDc                    # watch: candles every minute, setups every 15m
 ```
+
+To leave it running unattended, install it once as a sign-in task instead of keeping a window open:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1                # add -Symbol XAUUSDm, -Vps; -Uninstall removes it
+Get-Content .local\feeder.log -Tail 30 -Wait                                          # what it is doing
+```
+
+The task "Cambotix Zebra Feeder" runs `scripts\feeder_service.ps1` hidden 30 seconds after you sign in. It starts Docker Desktop if it is not running, waits for the analyzer, runs the feeder (MT5 launches the saved terminal itself), and restarts it 30 seconds after any exit. Task Scheduler also restarts the service if PowerShell dies. Output goes to `.local\feeder.log` (rotated at 10 MB). Close any feeder you started by hand first; reinstalling stops old feeders. With `-Vps` it runs `scripts\vps_feeder.ps1` instead.
 
 Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. Two known differences from the TradingView chart: Daily, 4H and Weekly bars follow the broker's day and week boundaries rather than the exchange's, and a pivot requires a strict extreme (equal highs or lows are not a swing), where Pine's tie handling is undocumented. `tests/test_smc_engine.py` drives the engine through a hand-built sweep → MSS → FVG → retest → confirmed-close scenario and checks that the emitted payload passes the analyzer's own SMC rules.
 

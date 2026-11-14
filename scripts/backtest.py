@@ -9,7 +9,8 @@ statistics are app.grader.summarize. Settings come from the environment (.env), 
 Not reproduced: the news blackout (no historical calendar) and the live feeder's 1500-bar SMC replay window
 (the engine runs once over the whole history instead).
 
-Data: .local/history/<SYMBOL>_{m1,m15,h4,d1,w1}.csv from scripts/pull_history.py.
+Data: .local/history/<SYMBOL>_{m1,m15,h4,d1,w1}.csv from scripts/pull_history.py (MT5, Windows) or
+scripts/pull_dukascopy.py (no MT5, runs on the Mac).
 Run in the analyzer image, which has the app's dependencies and reads .env:
   docker compose run --rm --no-deps -v "$PWD:/work" -w /work analyzer python scripts/backtest.py
 """
@@ -42,7 +43,8 @@ SWING_BARS = 10
 def load(folder: Path, symbol: str, frame: str) -> list[dict]:
     path = folder / f'{symbol}_{frame}.csv'
     if not path.exists():
-        raise SystemExit(f'missing {path}: run `py -3.13 scripts/pull_history.py` with MT5 logged in')
+        raise SystemExit(f'missing {path}: run `python3 scripts/pull_dukascopy.py --symbol {symbol}` (any OS), '
+                         'or `py -3.13 scripts/pull_history.py` on Windows with MT5 logged in')
     with path.open() as handle:
         return [{'t': int(r['t']), 'o': float(r['o']), 'h': float(r['h']), 'l': float(r['l']), 'c': float(r['c']),
                  'spread': float(r.get('spread') or 0)} for r in csv.DictReader(handle)]
