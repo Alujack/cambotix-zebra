@@ -30,7 +30,8 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT), str(ROOT / 'scripts')]
 
-from smc_engine import Config, Engine  # noqa: E402
+from smc_engine import Config, Engine, config_for  # noqa: E402
+import crt_engine  # noqa: E402
 from app.domain import Signal, classic_rules, smc_rules  # noqa: E402
 from app.grader import simulate, summarize  # noqa: E402
 from app import ledger  # noqa: E402
@@ -157,53 +158,88 @@ class FastEngine(Engine):
         return k if k >= 0 else None
 
 
+def smc_bar_seconds() -> int:
+    return {'15m': 900, '5m': 300}[os.getenv('SMC_TIMEFRAME', '15m').strip()]
+
+
 def smc_config(tick: float) -> Config:
     truthy = lambda key, default: os.getenv(key, default).strip().lower() == 'true'
-    return Config(killzones=tuple(k.strip() for k in os.getenv('KILLZONES', 'London,NY AM').split(',') if k.strip()),
+    return config_for(smc_bar_seconds(),
+                  killzones=tuple(k.strip() for k in os.getenv('KILLZONES', 'London,NY AM').split(',') if k.strip()),
                   require_htf=truthy('REQUIRE_HTF_BIAS', 'true'), require_discount=truthy('REQUIRE_DISCOUNT', 'true'),
                   min_rr=float(os.getenv('MIN_RR', '1.5')), min_score=int(os.getenv('MIN_SMC_SCORE', '70')),
                   min_atr_pct=float(os.getenv('MIN_ATR_PERCENT', '0.02')),
-                  max_atr_pct=float(os.getenv('MAX_ATR_PERCENT', '0.5')), tick=tick)
+                  max_atr_pct=float(os.getenv('MAX_ATR_PERCENT', '0.5')), tick=tick,
+                  entry_mode=os.getenv('SMC_ENTRY_MODE', 'confirmed_close').strip(),
+                  fvg_window=int(os.getenv('SMC_FVG_WINDOW', '1')), disp_atr=float(os.getenv('SMC_DISP_ATR', '1.0')),
+                  limit_expiry_bars=max(1, int(os.getenv('ENTRY_EXPIRY_MINUTES', '120')) * 60 // smc_bar_seconds()))
 
 
 def smc_payloads(symbol: str, data: dict, tick: float) -> list[dict]:
     strip = lambda series: [{k: b[k] for k in 'tohlc'} for b in series]
-    return FastEngine(symbol, smc_config(tick)).run(strip(data['m15']), strip(data['d1']), strip(data['h4']),
+    base = data['m5'] if smc_bar_seconds() == 300 else data['m15']
+    return FastEngine(symbol, smc_config(tick)).run(strip(base), strip(data['d1']), strip(data['h4']),
                                                     strip(data['w1']))
 
 
+# -- CRT ---------------------------------------------------------------------------------------------
+def crt_config() -> crt_engine.CrtConfig:
+    keys = os.getenv('CRT_KEY_TIMES', '').strip()
+    return crt_engine.CrtConfig(htf_hours=int(os.getenv('CRT_HTF_HOURS', '4')),
+                                key_times=tuple(int(k) for k in keys.split(',') if k.strip()) if keys and keys != 'all' else (),
+                                entry=os.getenv('CRT_ENTRY', 'close').strip(), target=os.getenv('CRT_TARGET', 'opposite').strip(),
+                                min_rr=float(os.getenv('CRT_MIN_RR', '1.0')),
+                                stop_buffer_atr=float(os.getenv('CRT_STOP_BUFFER_ATR', '0.1')),
+                                max_hold_candles=int(os.getenv('CRT_MAX_HOLD_CANDLES', '3')))
+
+
+def crt_plans(symbol: str, data: dict) -> list[dict]:
+    exempt = {s.strip().upper() for s in os.getenv('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if s.strip()}
+    cfg = crt_config()
+    cfg.crypto = symbol in exempt
+    return crt_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in data['m15']], cfg)
+
+
 # -- publish + grade ---------------------------------------------------------------------------------
-def grade(payloads: list[dict], m1: list[dict]) -> tuple[list[dict], dict]:
-    """Apply the analyzer's rules and open-plan limit in time order; grade each published plan."""
+def grade(payloads: list[dict], m1: list[dict], plans: list[dict] = ()) -> tuple[list[dict], dict]:
+    """Apply the analyzer's rules and open-plan limit in time order; grade each published plan.
+    `plans` are already-frozen plans (CRT) that skip the payload rules."""
     times = [c['t'] for c in m1]
     end = m1[-1]['t'] + MINUTE if m1 else 0
     limit = int(os.getenv('MAX_OPEN_SAME_DIRECTION', '1'))
     open_until: list[tuple[str, int]] = []
     trades, rejected = [], {}
-    for body in sorted(payloads, key=lambda p: (p['bar_time'], p['model'], p['signal'])):
-        signal = Signal.model_validate(body)
-        reasons = smc_rules(signal) if signal.model == 'smc' else classic_rules(signal)
-        direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
-        if not reasons and limit > 0 and sum(1 for d, until in open_until if d == direction and until > signal.bar_time) >= limit:
+    items = [(p['bar_time'], p['model'], p['signal'], p, None) for p in payloads]
+    items += [(p['bar_time'], p['model'], p['direction'], None, p) for p in plans]
+    for _, _, _, body, frozen in sorted(items, key=lambda item: item[:3]):
+        if frozen is None:
+            signal = Signal.model_validate(body)
+            reasons = smc_rules(signal) if signal.model == 'smc' else classic_rules(signal)
+            direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
+            bar_time, opened_at = signal.bar_time, signal.bar_time - signal.bar_seconds
+        else:
+            reasons, direction = [], frozen['direction']
+            bar_time, opened_at = frozen['bar_time'], frozen['c2_start']
+        if not reasons and limit > 0 and sum(1 for d, until in open_until if d == direction and until > bar_time) >= limit:
             reasons = ['open_plan_same_direction']
         if reasons:
             for r in reasons:
                 rejected[r] = rejected.get(r, 0) + 1
             continue
-        plan = ledger.plan_record(signal, signal.bar_time)
-        horizon = signal.bar_time + MINUTE * (plan['entry_expiry_minutes'] + plan['max_hold_minutes'] + 1)
+        plan = frozen or ledger.plan_record(signal, signal.bar_time)
+        horizon = bar_time + MINUTE * (plan['entry_expiry_minutes'] + plan['max_hold_minutes'] + 1)
         if horizon > end:
             break                                        # history ends before this plan could finish
-        lo, hi = bisect.bisect_left(times, signal.bar_time), bisect.bisect_left(times, horizon)
+        lo, hi = bisect.bisect_left(times, bar_time), bisect.bisect_left(times, horizon)
         events = simulate(plan, m1[lo:hi], horizon)
         last = events[-1] if events else None
         open_until.append((direction, last['time'] if last and last['kind'] in ('closed', 'not_filled') else horizon))
         if last and last['kind'] == 'closed':
-            ny = datetime.fromtimestamp(signal.bar_time - M15, timezone.utc).astimezone(ZoneInfo('America/New_York'))
+            ny = datetime.fromtimestamp(opened_at, timezone.utc).astimezone(ZoneInfo('America/New_York'))
             trades.append({**last, 'seq': len(trades), 'model': plan['model'], 'direction': direction,
-                           'session': plan['session'], 'published_at': signal.bar_time, 'entry': plan['entry'],
+                           'session': plan['session'], 'published_at': bar_time, 'entry': plan['entry'],
                            'stop': plan['stop'], 'tp1_r': plan['targets'][0][0], 'ny_hour': ny.hour,
-                           'month': datetime.fromtimestamp(signal.bar_time, timezone.utc).strftime('%Y-%m')})
+                           'month': datetime.fromtimestamp(bar_time, timezone.utc).strftime('%Y-%m')})
         else:
             key = 'not_filled:' + (last['reason'] if last and last['kind'] == 'not_filled' else 'unresolved')
             rejected[key] = rejected.get(key, 0) + 1
@@ -235,7 +271,8 @@ def run(data: dict, symbol: str, tick: float, models: set[str]) -> tuple[list[di
         payloads += classic_payloads(symbol, classic_indicators(data['m15']))
     if 'smc' in models:
         payloads += smc_payloads(symbol, data, tick)
-    return grade(payloads, data['m1'])
+    plans = crt_plans(symbol, data) if 'crt' in models else []
+    return grade(payloads, data['m1'], plans)
 
 
 def report(trades: list[dict], rejected: dict, split: int | None) -> None:
@@ -268,7 +305,8 @@ def main() -> None:
         key, _, value = item.partition('=')
         os.environ[key.strip()] = value.strip()
     folder = Path(args.data)
-    data = {frame: load(folder, args.symbol, frame) for frame in ('m1', 'm15', 'h4', 'd1', 'w1')}
+    frames = ('m1', 'm15', 'h4', 'd1', 'w1') + (('m5',) if (folder / f'{args.symbol}_m5.csv').exists() else ())
+    data = {frame: load(folder, args.symbol, frame) for frame in frames}
     meta_path = folder / f'{args.symbol}_meta.json'
     tick = json.loads(meta_path.read_text()).get('point', 0.01) if meta_path.exists() else 0.01
     models = {m.strip() for m in args.models.split(',') if m.strip()}
@@ -280,7 +318,8 @@ def main() -> None:
     if not args.sweep:
         print('settings: ' + ', '.join(f'{k}={os.getenv(k)}' for k in ('TP_R_MULTIPLES', 'MIN_RR', 'STOP_ATR_MULTIPLE',
                                                                          'MIN_ADX', 'KILLZONES', 'REQUIRE_HTF_BIAS',
-                                                                         'REQUIRE_DISCOUNT', 'MIN_SMC_SCORE')))
+                                                                         'REQUIRE_DISCOUNT', 'MIN_SMC_SCORE', 'CRT_HTF_HOURS',
+                                                                         'CRT_KEY_TIMES', 'CRT_ENTRY', 'CRT_TARGET', 'CRT_MIN_RR')))
         trades, rejected = run(data, args.symbol, tick, models)
         report(trades, rejected, split)
         if args.trades:

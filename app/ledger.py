@@ -12,7 +12,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from app.domain import Signal, session_label, trade_plan
+from app.domain import TIMEFRAME_SECONDS, Signal, session_label, trade_plan
 from app.grader import summarize
 
 GENESIS = '0' * 64
@@ -114,7 +114,7 @@ def plan_record(signal: Signal, published_at: int, warnings: list[str] | None = 
     plan = trade_plan(signal)
     session_time = signal.setup_bar_time if signal.model == 'smc' and signal.setup_bar_time else signal.bar_time
     return {'symbol': signal.symbol, 'model': signal.model, 'timeframe': signal.timeframe,
-            'session': session_label(signal.symbol, signal.model, session_time), 'cautions': warnings or [],
+            'session': session_label(signal.symbol, signal.model, session_time, signal.bar_seconds), 'cautions': warnings or [],
             'direction': 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL', 'bar_time': signal.bar_time,
             'setup_bar_time': signal.setup_bar_time,
             'published_at': published_at,
@@ -153,7 +153,7 @@ def open_count(conn, symbol: str, direction: str, now: float) -> int:
 
 def trade_view(closed: dict, plan: dict) -> dict:
     return {**closed, 'symbol': plan['symbol'], 'model': plan['model'], 'direction': plan['direction'],
-            'session': plan.get('session') or session_label(plan['symbol'], plan['model'], plan['bar_time']),
+            'session': plan.get('session') or session_label(plan['symbol'], plan['model'], plan['bar_time'], TIMEFRAME_SECONDS.get(plan.get('timeframe'), 900)),
             'cautioned': bool(plan.get('cautions'))}
 
 
@@ -181,7 +181,7 @@ def history_cautions(conn, signal: Signal, now: float | None = None) -> list[str
     need, days = int(os.getenv('HISTORY_MIN_SAMPLES', '30')), int(os.getenv('HISTORY_DAYS', '60'))
     direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
     session_time = signal.setup_bar_time if signal.model == 'smc' and signal.setup_bar_time else signal.bar_time
-    label = session_label(signal.symbol, signal.model, session_time)
+    label = session_label(signal.symbol, signal.model, session_time, signal.bar_seconds)
     since = (time.time() if now is None else now) - days * 86400
     same = [item for item in closed_trades(conn, since) if item['symbol'] == signal.symbol
             and item['direction'] == direction and item['model'] == signal.model and item['session'] == label]

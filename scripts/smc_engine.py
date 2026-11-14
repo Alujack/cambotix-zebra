@@ -48,6 +48,22 @@ class Config:
     weights: dict = field(default_factory=lambda: {'htf': 20, 'sweep': 20, 'mss': 20, 'fvg': 15, 'zone': 10, 'kz': 10, 'ob': 5})
     min_score: int = 70
     tick: float = 0.01
+    # Looser variants; the defaults reproduce the original strict model.
+    entry_mode: str = 'confirmed_close'  # 'limit': post a limit at the FVG midpoint as soon as the plan forms
+    fvg_window: int = 1                  # bars after the MSS candle in which the entry FVG may form
+    limit_expiry_bars: int = 8           # limit mode: the engine stops waiting for a fill (ENTRY_EXPIRY_MINUTES / bar)
+    bar_seconds: int = 900               # 900 = 15m, 300 = 5m; build 5m configs with config_for()
+
+
+BAR_COUNT_FIELDS = ('range_bars', 'wait_bars', 'track_bars', 'outcome_bars', 'ob_lookback')
+
+
+def config_for(bar_seconds: int = M15, **overrides) -> Config:
+    """Config for a bar length. Bar-count defaults are tuned on 15m; scale them so a 5m engine looks back over the
+    same clock time (24h range, 3h sweep->MSS wait, ...). pivot_len stays in bars: lower timeframes see smaller swings."""
+    scale = M15 // bar_seconds
+    scaled = {name: getattr(Config, name) * scale for name in BAR_COUNT_FIELDS}
+    return Config(**{**scaled, 'bar_seconds': bar_seconds, **overrides})
 
 
 @dataclass
@@ -189,7 +205,7 @@ class Engine:
         c, bars = self.cfg, self.bars
         bar = bars[i]
         atr = self.atr[i]
-        stamp, close_time = bar['t'], bar['t'] + M15
+        stamp, close_time = bar['t'], bar['t'] + c.bar_seconds
         local = ny(stamp)
         minute = local.hour * 60 + local.minute
         weekday_ok = c.crypto or local.weekday() < 5
@@ -268,9 +284,9 @@ class Engine:
 
         data_ready = i >= c.range_bars
         if data_ready:
-            if self.long_state and (i - self.long_sweep_bar > c.wait_bars + (1 if self.long_state == 2 else 0) or bar['l'] < self.long_sweep):
+            if self.long_state and (i - self.long_sweep_bar > c.wait_bars + (c.fvg_window if self.long_state == 2 else 0) or bar['l'] < self.long_sweep):
                 self.long_state = 0
-            if self.short_state and (i - self.short_sweep_bar > c.wait_bars + (1 if self.short_state == 2 else 0) or bar['h'] > self.short_sweep):
+            if self.short_state and (i - self.short_sweep_bar > c.wait_bars + (c.fvg_window if self.short_state == 2 else 0) or bar['h'] > self.short_sweep):
                 self.short_state = 0
             if swept_low and swept_high:
                 self.long_state = self.short_state = 0
@@ -291,8 +307,8 @@ class Engine:
         ob_short = self._last_opposing(i, False, self.short_sweep_bar)
         ce_long = round_tick((bar['l'] + two_back['h']) / 2, c.tick) if two_back else None
         ce_short = round_tick((bar['h'] + two_back['l']) / 2, c.tick) if two_back else None
-        candidate_long = self.long_state == 2 and self.long_shift_bar == i - 1 and bull_fvg and bar['c'] > self.long_mss
-        candidate_short = self.short_state == 2 and self.short_shift_bar == i - 1 and bear_fvg and bar['c'] < self.short_mss
+        candidate_long = self.long_state == 2 and i - c.fvg_window <= self.long_shift_bar < i and bull_fvg and bar['c'] > self.long_mss
+        candidate_short = self.short_state == 2 and i - c.fvg_window <= self.short_shift_bar < i and bear_fvg and bar['c'] < self.short_mss
 
         def score(is_buy: bool, shifted: bool, armed: bool, location_ok: bool, ob_ok: bool) -> int:
             w = c.weights
@@ -315,7 +331,13 @@ class Engine:
 
         # Pending plan: expiry before retest, invalidation before entry.
         plan = self.plan
-        if plan and plan.state == 1 and i > plan.created:
+        if plan and plan.state == 1 and i > plan.created and c.entry_mode == 'limit':
+            if bar['l'] <= plan.midpoint <= bar['h']:
+                plan.state, plan.entry, plan.entered = 2, plan.midpoint, i
+                plan.message = ('BUY' if plan.direction == 1 else 'SELL') + ' limit filled at FVG midpoint'
+            elif i - plan.created > c.limit_expiry_bars:
+                plan.state, plan.message = 3, 'EXPIRED - limit not filled'
+        elif plan and plan.state == 1 and i > plan.created:
             bullish = plan.direction == 1
             bias_lost = c.require_htf and htf_bias != plan.direction
             stop_touched = bar['l'] <= plan.stop if bullish else bar['h'] >= plan.stop
@@ -369,6 +391,11 @@ class Engine:
                     self.plan = Plan(1, 1, i, close_time, ce_long, stop, target, bar['l'], two_back['h'], range_high_ext,
                                      self.long_sweep, self.long_sweep, self.long_mss, *(ob_long or (None, None)), sc,
                                      target_name, self.long_swept)
+                    if c.entry_mode == 'limit':
+                        self.plan.entry = self.plan.midpoint
+                        self.plan.message = 'LIMIT posted at FVG midpoint'
+                        self.emitted.append(self._payload('BUY_SETUP', self.plan, bar, close_time, atr, htf_bias, daily_bias,
+                                                          h4_bias, pdh, pdl, pwh, pwl, kz_name, samples))
             elif candidate_short:
                 stop = round_tick(self.short_sweep + c.stop_buffer * atr, c.tick, 'ceil')
                 target, target_name = self._pick_target(False, ce_short, stop - ce_short, bar['l'])
@@ -381,11 +408,16 @@ class Engine:
                     self.plan = Plan(-1, 1, i, close_time, ce_short, stop, target, two_back['l'], bar['h'], self.short_sweep,
                                      range_low_ext, self.short_sweep, self.short_mss, *(ob_short or (None, None)), sc,
                                      target_name, self.short_swept)
+                    if c.entry_mode == 'limit':
+                        self.plan.entry = self.plan.midpoint
+                        self.plan.message = 'LIMIT posted at FVG midpoint'
+                        self.emitted.append(self._payload('SELL_SETUP', self.plan, bar, close_time, atr, htf_bias, daily_bias,
+                                                          h4_bias, pdh, pdl, pwh, pwl, kz_name, samples))
 
         # A gap must belong to the actual MSS candle, not an unrelated later displacement.
-        if self.long_state == 2 and i > self.long_shift_bar:
+        if self.long_state == 2 and i >= self.long_shift_bar + c.fvg_window:
             self.long_state = 0
-        if self.short_state == 2 and i > self.short_shift_bar:
+        if self.short_state == 2 and i >= self.short_shift_bar + c.fvg_window:
             self.short_state = 0
         self.status = (f'bias D{daily_bias:+d}/4H{h4_bias:+d} kz={kz_name} long={self.long_state} short={self.short_state} '
                        f'plan={self.plan.message if self.plan else "none"} atr%={atr_pct:.3f}')
@@ -417,9 +449,12 @@ class Engine:
     def _payload(self, direction, plan, bar, close_time, atr, htf_bias, daily_bias, h4_bias, pdh, pdl, pwh, pwl, kz_name, samples):
         def num(value):
             return None if value is None else round(float(value), 8)
-        return {'event_id': f'{self.symbol}-15m-smc-{close_time}-{direction}', 'symbol': self.symbol, 'timeframe': '15m',
+        tf = '5m' if self.cfg.bar_seconds == 300 else '15m'
+        return {'event_id': f'{self.symbol}-{tf}-smc-{close_time}-{direction}', 'symbol': self.symbol, 'timeframe': tf,
                 'bar_time': close_time, 'signal': direction, 'model': 'smc', 'price': num(bar['c']), 'atr': num(atr),
-                'entry_mode': 'confirmed_close', 'setup_entry': num(plan.midpoint), 'setup_bar_time': plan.formation_time,
+                'entry_mode': self.cfg.entry_mode,
+                'setup_entry': num(plan.midpoint) if self.cfg.entry_mode == 'confirmed_close' else None,
+                'setup_bar_time': plan.formation_time if self.cfg.entry_mode == 'confirmed_close' else None,
                 'htf_bias': htf_bias, 'daily_bias': daily_bias, 'h4_bias': h4_bias, 'sweep_level': num(plan.sweep),
                 'swept_name': plan.swept_name, 'mss_level': num(plan.mss), 'fvg_top': num(plan.top), 'fvg_bottom': num(plan.bottom),
                 'ob_top': num(plan.ob_top), 'ob_bottom': num(plan.ob_bottom), 'range_high': num(plan.range_high),

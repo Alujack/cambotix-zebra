@@ -166,7 +166,10 @@ def smc_config(settings: dict, crypto: bool, tick: float) -> Config:
                   require_htf=truthy('REQUIRE_HTF_BIAS', 'true'), require_discount=truthy('REQUIRE_DISCOUNT', 'true'),
                   min_rr=float(settings.get('MIN_RR', 1.5)), min_score=int(settings.get('MIN_SMC_SCORE', 70)),
                   min_atr_pct=float(settings.get('MIN_ATR_PERCENT', 0.02)), max_atr_pct=float(settings.get('MAX_ATR_PERCENT', 0.5)),
-                  crypto=crypto, tick=tick)
+                  crypto=crypto, tick=tick,
+                  entry_mode=settings.get('SMC_ENTRY_MODE', 'confirmed_close').strip(),
+                  fvg_window=int(settings.get('SMC_FVG_WINDOW', 1)), disp_atr=float(settings.get('SMC_DISP_ATR', 1.0)),
+                  limit_expiry_bars=max(1, int(settings.get('ENTRY_EXPIRY_MINUTES', 120)) // 15))
 
 
 def scan_smc(cfg: dict, close_epoch: int, dry_run: bool) -> None:

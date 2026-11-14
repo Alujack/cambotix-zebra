@@ -28,13 +28,16 @@ NUMERIC_FIELDS = ('price', 'atr', 'ema20', 'ema50', 'ema200', 'rsi', 'macd_hist'
 NAME_PATTERN = r'^[A-Za-z0-9 _\-/.]*$'
 
 
+TIMEFRAME_SECONDS = {'15m': 900, '5m': 300}
+
+
 class Signal(BaseModel):
     """One setup candidate. `model` selects which field group is mandatory:
     classic = EMA/RSI/MACD/ADX indicator setup; smc = ICT / Smart Money Concepts structure setup."""
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     event_id: str = Field(min_length=1, max_length=180, pattern=r'^[A-Za-z0-9_.:\-]+$')
     symbol: str = Field(min_length=3, max_length=20, pattern=r'^[A-Z0-9]+$')
-    timeframe: Literal['15m']
+    timeframe: Literal['15m', '5m']
     bar_time: int = Field(gt=0, strict=True)
     signal: Literal['BUY_SETUP', 'SELL_SETUP']
     model: Literal['classic', 'smc'] = 'classic'
@@ -97,7 +100,11 @@ class Signal(BaseModel):
     @field_validator('timeframe', mode='before')
     @classmethod
     def normalize_timeframe(cls, value):
-        return {'15': '15m', '15M': '15m'}.get(value, value) if isinstance(value, str) else value
+        return {'15': '15m', '15M': '15m', '5': '5m', '5M': '5m'}.get(value, value) if isinstance(value, str) else value
+
+    @property
+    def bar_seconds(self) -> int:
+        return TIMEFRAME_SECONDS[self.timeframe]
 
     @field_validator(*NUMERIC_FIELDS, mode='before')
     @classmethod
@@ -116,6 +123,8 @@ class Signal(BaseModel):
             # Backward compatibility: historical SMC payloads predate entry_mode
             # and represented a resting limit at the FVG midpoint.
             self.entry_mode = 'limit'
+        if self.model == 'classic' and self.timeframe != '15m':
+            raise ValueError('classic setups are 15m only')
         if self.model == 'classic' and self.entry_mode != 'signal_close':
             raise ValueError('classic setup entry_mode must be signal_close')
         if self.model == 'smc' and self.entry_mode == 'confirmed_close':
@@ -180,7 +189,7 @@ def classic_rules(signal: Signal) -> list[str]:
     reasons = []
     buy = signal.signal == 'BUY_SETUP'
     if (os.getenv('FILTER_SESSIONS', 'true').lower() == 'true' and signal.symbol not in session_exempt_symbols()
-            and not sessions(signal.bar_time - 900)):
+            and not sessions(signal.bar_time - signal.bar_seconds)):
         reasons.append('outside_london_or_new_york_session')
     if not ((signal.price > signal.ema20 > signal.ema50 > signal.ema200) if buy else
             (signal.price < signal.ema20 < signal.ema50 < signal.ema200)):
@@ -203,9 +212,9 @@ def smc_rules(signal: Signal) -> list[str]:
     formation_time = signal.setup_bar_time if signal.entry_mode == 'confirmed_close' else signal.bar_time
     planned_entry = signal.setup_entry if signal.entry_mode == 'confirmed_close' else signal.entry
     if os.getenv('FILTER_SESSIONS', 'true').lower() == 'true':
-        if not killzones(formation_time - 900, signal.symbol):
+        if not killzones(formation_time - signal.bar_seconds, signal.symbol):
             reasons.append('outside_killzone')
-        if signal.entry_mode == 'confirmed_close' and not killzones(signal.bar_time - 900, signal.symbol):
+        if signal.entry_mode == 'confirmed_close' and not killzones(signal.bar_time - signal.bar_seconds, signal.symbol):
             reasons.append('outside_confirmation_killzone')
     if os.getenv('REQUIRE_HTF_BIAS', 'true').lower() == 'true' and signal.htf_bias != (1 if buy else -1):
         reasons.append('htf_bias_mismatch')
@@ -348,7 +357,7 @@ def rule_support(signal: Signal) -> list[str]:
         position = (signal.entry - signal.range_low) / width * 100 if width else 50.0
         zone = 'discount' if signal.entry < (signal.range_high + signal.range_low) / 2 else 'premium'
         formation_time = signal.setup_bar_time if signal.entry_mode == 'confirmed_close' else signal.bar_time
-        active = killzones(formation_time - 900, signal.symbol)
+        active = killzones(formation_time - signal.bar_seconds, signal.symbol)
         word = {1: 'bullish', -1: 'bearish', 0: 'neutral', None: 'n/a'}
         bias = f'HTF bias: {word[signal.htf_bias]} structure'
         if signal.daily_bias is not None or signal.h4_bias is not None:
@@ -375,7 +384,7 @@ def rule_support(signal: Signal) -> list[str]:
                        if signal.hit_rate is not None and signal.samples else '; no completed history on this chart yet')
             lines.append(f'Chart analyst: confluence {signal.score}/100{history}')
         return lines + [volatility, news_line(signal)]
-    active = sessions(signal.bar_time - 900)
+    active = sessions(signal.bar_time - signal.bar_seconds)
     session = ', '.join(active) if active else ('24/7 market' if signal.symbol in session_exempt_symbols()
                                                  else 'outside London/New York hours')
     lines = [f'Trend: EMA20 {signal.ema20:g} {">" if signal.ema20 > signal.ema50 else "<"} EMA50 {signal.ema50:g}; '
@@ -389,12 +398,12 @@ def rule_support(signal: Signal) -> list[str]:
     return lines + [news_line(signal)]
 
 
-def session_label(symbol: str, model: str, bar_time: int) -> str:
+def session_label(symbol: str, model: str, bar_time: int, bar_seconds: int = 900) -> str:
     """The trading window a setup belongs to, used to group its history."""
     if model == 'smc':
-        zones = killzones(bar_time - 900, symbol)
+        zones = killzones(bar_time - bar_seconds, symbol)
         return zones[0] if zones else 'outside killzones'
-    active = sessions(bar_time - 900)
+    active = sessions(bar_time - bar_seconds)
     if len(active) == 2:
         return 'London/New York overlap'
     if active:
