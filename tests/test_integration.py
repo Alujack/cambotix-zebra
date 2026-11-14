@@ -22,6 +22,8 @@ def isolated_database(monkeypatch):
     monkeypatch.setenv('DIGEST_HOUR', '24')
     monkeypatch.delenv('GATE_MODE', raising=False)
     monkeypatch.setenv('MESSAGE_STYLE', 'detailed')
+    monkeypatch.setenv('ACCOUNT_SIZE', '0')               # sizing tests set their own account
+    monkeypatch.setenv('AI_COMMENTARY', 'true')           # the pipeline tests exercise the commentary path
     # Plan geometry the assertions below are written for, independent of the local .env.
     monkeypatch.setenv('TP_R_MULTIPLES', '1,2,3,4')
     monkeypatch.setenv('STOP_ATR_MULTIPLE', '1.5')
@@ -343,7 +345,8 @@ def test_losing_history_warns_the_next_signal(client, monkeypatch):
     monkeypatch.setenv('HISTORY_MIN_SAMPLES', '2')
     monkeypatch.setattr(main, 'classify', lambda signal: analysis())
     for index in range(2):
-        signal, plan = publish_in_past(client, monkeypatch, seconds_ago=3600, event_id=f'loss-{index}', offset=20 + index)
+        # 60 s apart so a second ticking between iterations cannot give both the same bar_time (a refused duplicate).
+        signal, plan = publish_in_past(client, monkeypatch, seconds_ago=3600, event_id=f'loss-{index}', offset=20 + index * 60)
         with main.database() as conn:
             ledger.append(conn, signal.event_id, 'closed', plan['published_at'] + 600,
                           {'exit': 'sl', 'targets_hit': 0, 'ambiguous': False, 'r_tp1': -1.0, 'r_scaled': -1.0})
