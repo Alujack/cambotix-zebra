@@ -114,6 +114,11 @@ def telegram_enabled() -> bool:
     return os.getenv('TELEGRAM_ENABLED', 'false').lower() == 'true'
 
 
+def community_chat() -> str:
+    """Group or channel that also receives real approved signals and their results ('' = none)."""
+    return os.getenv('TELEGRAM_COMMUNITY_CHAT_ID', '').strip()
+
+
 def finish(signal: Signal, status: str, analysis: Analysis | None, reasons: list[str], error_code=None):
     data = analysis.model_dump() if analysis else None
     with database() as conn:
@@ -131,6 +136,11 @@ def finish(signal: Signal, status: str, analysis: Analysis | None, reasons: list
             ON CONFLICT DO NOTHING''', (signal.event_id, notification_text(signal, status, data, reasons, ledger_seq=seq,
                                                                          warnings=warnings),
                                         'pending' if telegram_enabled() else 'disabled'))
+        if seq is not None and community_chat():
+            # Only real, approved, recorded setups reach the community; tests and rejections stay private.
+            queue_message(conn, f'community:signal:{signal.event_id}', 'signal', 'community',
+                          notification_text(signal, status, data, reasons, ledger_seq=seq, warnings=warnings,
+                                            audience='community'))
 
 
 @app.post('/process', dependencies=[Depends(authorize)])
@@ -212,7 +222,7 @@ def notify():
     token, chat_id = os.getenv('TELEGRAM_BOT_TOKEN'), os.getenv('TELEGRAM_CHAT_ID')
     if not token or not chat_id:
         raise HTTPException(503, 'Telegram is enabled but credentials are missing')
-    chats = {'private': chat_id, 'digest': os.getenv('TELEGRAM_DIGEST_CHAT_ID') or chat_id}
+    chats = {'private': chat_id, 'digest': os.getenv('TELEGRAM_DIGEST_CHAT_ID') or chat_id, 'community': community_chat()}
     with database() as conn:
         # A send whose result was lost is never automatically resent.
         for table in ('notifications', 'messages'):
@@ -231,7 +241,7 @@ def notify():
                 table, column, chat = 'messages', 'ref', chats[row['chat']]
     if not row:
         return {'status': 'idle'}
-    status, error = deliver(token, chat, row['message'])
+    status, error = deliver(token, chat, row['message']) if chat else ('failed', 'no_chat_configured')
     with database() as conn:
         conn.execute(f'UPDATE {table} SET status=%s,error_code=%s,updated_at=now() WHERE {column}=%s',
                      (status, error, row['key']))
@@ -334,8 +344,11 @@ def grade():
                     for event in new:
                         ledger.append(conn, item['event_id'], event['kind'], event['time'],
                                       {k: v for k, v in event.items() if k not in ('kind', 'time')})
-                    queue_message(conn, f'result:{item["event_id"]}:{new[-1]["kind"]}', 'result', 'private',
-                                  ledger.result_text(plan, new, item['seq']))
+                    text = ledger.result_text(plan, new, item['seq'])
+                    queue_message(conn, f'result:{item["event_id"]}:{new[-1]["kind"]}', 'result', 'private', text)
+                    if community_chat():
+                        queue_message(conn, f'community:result:{item["event_id"]}:{new[-1]["kind"]}', 'result',
+                                      'community', text)
                     # Commit per plan: the ledger lock stays brief for approvals running meanwhile.
                     conn.commit()
                     recorded += len(new)

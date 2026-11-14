@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS coverage (
 CREATE TABLE IF NOT EXISTS messages (
     ref text PRIMARY KEY,
     kind text NOT NULL,
-    chat text NOT NULL CHECK (chat IN ('private', 'digest')),
+    chat text NOT NULL CHECK (chat IN ('private', 'digest', 'community')),
     message text NOT NULL,
     status text NOT NULL CHECK (status IN ('disabled', 'pending', 'sending', 'sent', 'failed', 'unknown')),
     error_code text,
@@ -76,6 +76,9 @@ CREATE OR REPLACE TRIGGER signals_no_truncate BEFORE TRUNCATE ON signals
 
 def migrate(conn) -> None:
     conn.execute(SCHEMA)
+    # Databases created before the community chat existed carry the old two-value CHECK.
+    conn.execute('''ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_chat_check;
+        ALTER TABLE messages ADD CONSTRAINT messages_chat_check CHECK (chat IN ('private', 'digest', 'community'))''')
 
 
 def canonical(value: dict) -> str:

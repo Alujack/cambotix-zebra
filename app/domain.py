@@ -421,7 +421,7 @@ def size_line(sizing: dict, risk_distance: float) -> tuple[str, float]:
 
 
 def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: int | None,
-                 warnings: list[str] | None) -> str:
+                 warnings: list[str] | None, audience: str = 'private') -> str:
     buy = signal.signal == 'BUY_SETUP'
     decimals = 2 if signal.price >= 100 else 5
     tag = 'CRT' if signal.model == 'crt' else 'Classic'
@@ -438,7 +438,8 @@ def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: in
         for index, (multiple, level, _) in enumerate(plan['targets'], 1):
             label = 'Target' if len(plan['targets']) == 1 else f'TP{index}'
             lines.append(f'🎯 {label}: {level:.{decimals}f}  (+{multiple:g}R)')
-        sizing = position_size(signal, plan['risk'])
+        # The owner's account size means nothing to community members: they size their own trades.
+        sizing = position_size(signal, plan['risk']) if audience == 'private' else None
         size_text, lots = size_line(sizing, plan['risk']) if sizing else ('', None)
         step = float(os.getenv('LOT_STEP', '0.01'))
         if len(plan['targets']) > 1:
@@ -456,14 +457,17 @@ def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: in
     news = news_status(signal.bar_time)
     lines.append({'blocked': f'📰 News: BLOCKED ({news["detail"]})', 'clear': '📰 News: clear'}.get(news['state'], '📰 News: not checked'))
     footer = f'Ledger #{ledger_seq} · ' if ledger_seq is not None else ''
-    lines += ['', footer + ('Manual review. No order placed.' if status == 'approved' else 'No action.')]
+    if audience == 'community':
+        lines += ['', footer + 'Size your own trade: risk 0.5-1% of your account. Not financial advice.']
+    else:
+        lines += ['', footer + ('Manual review. No order placed.' if status == 'approved' else 'No action.')]
     return '\n'.join(lines)[:4000]
 
 
 def notification_text(signal: Signal, status: str, analysis: dict | None, reasons: list[str],
-                      ledger_seq: int | None = None, warnings: list[str] | None = None) -> str:
-    if message_style() == 'compact':
-        return compact_text(signal, status, reasons, ledger_seq, warnings)
+                      ledger_seq: int | None = None, warnings: list[str] | None = None, audience: str = 'private') -> str:
+    if message_style() == 'compact' or audience == 'community':
+        return compact_text(signal, status, reasons, ledger_seq, warnings, audience)
     buy = signal.signal == 'BUY_SETUP'
     direction = 'BUY' if buy else 'SELL'
     decimals = 2 if signal.price >= 100 else 5
