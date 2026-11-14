@@ -1,3 +1,4 @@
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -19,28 +20,28 @@ def session_exempt_symbols() -> set[str]:
 
 
 CLASSIC_FIELDS = ('ema20', 'ema50', 'ema200', 'rsi', 'macd_hist', 'adx')
-SMC_FIELDS = ('htf_bias', 'sweep_level', 'mss_level', 'fvg_top', 'fvg_bottom', 'range_high', 'range_low',
-              'entry', 'stop', 'target_liquidity')
+CRT_FIELDS = ('range_high', 'range_low', 'sweep_level', 'entry', 'stop', 'target_liquidity')
 NUMERIC_FIELDS = ('price', 'atr', 'ema20', 'ema50', 'ema200', 'rsi', 'macd_hist', 'adx', 'swing_high', 'swing_low',
-                  'sweep_level', 'mss_level', 'fvg_top', 'fvg_bottom', 'ob_top', 'ob_bottom', 'range_high', 'range_low',
-                  'entry', 'setup_entry', 'stop', 'target_liquidity', 'score', 'hit_rate', 'samples',
-                  'pdh', 'pdl', 'pwh', 'pwl', 'asia_high', 'asia_low')
+                  'sweep_level', 'range_high', 'range_low', 'entry', 'stop', 'target_liquidity')
 NAME_PATTERN = r'^[A-Za-z0-9 _\-/.]*$'
+NY = ZoneInfo('America/New_York')
 
-
-TIMEFRAME_SECONDS = {'15m': 900, '5m': 300}
+# Bar length of each timeframe: classic runs on 15m bars, CRT on the higher-timeframe candle whose close is the signal.
+TIMEFRAME_SECONDS = {'15m': 900, '1h': 3600, '4h': 14400, '1d': 86400}
 
 
 class Signal(BaseModel):
     """One setup candidate. `model` selects which field group is mandatory:
-    classic = EMA/RSI/MACD/ADX indicator setup; smc = ICT / Smart Money Concepts structure setup."""
+    classic = EMA/RSI/MACD/ADX indicator setup on 15m bars;
+    crt     = Candle Range Theory: the previous HTF candle's range (range_high/range_low) was swept on one side by
+              the next candle (its wick: sweep_level), which closed back inside at `price`."""
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     event_id: str = Field(min_length=1, max_length=180, pattern=r'^[A-Za-z0-9_.:\-]+$')
     symbol: str = Field(min_length=3, max_length=20, pattern=r'^[A-Z0-9]+$')
-    timeframe: Literal['15m', '5m']
+    timeframe: Literal['15m', '1h', '4h', '1d']
     bar_time: int = Field(gt=0, strict=True)
     signal: Literal['BUY_SETUP', 'SELL_SETUP']
-    model: Literal['classic', 'smc'] = 'classic'
+    model: Literal['classic', 'crt'] = 'classic'
     price: float = Field(gt=0)
     atr: float = Field(gt=0)
     # classic indicator model
@@ -52,38 +53,15 @@ class Signal(BaseModel):
     adx: float | None = Field(default=None, ge=0, le=100)
     swing_high: float | None = Field(default=None, gt=0)
     swing_low: float | None = Field(default=None, gt=0)
-    # ICT / Smart Money Concepts model
-    htf_bias: Literal[-1, 0, 1] | None = None
-    sweep_level: float | None = Field(default=None, gt=0)
-    mss_level: float | None = Field(default=None, gt=0)
-    fvg_top: float | None = Field(default=None, gt=0)
-    fvg_bottom: float | None = Field(default=None, gt=0)
-    ob_top: float | None = Field(default=None, gt=0)
-    ob_bottom: float | None = Field(default=None, gt=0)
+    # Candle Range Theory model
     range_high: float | None = Field(default=None, gt=0)
     range_low: float | None = Field(default=None, gt=0)
-    entry_mode: Literal['signal_close', 'limit', 'confirmed_close'] = 'signal_close'
-    setup_entry: float | None = Field(default=None, gt=0)
-    setup_bar_time: int | None = Field(default=None, gt=0, strict=True)
+    sweep_level: float | None = Field(default=None, gt=0)
     entry: float | None = Field(default=None, gt=0)
     stop: float | None = Field(default=None, gt=0)
     target_liquidity: float | None = Field(default=None, gt=0)
-    killzone: str | None = Field(default=None, max_length=20, pattern=r'^[A-Za-z0-9 _\-]*$')
-    # liquidity map and multi-timeframe bias detail (optional)
-    daily_bias: Literal[-1, 0, 1] | None = None
-    h4_bias: Literal[-1, 0, 1] | None = None
-    pdh: float | None = Field(default=None, gt=0)
-    pdl: float | None = Field(default=None, gt=0)
-    pwh: float | None = Field(default=None, gt=0)
-    pwl: float | None = Field(default=None, gt=0)
-    asia_high: float | None = Field(default=None, gt=0)
-    asia_low: float | None = Field(default=None, gt=0)
     swept_name: str | None = Field(default=None, max_length=24, pattern=NAME_PATTERN)
     target_name: str | None = Field(default=None, max_length=24, pattern=NAME_PATTERN)
-    # on-chart analyst engine (confluence score and this chart's own signal history)
-    score: int | None = Field(default=None, ge=0, le=100)
-    hit_rate: float | None = Field(default=None, ge=0, le=1)
-    samples: int | None = Field(default=None, ge=0)
 
     @field_validator('symbol', mode='before')
     @classmethod
@@ -100,7 +78,8 @@ class Signal(BaseModel):
     @field_validator('timeframe', mode='before')
     @classmethod
     def normalize_timeframe(cls, value):
-        return {'15': '15m', '15M': '15m', '5': '5m', '5M': '5m'}.get(value, value) if isinstance(value, str) else value
+        aliases = {'15': '15m', '15M': '15m', '60': '1h', '240': '4h', 'H4': '4h', '4H': '4h', 'D': '1d', '1D': '1d'}
+        return aliases.get(value, value) if isinstance(value, str) else value
 
     @property
     def bar_seconds(self) -> int:
@@ -115,23 +94,14 @@ class Signal(BaseModel):
 
     @model_validator(mode='after')
     def fields_for_model(self):
-        needed = CLASSIC_FIELDS if self.model == 'classic' else SMC_FIELDS
+        needed = CLASSIC_FIELDS if self.model == 'classic' else CRT_FIELDS
         missing = [name for name in needed if getattr(self, name) is None]
         if missing:
             raise ValueError(f'{self.model} setup is missing {", ".join(missing)}')
-        if self.model == 'smc' and self.entry_mode == 'signal_close':
-            # Backward compatibility: historical SMC payloads predate entry_mode
-            # and represented a resting limit at the FVG midpoint.
-            self.entry_mode = 'limit'
         if self.model == 'classic' and self.timeframe != '15m':
             raise ValueError('classic setups are 15m only')
-        if self.model == 'classic' and self.entry_mode != 'signal_close':
-            raise ValueError('classic setup entry_mode must be signal_close')
-        if self.model == 'smc' and self.entry_mode == 'confirmed_close':
-            if self.setup_entry is None or self.setup_bar_time is None:
-                raise ValueError('confirmed_close setup requires setup_entry and setup_bar_time')
-            if self.setup_bar_time >= self.bar_time:
-                raise ValueError('setup_bar_time must precede the confirmed entry bar')
+        if self.model == 'crt' and self.timeframe == '15m':
+            raise ValueError('crt setups use the range candle timeframe (1h, 4h or 1d)')
         return self
 
 
@@ -167,19 +137,6 @@ def sessions(timestamp: int) -> list[str]:
     return found
 
 
-KILLZONES = {'London': (2 * 60, 5 * 60), 'NY AM': (8 * 60 + 30, 11 * 60), 'NY PM': (13 * 60 + 30, 16 * 60)}
-
-
-def killzones(bar_open: int, symbol: str) -> list[str]:
-    """ICT killzones in New York time, evaluated on the bar's OPEN time exactly like Pine's time() session test."""
-    local = datetime.fromtimestamp(bar_open, timezone.utc).astimezone(ZoneInfo('America/New_York'))
-    if local.weekday() >= 5 and symbol not in session_exempt_symbols():
-        return []
-    minute = local.hour * 60 + local.minute
-    enabled = [name.strip() for name in os.getenv('KILLZONES', 'London,NY AM').split(',') if name.strip()]
-    return [name for name in enabled if name in KILLZONES and KILLZONES[name][0] <= minute < KILLZONES[name][1]]
-
-
 def atr_percent_ok(signal: Signal) -> bool:
     percent = signal.atr / signal.price * 100
     return float(os.getenv('MIN_ATR_PERCENT', '0.02')) <= percent <= float(os.getenv('MAX_ATR_PERCENT', '0.5'))
@@ -205,44 +162,41 @@ def classic_rules(signal: Signal) -> list[str]:
     return reasons
 
 
-def smc_rules(signal: Signal) -> list[str]:
-    """Structural sanity of an ICT/SMC setup: sweep -> MSS -> FVG entry in discount/premium, protected stop, real target."""
+def crt_key_times() -> set[int]:
+    """New York open hours of the sweep candle that may signal (CRT_KEY_TIMES, e.g. 1,5,9); empty = every candle."""
+    return {int(item) for item in os.getenv('CRT_KEY_TIMES', '').split(',') if item.strip().isdigit()}
+
+
+def crt_rules(signal: Signal) -> list[str]:
+    """Candle Range Theory geometry: one side of the range swept, close back inside, stop beyond the sweep wick,
+    target at the opposite range extreme, enough reward for the risk."""
     reasons = []
     buy = signal.signal == 'BUY_SETUP'
-    formation_time = signal.setup_bar_time if signal.entry_mode == 'confirmed_close' else signal.bar_time
-    planned_entry = signal.setup_entry if signal.entry_mode == 'confirmed_close' else signal.entry
-    if os.getenv('FILTER_SESSIONS', 'true').lower() == 'true':
-        if not killzones(formation_time - signal.bar_seconds, signal.symbol):
-            reasons.append('outside_killzone')
-        if signal.entry_mode == 'confirmed_close' and not killzones(signal.bar_time - signal.bar_seconds, signal.symbol):
-            reasons.append('outside_confirmation_killzone')
-    if os.getenv('REQUIRE_HTF_BIAS', 'true').lower() == 'true' and signal.htf_bias != (1 if buy else -1):
-        reasons.append('htf_bias_mismatch')
-    low, high = sorted((signal.fvg_bottom, signal.fvg_top))
-    if not low <= planned_entry <= high:
-        reasons.append('entry_outside_fvg')
-    if not ((signal.stop < signal.sweep_level < planned_entry) if buy else
-            (signal.stop > signal.sweep_level > planned_entry)):
+    opened = datetime.fromtimestamp(signal.bar_time - signal.bar_seconds, timezone.utc).astimezone(NY)
+    # Weekday of the candle's last minute: a Monday D1 candle opens Sunday 17:00 New York but is a Monday session.
+    last = datetime.fromtimestamp(signal.bar_time - 1, timezone.utc).astimezone(NY)
+    if last.weekday() >= 5 and signal.symbol not in session_exempt_symbols():
+        reasons.append('weekend_candle')
+    keys = crt_key_times()
+    if keys and opened.hour not in keys:
+        reasons.append('outside_crt_key_times')
+    high, low = signal.range_high, signal.range_low
+    if not low < high:
+        reasons.append('invalid_range')
+    if not ((signal.sweep_level < low) if buy else (signal.sweep_level > high)):
+        reasons.append('range_not_swept')
+    if not low < signal.price < high:
+        reasons.append('close_not_back_inside')
+    if not ((signal.stop < signal.sweep_level) if buy else (signal.stop > signal.sweep_level)):
         reasons.append('stop_not_beyond_sweep')
-    if not ((signal.mss_level > signal.sweep_level) if buy else (signal.mss_level < signal.sweep_level)):
-        reasons.append('structure_not_shifted')
-    if not signal.range_low <= signal.entry <= signal.range_high:
-        reasons.append('entry_outside_range')
-    equilibrium = (signal.range_high + signal.range_low) / 2
-    if (os.getenv('REQUIRE_DISCOUNT', 'true').lower() == 'true'
-            and not ((signal.entry < equilibrium) if buy else (signal.entry > equilibrium))):
-        reasons.append('entry_not_in_discount' if buy else 'entry_not_in_premium')
+    if not math.isclose(signal.target_liquidity, high if buy else low, rel_tol=1e-9):
+        reasons.append('target_not_opposite_extreme')
     risk = abs(signal.entry - signal.stop)
-    if not 0.3 * signal.atr <= risk <= 3 * signal.atr:
-        reasons.append('risk_outside_atr_band')
+    if risk < 0.3 * signal.atr:
+        reasons.append('stop_too_tight')
     reward = (signal.target_liquidity - signal.entry) if buy else (signal.entry - signal.target_liquidity)
-    if risk <= 0 or reward / risk < float(os.getenv('MIN_RR', '1.5')):
+    if risk <= 0 or reward / risk < float(os.getenv('CRT_MIN_RR', '2.0')):
         reasons.append('target_too_close')
-    if not atr_percent_ok(signal):
-        reasons.append('atr_outside_range')
-    minimum_score = int(os.getenv('MIN_SMC_SCORE', '70'))
-    if signal.score is not None and signal.score < minimum_score:
-        reasons.append('score_below_minimum')
     return reasons
 
 
@@ -252,7 +206,7 @@ def technical_rules(signal: Signal, now: float | None = None) -> list[str]:
         reasons.append('stale_or_future_signal')
     if news_status(signal.bar_time)['state'] == 'blocked':
         reasons.append('high_impact_news_window')
-    return reasons + (smc_rules(signal) if signal.model == 'smc' else classic_rules(signal))
+    return reasons + (crt_rules(signal) if signal.model == 'crt' else classic_rules(signal))
 
 
 def position_size(signal: Signal, risk_distance: float) -> dict | None:
@@ -299,12 +253,10 @@ not a calibrated probability of profit. Return the supplied JSON schema only. No
 
 MODEL_INPUTS = {
     'classic': 'Evaluate only the supplied trend (EMA20/50/200), RSI, MACD histogram, ADX, ATR, and prior swing levels.',
-    'smc': ('Evaluate only the supplied ICT / Smart Money Concepts elements: higher-timeframe structure bias, the liquidity '
-            'sweep of a prior swing, the market structure shift with displacement, the fair value gap used for entry, the '
-            'order block, the dealing range with premium/discount position, the killzone, the liquidity map (previous day/week '
-            'highs and lows, Asian range), the named draw-on-liquidity target, and ATR. When supplied, "score" is the '
-            "chart's own 0-100 confluence score and \"hit_rate\"/\"samples\" describe how often this chart's past signals reached "
-            'TP1 before the stop. Judge whether these elements are coherent for the fixed direction.'),
+    'crt': ('Evaluate only the supplied Candle Range Theory elements: the previous higher-timeframe candle range '
+            '(range_high/range_low), the next candle sweeping one side of it (sweep_level) and closing back inside the '
+            'range (price), the stop beyond the sweep wick, the target at the opposite range extreme, and ATR (15m). '
+            'Judge whether these elements are coherent for the fixed direction.'),
 }
 
 
@@ -317,20 +269,22 @@ def trade_plan(signal: Signal) -> dict:
     """Deterministic reference levels computed from the payload, never by the language model.
     classic: stop beyond the prior swing plus a 0.2 ATR buffer when within 1 to 3 ATR, else STOP_ATR_MULTIPLE x ATR;
              targets at TP_R_MULTIPLES multiples of the stop distance (R).
-    smc:     entry at the FVG consequent encroachment, stop beyond the swept liquidity, TP1 at the opposing liquidity
-             pool, then TP_R_MULTIPLES beyond it."""
+    crt:     market entry at the sweep candle's close, stop beyond its wick, a single target at the opposite extreme
+             of the swept range (the backtested plan; no further R multiples)."""
     buy = signal.signal == 'BUY_SETUP'
     sign = 1 if buy else -1
     multiples = [float(m) for m in os.getenv('TP_R_MULTIPLES', '1,2,3,4').split(',') if m.strip()]
-    if signal.model == 'smc':
-        entry, distance = signal.entry, abs(signal.entry - signal.stop)
-        liquidity_r = abs(signal.target_liquidity - entry) / distance if distance else 0.0
-        targets = [(round(liquidity_r, 2), signal.target_liquidity, 'liquidity' + (f': {signal.target_name}' if signal.target_name else ''))]
-        targets += [(m, entry + sign * m * distance, '') for m in multiples if m > liquidity_r + 0.05]
-        entry_note = ('confirmed close after FVG retest' if signal.entry_mode == 'confirmed_close'
-                      else 'FVG consequent encroachment limit')
-        return {'entry': entry, 'entry_note': entry_note, 'stop': signal.stop, 'risk': distance,
-                'risk_atr': distance / signal.atr, 'basis': f'beyond swept liquidity {signal.sweep_level:g}',
+    if signal.model == 'crt':
+        entry, distance = signal.price, abs(signal.price - signal.stop)
+        reward_r = abs(signal.target_liquidity - entry) / distance if distance else 0.0
+        target = signal.target_name or ('range high' if buy else 'range low')
+        # TP1 is the backtested CRT target; CRT_EXTRA_TARGETS_R adds TP2+ that many R beyond it (runners).
+        extras = [float(item) for item in os.getenv('CRT_EXTRA_TARGETS_R', '0.5,1,1.5').split(',')
+                  if item.strip().replace('.', '', 1).isdigit()]
+        targets = [(round(reward_r, 2), signal.target_liquidity, target)]
+        targets += [(round(reward_r + k, 2), signal.target_liquidity + sign * k * distance, '') for k in extras]
+        return {'entry': entry, 'entry_note': 'market at the sweep candle close', 'stop': signal.stop, 'risk': distance,
+                'risk_atr': distance / signal.atr, 'basis': f'beyond the sweep wick {signal.sweep_level:g}',
                 'targets': targets}
     entry, atr = signal.price, signal.atr
     multiple = float(os.getenv('STOP_ATR_MULTIPLE', '1.5'))
@@ -351,39 +305,16 @@ def rule_support(signal: Signal) -> list[str]:
     atr_percent = signal.atr / signal.price * 100
     volatility = (f'Volatility: ATR {signal.atr:g} = {atr_percent:.2f}% of price '
                   f'(band {os.getenv("MIN_ATR_PERCENT", "0.02")}-{os.getenv("MAX_ATR_PERCENT", "0.5")}%)')
-    if signal.model == 'smc':
-        low, high = sorted((signal.fvg_bottom, signal.fvg_top))
+    if signal.model == 'crt':
+        opened = datetime.fromtimestamp(signal.bar_time - signal.bar_seconds, timezone.utc).astimezone(NY)
+        side, other = ('low', 'high') if buy else ('high', 'low')
         width = signal.range_high - signal.range_low
-        position = (signal.entry - signal.range_low) / width * 100 if width else 50.0
-        zone = 'discount' if signal.entry < (signal.range_high + signal.range_low) / 2 else 'premium'
-        formation_time = signal.setup_bar_time if signal.entry_mode == 'confirmed_close' else signal.bar_time
-        active = killzones(formation_time - signal.bar_seconds, signal.symbol)
-        word = {1: 'bullish', -1: 'bearish', 0: 'neutral', None: 'n/a'}
-        bias = f'HTF bias: {word[signal.htf_bias]} structure'
-        if signal.daily_bias is not None or signal.h4_bias is not None:
-            bias += f' (Daily {word[signal.daily_bias]}, 4H {word[signal.h4_bias]})'
-        pools = [f'PDH {signal.pdh:g} / PDL {signal.pdl:g}' if signal.pdh and signal.pdl else '',
-                 f'PWH {signal.pwh:g} / PWL {signal.pwl:g}' if signal.pwh and signal.pwl else '',
-                 f'Asia {signal.asia_low:g}-{signal.asia_high:g}' if signal.asia_high and signal.asia_low else '']
-        lines = [bias]
-        if any(pools):
-            lines.append('Liquidity map: ' + ' | '.join(p for p in pools if p))
-        entry_line = (f'FVG: {low:g}-{high:g}, planned midpoint {signal.setup_entry:g}; '
-                      f'confirmed close entry {signal.entry:g}' if signal.entry_mode == 'confirmed_close' else
-                      f'FVG: {low:g}-{high:g}, limit entry at consequent encroachment {signal.entry:g}')
-        lines += [f'Liquidity: swept {signal.swept_name or ("swing low" if buy else "swing high")} {signal.sweep_level:g} and reclaimed',
-                  f'Structure: MSS {"above" if buy else "below"} {signal.mss_level:g} with displacement',
-                  entry_line,
-                  f'Dealing range: {signal.range_low:g}-{signal.range_high:g}, entry at {position:.0f}% ({zone})',
-                  f'Draw on liquidity: {signal.target_name or "opposing swing"} {signal.target_liquidity:g} (TP1)']
-        if signal.ob_top is not None and signal.ob_bottom is not None:
-            lines.append(f'Order block: {signal.ob_bottom:g}-{signal.ob_top:g}')
-        lines.append('Killzone: ' + (', '.join(active) if active else 'outside killzones'))
-        if signal.score is not None:
-            history = (f'; this chart: TP1 hit {signal.hit_rate * 100:.0f}% of {signal.samples} past signals'
-                       if signal.hit_rate is not None and signal.samples else '; no completed history on this chart yet')
-            lines.append(f'Chart analyst: confluence {signal.score}/100{history}')
-        return lines + [volatility, news_line(signal)]
+        position = (signal.price - signal.range_low) / width * 100 if width else 50.0
+        return [f'Range: previous {signal.timeframe} candle {signal.range_low:g}-{signal.range_high:g}',
+                f'Sweep: the {opened:%H:%M} New York {signal.timeframe} candle took the range {side} to '
+                f'{signal.sweep_level:g} and closed back inside at {signal.price:g} ({position:.0f}% of the range)',
+                f'Target: range {other} {signal.target_liquidity:g} (TP1)',
+                volatility, news_line(signal)]
     active = sessions(signal.bar_time - signal.bar_seconds)
     session = ', '.join(active) if active else ('24/7 market' if signal.symbol in session_exempt_symbols()
                                                  else 'outside London/New York hours')
@@ -400,9 +331,9 @@ def rule_support(signal: Signal) -> list[str]:
 
 def session_label(symbol: str, model: str, bar_time: int, bar_seconds: int = 900) -> str:
     """The trading window a setup belongs to, used to group its history."""
-    if model == 'smc':
-        zones = killzones(bar_time - bar_seconds, symbol)
-        return zones[0] if zones else 'outside killzones'
+    if model == 'crt':
+        opened = datetime.fromtimestamp(bar_time - bar_seconds, timezone.utc).astimezone(NY)
+        return f'{opened:%H}:00 NY candle'
     active = sessions(bar_time - bar_seconds)
     if len(active) == 2:
         return 'London/New York overlap'
@@ -422,23 +353,14 @@ def cautions(signal: Signal, events: list | None = None) -> list[str]:
         found.append(f'High volatility: ATR {atr_percent:.2f}% is near the {high:g}% limit; expect wide swings')
     elif atr_percent <= 1.25 * low:
         found.append(f'Low volatility: ATR {atr_percent:.2f}% is near the {low:g}% floor; price may stall before TP1')
-    if signal.model == 'smc':
+    if signal.model == 'crt':
         reward = plan['targets'][0][0]
-        if reward < 1.5:
-            found.append(f'Thin reward: the TP1 liquidity target is only {reward:.2f}R away')
-        if plan['risk_atr'] > 2:
-            found.append(f'Wide stop: {plan["risk_atr"]:.1f} ATR; consider a smaller size')
-        elif plan['risk_atr'] < 0.5:
-            found.append(f'Tight stop: {plan["risk_atr"]:.1f} ATR; a normal wick can reach it')
+        if reward < 2.5:
+            found.append(f'Thin reward: the opposite range extreme is only {reward:.2f}R away')
         width = signal.range_high - signal.range_low
-        position = (signal.entry - signal.range_low) / width * 100 if width else 50.0
-        if (40 <= position < 50) if buy else (50 < position <= 60):
-            found.append(f'Entry near equilibrium: {position:.0f}% of the dealing range, not deep in '
-                         + ('discount' if buy else 'premium'))
-        if signal.daily_bias is not None and signal.h4_bias is not None and signal.daily_bias != signal.h4_bias:
-            found.append('Daily and 4H structure disagree')
-        if signal.hit_rate is not None and (signal.samples or 0) >= 10 and signal.hit_rate < 0.4:
-            found.append(f'This chart reached TP1 on only {signal.hit_rate * 100:.0f}% of {signal.samples} past setups')
+        position = (signal.price - signal.range_low) / width * 100 if width else 50.0
+        if (position > 50) if buy else (position < 50):
+            found.append(f'Close already past the range midpoint ({position:.0f}%); less room to the target')
     else:
         if (signal.rsi >= 67) if buy else (signal.rsi <= 33):
             found.append(f'Stretched momentum: RSI {signal.rsi:g} is at the edge of its band')
@@ -467,13 +389,68 @@ def news_line(signal: Signal) -> str:
 AI_STAGE_CODES = {'ai_quality_gate_rejected', 'expired_during_analysis', 'ai_unavailable_or_invalid'}
 
 
+def message_style() -> str:
+    """compact (default): a short phone-readable alert. detailed: every rule reading and the AI commentary."""
+    return 'detailed' if os.getenv('MESSAGE_STYLE', 'compact').strip().lower() == 'detailed' else 'compact'
+
+
+def plain_reason(signal: Signal) -> str:
+    """One sentence a person can read on a phone: why this setup exists."""
+    buy = signal.signal == 'BUY_SETUP'
+    if signal.model == 'crt':
+        side, other = ('low', 'high') if buy else ('high', 'low')
+        verb = 'dipped below' if buy else 'pushed above'
+        return (f'price {verb} the previous {signal.timeframe} range {side} ({signal.sweep_level:g}) and closed back inside. '
+                f'Aiming for the range {other}.')
+    trend = 'Uptrend' if buy else 'Downtrend'
+    return (f'{trend}: price {"above" if buy else "below"} EMA20, EMA50 and EMA200, '
+            f'RSI {signal.rsi:.0f}, ADX {signal.adx:.0f} (trend strength).')
+
+
+def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: int | None,
+                 warnings: list[str] | None) -> str:
+    buy = signal.signal == 'BUY_SETUP'
+    decimals = 2 if signal.price >= 100 else 5
+    tag = 'CRT' if signal.model == 'crt' else 'Classic'
+    structural = not [code for code in reasons if code not in AI_STAGE_CODES]
+    lines = ['🧪 TEST SIGNAL (made-up prices)'] if synthetic(signal.event_id) else []
+    head = f'{"🟢 BUY" if buy else "🔴 SELL"} {signal.symbol} · {tag} {signal.timeframe}'
+    if status != 'approved':
+        head += '  ❌ NOT A TRADE'
+    lines += [head, '']
+    if structural:
+        plan = trade_plan(signal)
+        lines += [f'▶️ {"BUY" if buy else "SELL"} NOW (market order): {plan["entry"]:.{decimals}f}',
+                  f'🛑 Stop:   {plan["stop"]:.{decimals}f}  (risk {plan["risk"]:.{decimals}f})']
+        for index, (multiple, level, _) in enumerate(plan['targets'], 1):
+            label = 'Target' if len(plan['targets']) == 1 else f'TP{index}'
+            lines.append(f'🎯 {label}: {level:.{decimals}f}  (+{multiple:g}R)')
+        if len(plan['targets']) > 1:
+            lines.append('↪️ After TP1: close part, move stop to entry')
+        sizing = position_size(signal, plan['risk'])
+        if sizing:
+            lines.append(f'💰 Size:   {sizing["lots"]:.2f} lots ({sizing["percent"]:g}% risk = {sizing["money"]:.2f})')
+        lines.append('')
+    lines.append('Why: ' + plain_reason(signal))
+    lines += ['⚠️ ' + item for item in warnings or []]
+    if reasons:
+        lines.append('Not valid: ' + ', '.join(code.replace('_', ' ') for code in reasons))
+    news = news_status(signal.bar_time)
+    lines.append({'blocked': f'📰 News: BLOCKED ({news["detail"]})', 'clear': '📰 News: clear'}.get(news['state'], '📰 News: not checked'))
+    footer = f'Ledger #{ledger_seq} · ' if ledger_seq is not None else ''
+    lines += ['', footer + ('Manual review. No order placed.' if status == 'approved' else 'No action.')]
+    return '\n'.join(lines)[:4000]
+
+
 def notification_text(signal: Signal, status: str, analysis: dict | None, reasons: list[str],
                       ledger_seq: int | None = None, warnings: list[str] | None = None) -> str:
+    if message_style() == 'compact':
+        return compact_text(signal, status, reasons, ledger_seq, warnings)
     buy = signal.signal == 'BUY_SETUP'
     direction = 'BUY' if buy else 'SELL'
     decimals = 2 if signal.price >= 100 else 5
     icon = {'approved': '✅', 'rejected': '❌', 'error': '⚠️'}.get(status, '•')
-    tag = 'SMC' if signal.model == 'smc' else 'classic'
+    tag = 'CRT' if signal.model == 'crt' else 'classic'
     lines = [f'{"🟢" if buy else "🔴"} {direction} {signal.symbol} {signal.timeframe} [{tag}] | {icon} {status.upper()}'
              + (' (manual review)' if status == 'approved' else ''),
              f'Event: {signal.event_id}',

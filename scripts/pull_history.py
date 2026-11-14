@@ -2,8 +2,9 @@
 """Save broker history from MetaTrader 5 to .local/history/ for scripts/backtest.py.
 
 Run on Windows with the Python that has the MetaTrader5 package (here: `py -3.13 scripts/pull_history.py`),
-with the terminal open and logged in. Writes M1 (with spread, used for grading), M15 (signals), and H4/D1/W1
-(SMC context). The backtest itself runs anywhere and never touches MT5.
+with the terminal open and logged in. Writes M1 (with spread, used for grading), M15 (classic signals; CRT builds its
+New York-aligned H4 candles from it), and broker H4/D1/W1 for reference. The backtest itself runs anywhere and never
+touches MT5.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ import MetaTrader5 as mt5
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / '.local' / 'history'
-FRAMES = {'m1': mt5.TIMEFRAME_M1, 'm5': mt5.TIMEFRAME_M5, 'm15': mt5.TIMEFRAME_M15, 'h4': mt5.TIMEFRAME_H4,
+FRAMES = {'m1': mt5.TIMEFRAME_M1, 'm15': mt5.TIMEFRAME_M15, 'h4': mt5.TIMEFRAME_H4,
           'd1': mt5.TIMEFRAME_D1, 'w1': mt5.TIMEFRAME_W1}
 CHUNK_DAYS = 20                   # M1 requests stay small; the terminal can refuse very large ranges
 
@@ -63,7 +64,7 @@ def main() -> None:
 
     for name, frame in FRAMES.items():
         # Context frames need extra warm-up before the first signal bar.
-        since = start - timedelta(days={'m1': 0, 'm5': 5, 'm15': 5, 'h4': 120, 'd1': 400, 'w1': 900}[name])
+        since = start - timedelta(days={'m1': 0, 'm15': 5, 'h4': 120, 'd1': 400, 'w1': 900}[name])
         rates = fetch(args.symbol, frame, since, end)
         path = OUT / f'{clean}_{name}.csv'
         with path.open('w', newline='') as handle:

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Replay the classic and SMC models over saved broker history and grade every plan the analyzer would publish.
+"""Replay the classic and CRT models over saved broker history and grade every plan the analyzer would publish.
 
 Same code path as live wherever it matters: detection is the feeder's (classic indicators re-implemented
-without pandas, SMC via scripts/smc_engine.Engine); every payload goes through app.domain's rule checks;
+without pandas, CRT via scripts/crt_engine.detect); every payload goes through app.domain's rule checks;
 plans are frozen with app.ledger.plan_record; grading is app.grader.simulate on M1 candles including spread;
 statistics are app.grader.summarize. Settings come from the environment (.env), and --set overrides them.
 
-Not reproduced: the news blackout (no historical calendar) and the live feeder's 1500-bar SMC replay window
-(the engine runs once over the whole history instead).
+Not reproduced: the news blackout (no historical calendar).
 
-Data: .local/history/<SYMBOL>_{m1,m15,h4,d1,w1}.csv from scripts/pull_history.py (MT5, Windows) or
+Data: .local/history/<SYMBOL>_{m1,m15}.csv from scripts/pull_history.py (MT5, Windows) or
 scripts/pull_dukascopy.py (no MT5, runs on the Mac).
 Run in the analyzer image, which has the app's dependencies and reads .env:
   docker compose run --rm --no-deps -v "$PWD:/work" -w /work analyzer python scripts/backtest.py
@@ -30,9 +29,8 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT), str(ROOT / 'scripts')]
 
-from smc_engine import Config, Engine, config_for  # noqa: E402
 import crt_engine  # noqa: E402
-from app.domain import Signal, classic_rules, smc_rules  # noqa: E402
+from app.domain import Signal, classic_rules, crt_rules  # noqa: E402
 from app.grader import simulate, summarize  # noqa: E402
 from app import ledger  # noqa: E402
 
@@ -141,92 +139,41 @@ def classic_payloads(symbol: str, rows: list[dict]) -> list[dict]:
     return out
 
 
-# -- SMC ---------------------------------------------------------------------------------------------
-class FastEngine(Engine):
-    """Same engine; higher-timeframe lookups by binary search instead of a scan per 15m bar."""
-
-    def _context(self, d1, h4, w1):
-        super()._context(d1, h4, w1)
-        self._times = {id(series): [b['t'] for b in series] for series in (d1, h4, w1)}
-
-    def _last_closed(self, bars, period, stamp):
-        k = bisect.bisect_right(self._times[id(bars)], stamp - period) - 1
-        return k if k >= 0 else None
-
-    def _containing(self, bars, stamp):
-        k = bisect.bisect_right(self._times[id(bars)], stamp) - 1
-        return k if k >= 0 else None
-
-
-def smc_bar_seconds() -> int:
-    return {'15m': 900, '5m': 300}[os.getenv('SMC_TIMEFRAME', '15m').strip()]
-
-
-def smc_config(tick: float) -> Config:
-    truthy = lambda key, default: os.getenv(key, default).strip().lower() == 'true'
-    return config_for(smc_bar_seconds(),
-                  killzones=tuple(k.strip() for k in os.getenv('KILLZONES', 'London,NY AM').split(',') if k.strip()),
-                  require_htf=truthy('REQUIRE_HTF_BIAS', 'true'), require_discount=truthy('REQUIRE_DISCOUNT', 'true'),
-                  min_rr=float(os.getenv('MIN_RR', '1.5')), min_score=int(os.getenv('MIN_SMC_SCORE', '70')),
-                  min_atr_pct=float(os.getenv('MIN_ATR_PERCENT', '0.02')),
-                  max_atr_pct=float(os.getenv('MAX_ATR_PERCENT', '0.5')), tick=tick,
-                  entry_mode=os.getenv('SMC_ENTRY_MODE', 'confirmed_close').strip(),
-                  fvg_window=int(os.getenv('SMC_FVG_WINDOW', '1')), disp_atr=float(os.getenv('SMC_DISP_ATR', '1.0')),
-                  limit_expiry_bars=max(1, int(os.getenv('ENTRY_EXPIRY_MINUTES', '120')) * 60 // smc_bar_seconds()))
-
-
-def smc_payloads(symbol: str, data: dict, tick: float) -> list[dict]:
-    strip = lambda series: [{k: b[k] for k in 'tohlc'} for b in series]
-    base = data['m5'] if smc_bar_seconds() == 300 else data['m15']
-    return FastEngine(symbol, smc_config(tick)).run(strip(base), strip(data['d1']), strip(data['h4']),
-                                                    strip(data['w1']))
-
-
 # -- CRT ---------------------------------------------------------------------------------------------
-def crt_config() -> crt_engine.CrtConfig:
+def crt_config(symbol: str) -> crt_engine.CrtConfig:
+    exempt = {x.strip().upper() for x in os.getenv('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if x.strip()}
     keys = os.getenv('CRT_KEY_TIMES', '').strip()
     return crt_engine.CrtConfig(htf_hours=int(os.getenv('CRT_HTF_HOURS', '4')),
-                                key_times=tuple(int(k) for k in keys.split(',') if k.strip()) if keys and keys != 'all' else (),
-                                entry=os.getenv('CRT_ENTRY', 'close').strip(), target=os.getenv('CRT_TARGET', 'opposite').strip(),
-                                min_rr=float(os.getenv('CRT_MIN_RR', '1.0')),
+                                key_times=tuple(int(k) for k in keys.split(',') if k.strip().isdigit()),
+                                min_rr=float(os.getenv('CRT_MIN_RR', '2.0')),
                                 stop_buffer_atr=float(os.getenv('CRT_STOP_BUFFER_ATR', '0.1')),
-                                max_hold_candles=int(os.getenv('CRT_MAX_HOLD_CANDLES', '3')))
+                                crypto=symbol in exempt)
 
 
-def crt_plans(symbol: str, data: dict) -> list[dict]:
-    exempt = {s.strip().upper() for s in os.getenv('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if s.strip()}
-    cfg = crt_config()
-    cfg.crypto = symbol in exempt
-    return crt_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in data['m15']], cfg)
+def crt_payloads(symbol: str, data: dict) -> list[dict]:
+    return crt_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in data['m15']], crt_config(symbol))
 
 
 # -- publish + grade ---------------------------------------------------------------------------------
-def grade(payloads: list[dict], m1: list[dict], plans: list[dict] = ()) -> tuple[list[dict], dict]:
-    """Apply the analyzer's rules and open-plan limit in time order; grade each published plan.
-    `plans` are already-frozen plans (CRT) that skip the payload rules."""
+def grade(payloads: list[dict], m1: list[dict]) -> tuple[list[dict], dict]:
+    """Apply the analyzer's rules and open-plan limit in time order; grade each published plan."""
     times = [c['t'] for c in m1]
     end = m1[-1]['t'] + MINUTE if m1 else 0
     limit = int(os.getenv('MAX_OPEN_SAME_DIRECTION', '1'))
     open_until: list[tuple[str, int]] = []
     trades, rejected = [], {}
-    items = [(p['bar_time'], p['model'], p['signal'], p, None) for p in payloads]
-    items += [(p['bar_time'], p['model'], p['direction'], None, p) for p in plans]
-    for _, _, _, body, frozen in sorted(items, key=lambda item: item[:3]):
-        if frozen is None:
-            signal = Signal.model_validate(body)
-            reasons = smc_rules(signal) if signal.model == 'smc' else classic_rules(signal)
-            direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
-            bar_time, opened_at = signal.bar_time, signal.bar_time - signal.bar_seconds
-        else:
-            reasons, direction = [], frozen['direction']
-            bar_time, opened_at = frozen['bar_time'], frozen['c2_start']
+    for body in sorted(payloads, key=lambda p: (p['bar_time'], p['model'], p['signal'])):
+        signal = Signal.model_validate(body)
+        reasons = crt_rules(signal) if signal.model == 'crt' else classic_rules(signal)
+        direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
+        bar_time, opened_at = signal.bar_time, signal.bar_time - signal.bar_seconds
         if not reasons and limit > 0 and sum(1 for d, until in open_until if d == direction and until > bar_time) >= limit:
             reasons = ['open_plan_same_direction']
         if reasons:
             for r in reasons:
                 rejected[r] = rejected.get(r, 0) + 1
             continue
-        plan = frozen or ledger.plan_record(signal, signal.bar_time)
+        plan = ledger.plan_record(signal, signal.bar_time)
         horizon = bar_time + MINUTE * (plan['entry_expiry_minutes'] + plan['max_hold_minutes'] + 1)
         if horizon > end:
             break                                        # history ends before this plan could finish
@@ -265,14 +212,13 @@ def line(label: str, trades: list[dict]) -> str:
 HEADER = f'{"":<22} {"trades":>5} {"win":>5} {"exp R":>7} {"total R":>8} {"PF":>5} {"maxDD":>6} {"scaled":>8}'
 
 
-def run(data: dict, symbol: str, tick: float, models: set[str]) -> tuple[list[dict], dict]:
+def run(data: dict, symbol: str, models: set[str]) -> tuple[list[dict], dict]:
     payloads = []
     if 'classic' in models:
         payloads += classic_payloads(symbol, classic_indicators(data['m15']))
-    if 'smc' in models:
-        payloads += smc_payloads(symbol, data, tick)
-    plans = crt_plans(symbol, data) if 'crt' in models else []
-    return grade(payloads, data['m1'], plans)
+    if 'crt' in models:
+        payloads += crt_payloads(symbol, data)
+    return grade(payloads, data['m1'])
 
 
 def report(trades: list[dict], rejected: dict, split: int | None) -> None:
@@ -294,7 +240,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--data', default=str(ROOT / '.local' / 'history'))
     parser.add_argument('--symbol', default='XAUUSD')
-    parser.add_argument('--models', default='classic,smc')
+    parser.add_argument('--models', default='classic,crt')
     parser.add_argument('--set', action='append', default=[], metavar='KEY=VALUE', help='override a .env setting')
     parser.add_argument('--sweep', action='append', default=[], metavar='KEY=V1|V2',
                         help='grid-search a setting; repeat for more keys. Ranked on the first 2/3, checked on the last 1/3')
@@ -304,23 +250,24 @@ def main() -> None:
     for item in args.set:
         key, _, value = item.partition('=')
         os.environ[key.strip()] = value.strip()
+    # The analyzer only accepts symbols listed in SYMBOLS; a backtest may replay any symbol with saved history.
+    enabled = {x.strip().upper() for x in os.getenv('SYMBOLS', 'XAUUSD').split(',') if x.strip()}
+    os.environ['SYMBOLS'] = ','.join(sorted(enabled | {args.symbol.upper()}))
     folder = Path(args.data)
-    frames = ('m1', 'm15', 'h4', 'd1', 'w1') + (('m5',) if (folder / f'{args.symbol}_m5.csv').exists() else ())
-    data = {frame: load(folder, args.symbol, frame) for frame in frames}
-    meta_path = folder / f'{args.symbol}_meta.json'
-    tick = json.loads(meta_path.read_text()).get('point', 0.01) if meta_path.exists() else 0.01
+    data = {frame: load(folder, args.symbol, frame) for frame in ('m1', 'm15')}
     models = {m.strip() for m in args.models.split(',') if m.strip()}
+    if not models <= {'classic', 'crt'}:
+        raise SystemExit('--models accepts classic, crt or classic,crt')
     first, last = data['m1'][0]['t'], data['m1'][-1]['t']
     split = first + (last - first) * 2 // 3
     stamp = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime('%Y-%m-%d')
     print(f'{args.symbol} M1 {stamp(first)} .. {stamp(last)} ({len(data["m15"])} M15 bars), models={",".join(sorted(models))}')
 
     if not args.sweep:
-        print('settings: ' + ', '.join(f'{k}={os.getenv(k)}' for k in ('TP_R_MULTIPLES', 'MIN_RR', 'STOP_ATR_MULTIPLE',
-                                                                         'MIN_ADX', 'KILLZONES', 'REQUIRE_HTF_BIAS',
-                                                                         'REQUIRE_DISCOUNT', 'MIN_SMC_SCORE', 'CRT_HTF_HOURS',
-                                                                         'CRT_KEY_TIMES', 'CRT_ENTRY', 'CRT_TARGET', 'CRT_MIN_RR')))
-        trades, rejected = run(data, args.symbol, tick, models)
+        print('settings: ' + ', '.join(f'{k}={os.getenv(k)}' for k in ('TP_R_MULTIPLES', 'STOP_ATR_MULTIPLE', 'MIN_ADX',
+                                                                         'CRT_HTF_HOURS', 'CRT_KEY_TIMES', 'CRT_MIN_RR',
+                                                                         'CRT_MAX_HOLD_CANDLES')))
+        trades, rejected = run(data, args.symbol, models)
         report(trades, rejected, split)
         if args.trades:
             Path(args.trades).write_text(json.dumps(trades, indent=1))
@@ -331,7 +278,7 @@ def main() -> None:
     for combo in itertools.product(*[values for _, values in grid]):
         for (key, _), value in zip(grid, combo):
             os.environ[key] = value
-        trades, _ = run(data, args.symbol, tick, models)
+        trades, _ = run(data, args.symbol, models)
         label = ' '.join(f'{key}={value}' for (key, _), value in zip(grid, combo))
         ins = [t for t in trades if t['published_at'] < split]
         out = [t for t in trades if t['published_at'] >= split]
