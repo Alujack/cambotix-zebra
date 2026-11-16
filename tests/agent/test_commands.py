@@ -10,10 +10,20 @@ def test_parse():
     assert commands.parse('hello') is None
 
 
+def test_every_command_accepts_the_router_call():
+    import inspect
+    for name, action in commands.COMMANDS.items():
+        inspect.signature(action).bind(None, '')        # the router always calls action(conn, argument)
+
+
 def test_number_is_clamped():
     assert commands.number('500', 5, 1, 20) == 20
     assert commands.number('abc', 5, 1, 20) == 5
     assert commands.number('', 0, 0, 3650) == 0
+    # Arguments as the local router writes them.
+    assert commands.number('/7', 0, 0, 3650) == 7
+    assert commands.number('this month', 0, 0, 3650) == 30
+    assert commands.number('today', 0, 0, 3650) == 1
 
 
 def test_open_trades_text(monkeypatch):

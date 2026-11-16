@@ -1,5 +1,6 @@
 """Telegram commands answered by code from the database: exact, instant and free."""
 import os
+import re
 import time
 
 from app.agent import tools
@@ -21,11 +22,19 @@ HELP = '''🦓 Zebra assistant (read-only: it never places or changes trades)
 Or just ask a question. Simple ones are answered locally for free; "why" and comparison questions go to deep analysis.'''
 
 
+PERIODS = {'today': 1, 'day': 1, 'week': 7, 'month': 30, 'year': 365}
+
+
 def number(text: str, default: int, low: int, high: int) -> int:
-    try:
-        return max(low, min(high, int(text)))
-    except (TypeError, ValueError):
-        return default
+    """The first whole number in `text` ('/7', '30 days'), or a period word for days ('this week' -> 7)."""
+    text = (text or '').lower()
+    found = re.search(r'\d+', text)
+    if found:
+        return max(low, min(high, int(found.group())))
+    for word, days in PERIODS.items():
+        if word in text:
+            return max(low, min(high, days))
+    return default
 
 
 def fmt(value: float) -> str:
@@ -38,7 +47,7 @@ def stat_line(item: dict) -> str:
     return f'{item["closed"]} trades · win {rate} · {item["total_r_tp1"]:+.2f}R{pf}'
 
 
-def open_text(conn) -> str:
+def open_text(conn, _argument: str = '') -> str:
     found = tools.open_trades(conn)
     if not found:
         return '📭 No open trades.'
