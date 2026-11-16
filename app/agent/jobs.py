@@ -86,7 +86,8 @@ def signal_note(event_id: str) -> str:
         return 'skipped'
     analysis = classify(signal).model_dump()
     with database() as conn:
-        conn.execute('UPDATE signals SET analysis=%s WHERE event_id=%s AND analysis IS NULL',
+        # finish() stores "no analysis" as JSON null, which is not SQL NULL.
+        conn.execute("UPDATE signals SET analysis=%s WHERE event_id=%s AND (analysis IS NULL OR analysis='null'::jsonb)",
                      (Jsonb(analysis), event_id))
         queue_message(conn, f'ai:{event_id}', 'ai_review', 'private', review_text(signal, analysis, seq and seq['seq']))
     return 'done'
