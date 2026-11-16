@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_USER: zebra
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: zebra_tests
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U zebra -d zebra_tests"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      # Throwaway CI values; the integration tests refuse any database other than zebra_tests.
+      DB_HOST: localhost
+      DB_NAME: zebra_tests
+      DB_USER: zebra
+      POSTGRES_PASSWORD: ci-only-password
+      ANALYZER_TOKEN: ci-only-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Create the schema (as scripts/test.sh does)
+        env:
+          PGPASSWORD: ci-only-password
+        run: tail -n +2 db/init.sql | psql -h localhost -U zebra -d zebra_tests -v ON_ERROR_STOP=1 >/dev/null
+      - name: Unit and database tests
+        run: python -m pytest -q -p no:cacheprovider tests
