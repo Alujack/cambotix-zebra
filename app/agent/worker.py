@@ -10,11 +10,12 @@ import time
 import httpx
 import psycopg
 
-from app.agent import jobs, memory, router, telegram, weekly
+from app.agent import jobs, memory, router, telegram, ui, weekly
 from app.db import database
 
 log = logging.getLogger('zebra.agent')
 AGENT_LOCK = 914209
+MENU_SET: dict[str, bool] = {}
 
 
 def enabled() -> bool:
@@ -31,7 +32,7 @@ def ingest(token: str) -> int:
         for item in found:
             message = item.get('message') or {}
             chat, sender = message.get('chat') or {}, message.get('from') or {}
-            text = message.get('text')
+            text = deep_reply(message)
             status = 'received' if message and telegram.allowed(message) else 'ignored'
             conn.execute('''INSERT INTO agent_updates(update_id, chat_id, user_id, chat_type, text, status)
                 VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING''',
@@ -43,6 +44,16 @@ def ingest(token: str) -> int:
             DO UPDATE SET last_update_id=GREATEST(agent_state.last_update_id, excluded.last_update_id), updated_at=now()''',
             (last,))
     return len(found)
+
+
+def deep_reply(message: dict) -> str | None:
+    """The message text; a reply to the bot's deep-question prompt becomes '/deep <question>'."""
+    text = message.get('text')
+    quoted = message.get('reply_to_message') or {}
+    if (text and not text.startswith('/') and (quoted.get('from') or {}).get('is_bot')
+            and (quoted.get('text') or '').startswith(ui.DEEP_PROMPT)):
+        return '/deep ' + text
+    return text
 
 
 def recover():
@@ -74,6 +85,7 @@ def answer(token: str, update: dict) -> str:
         if limited(chat_id):
             reply, route = '⏳ Too many messages this hour. Please wait a little.', 'rate_limited'
         else:
+            telegram.typing(token, chat_id)
             reply, route = router.handle(chat_id, update['text'] or '')
     except psycopg.Error:
         reply, route = '⚠️ Data is unavailable right now (database). Try again shortly.', 'error'
@@ -83,7 +95,9 @@ def answer(token: str, update: dict) -> str:
     with database() as conn:
         conn.execute("UPDATE agent_updates SET status='replying', reply=%s, route=%s, updated_at=now() WHERE update_id=%s",
                      (reply[:4000], route, update['update_id']))
-    status, error = telegram.deliver(token, chat_id, reply[:4000])
+    # The button keyboard rides on every reply; the deep prompt instead opens a reply box for the question.
+    markup = ui.DEEP_REPLY if reply.startswith(ui.DEEP_PROMPT) else ui.KEYBOARD
+    status, error = telegram.deliver(token, chat_id, reply[:4000], markup)
     final = 'answered' if status == 'sent' else status
     with database() as conn:
         conn.execute('UPDATE agent_updates SET status=%s, error_code=%s, updated_at=now() WHERE update_id=%s',
@@ -106,7 +120,11 @@ def tick() -> dict:
 def work() -> dict:
     started, result = time.monotonic(), {'status': 'ok', 'received': 0, 'answered': 0, 'jobs': 0}
     token = os.getenv('TELEGRAM_BOT_TOKEN', '').strip()
-    if enabled() and token and os.getenv('TELEGRAM_CHAT_ID', '').strip():
+    chat_id = os.getenv('TELEGRAM_CHAT_ID', '').strip()
+    if enabled() and token and chat_id:
+        if MENU_SET.get(chat_id) is None:
+            # Once per process (and per configured chat): the "/" command menu of the owner's chat.
+            MENU_SET[chat_id] = telegram.set_commands(token, chat_id, ui.MENU)
         recover()
         try:
             result['received'] = ingest(token)

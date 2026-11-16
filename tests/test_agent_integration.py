@@ -31,6 +31,7 @@ def agent_on(monkeypatch):
     monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 'fake-test-token')
     monkeypatch.setenv('TELEGRAM_CHAT_ID', str(OWNER))
     monkeypatch.delenv('TELEGRAM_ALLOWED_USER_ID', raising=False)
+    monkeypatch.setattr(worker, 'MENU_SET', {})
 
 
 def sends(calls):
@@ -85,6 +86,9 @@ def test_owner_gets_one_reply_strangers_none_and_duplicates_are_ignored(client, 
     ])
     assert client.post('/agent').json()['answered'] == 1
     assert client.post('/agent').json()['answered'] == 0
+    menu = [call for call in calls if call['url'].endswith('/setMyCommands')]
+    assert len(menu) == 1 and menu[0]['json']['scope'] == {'type': 'chat', 'chat_id': str(OWNER)}
+    assert sends(calls)[0]['json']['reply_markup']['is_persistent'] is True     # the button keyboard
     assert len(sends(calls)) == 1 and sends(calls)[0]['json']['chat_id'] == str(OWNER)
     assert calls[-1]['json']['offset'] == 13
     with main.database() as conn:

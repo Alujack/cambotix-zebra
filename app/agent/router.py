@@ -5,8 +5,8 @@ is unavailable the reply says so instead of silently moving work (and cost) to t
 import json
 import time
 
-from app.agent import commands, deep, memory, tools
-from app.ai import ollama, prompts, usage
+from app.agent import commands, deep, memory, tools, ui
+from app.ai import ollama, openai_client, prompts, usage
 from app.ai.classifier import route_question
 from app.ai.openai_client import CloudAIError
 from app.db import database, readonly
@@ -57,23 +57,29 @@ def handle(chat_id: str, text: str) -> tuple[str, str]:
     text = (text or '').strip()
     if not text:
         return 'I only read text messages. Send /help for the commands.', 'none'
-    parsed = commands.parse(text)
+    parsed = ui.BY_LABEL.get(text) or commands.parse(text)
     if parsed:
         name, argument = parsed
         if name in ('start', 'help'):
-            return commands.HELP, 'command'
+            return ui.HELP, 'command'
         if name == 'forget':
             with database() as conn:
                 memory.forget(conn, chat_id)
             return '🧹 Conversation memory cleared.', 'command'
-        if name == 'deep':
+        if name in ('deep', 'ask_deep'):
             if not argument:
-                return 'Usage: /deep <question>, e.g. /deep why are London trades losing this month?', 'command'
+                ready, _ = openai_client.configured()
+                if not ready:
+                    return '🧠 Deep analysis is off: OpenAI is not configured yet. Everything else works.', 'command'
+                return ui.DEEP_PROMPT + '\n\n' + ui.DEEP_EXAMPLES, 'command'
             return converse(chat_id, argument, 'DEEP')
         if name in commands.COMMANDS:
             with readonly() as conn:
                 return commands.COMMANDS[name](conn, argument), 'command'
-        return 'Unknown command.\n\n' + commands.HELP, 'command'
+        return 'Unknown command.\n\n' + ui.HELP, 'command'
+    greeting = ui.greeting_reply(text)
+    if greeting:
+        return greeting, 'greeting'
     return converse(chat_id, text, None)
 
 

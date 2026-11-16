@@ -7,21 +7,6 @@ from app.agent import tools
 from app.ai import ollama, openai_client, usage
 from app.domain import allowed_symbols
 
-HELP = '''🦓 Zebra assistant (read-only: it never places or changes trades)
-
-/open: open trades
-/price XAUUSD: latest broker price
-/record 30: performance over 30 days (no number = all time)
-/signals 5: recent signals and why
-/news: high-impact news, next 24 h
-/cost: AI spending and budget
-/status: system health
-/deep <question>: full analysis (paid, OpenAI)
-/forget: clear this chat's memory
-
-Or just ask a question. Simple ones are answered locally for free; "why" and comparison questions go to deep analysis.'''
-
-
 PERIODS = {'today': 1, 'day': 1, 'week': 7, 'month': 30, 'year': 365}
 
 

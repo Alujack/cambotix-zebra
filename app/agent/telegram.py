@@ -3,12 +3,17 @@ import os
 
 import httpx
 
+API = 'https://api.telegram.org/bot{token}/{method}'
 
-def deliver(token: str, chat_id: str, text: str) -> tuple[str, str | None]:
+
+def deliver(token: str, chat_id: str, text: str, markup: dict | None = None) -> tuple[str, str | None]:
     """('sent' | 'failed' | 'unknown', error code). 'unknown' means it may have arrived: never resend it."""
+    body = {'chat_id': chat_id, 'text': text}
+    if markup:
+        body['reply_markup'] = markup
     try:
         with httpx.Client(timeout=15) as client:
-            result = client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={'chat_id': chat_id, 'text': text})
+            result = client.post(API.format(token=token, method='sendMessage'), json=body)
             result.raise_for_status()
             if result.json().get('ok') is not True:
                 return 'failed', 'telegram_rejected'
@@ -19,13 +24,34 @@ def deliver(token: str, chat_id: str, text: str) -> tuple[str, str | None]:
     return 'sent', None
 
 
+def call(token: str, method: str, body: dict) -> bool:
+    """A best-effort call (typing indicator, command menu): failures are ignored, never retried."""
+    try:
+        with httpx.Client(timeout=10) as client:
+            response = client.post(API.format(token=token, method=method), json=body)
+            return response.status_code == 200 and response.json().get('ok') is True
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
+def typing(token: str, chat_id: str) -> bool:
+    """Shows "typing…" in the chat for a few seconds while an answer is prepared."""
+    return call(token, 'sendChatAction', {'chat_id': chat_id, 'action': 'typing'})
+
+
+def set_commands(token: str, chat_id: str, commands: list[tuple[str, str]]) -> bool:
+    """The "/" menu, for the owner's chat only: the community group never sees the assistant's commands."""
+    return call(token, 'setMyCommands', {'commands': [{'command': name, 'description': text} for name, text in commands],
+                                         'scope': {'type': 'chat', 'chat_id': chat_id}})
+
+
 def updates(token: str, offset: int | None) -> list[dict]:
     """New message updates after `offset` (non-blocking). Raises httpx.HTTPError or ValueError on failure."""
     params = {'timeout': 0, 'limit': 20, 'allowed_updates': '["message"]'}
     if offset is not None:
         params['offset'] = offset
     with httpx.Client(timeout=15) as client:
-        response = client.post(f'https://api.telegram.org/bot{token}/getUpdates', json=params)
+        response = client.post(API.format(token=token, method='getUpdates'), json=params)
         response.raise_for_status()
         data = response.json()
     if data.get('ok') is not True or not isinstance(data.get('result'), list):

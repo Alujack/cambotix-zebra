@@ -1,6 +1,8 @@
 """Stand-ins for httpx.Client so no test reaches Ollama, OpenAI or Telegram."""
 import httpx
 
+BEST_EFFORT = ('/sendChatAction', '/setMyCommands')
+
 
 class FakeClient:
     """Answers each request with the next item of `replies`: an httpx.Response, a dict (200 JSON) or an exception."""
@@ -19,6 +21,9 @@ class FakeClient:
 
     def _next(self, method, url, body):
         self.calls.append({'method': method, 'url': url, 'json': body})
+        if url.endswith(BEST_EFFORT):
+            # Typing indicator and command menu: always fine, and not part of a test's scripted replies.
+            return httpx.Response(200, json={'ok': True, 'result': True}, request=httpx.Request(method, url))
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply

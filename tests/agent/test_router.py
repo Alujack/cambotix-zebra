@@ -11,7 +11,7 @@ from app.ai.schemas import Route
 @pytest.fixture
 def wiring(monkeypatch):
     """No database: memory and commands are replaced, every model call is recorded."""
-    state = {'remembered': [], 'deep': [], 'simple': [], 'route': None}
+    state = {'remembered': [], 'deep': [], 'simple': [], 'route': None, 'monkeypatch': monkeypatch}
 
     @contextmanager
     def fake():
@@ -49,7 +49,7 @@ def wiring(monkeypatch):
 def test_commands_are_answered_by_code(wiring):
     assert router.handle('1', '/open') == ('OPEN TRADES', 'command')
     assert router.handle('1', '/price@ZebraBot xauusd') == ('PRICE xauusd', 'command')
-    assert router.handle('1', '/help')[0].startswith('🦓 Zebra assistant')
+    assert router.handle('1', '/help')[0].startswith('🦓 Hi!')
     assert router.handle('1', '/nonsense')[0].startswith('Unknown command')
     assert router.handle('1', '/forget')[0].startswith('🧹') and wiring['forgot'] == '1'
     assert wiring['deep'] == wiring['simple'] == []
@@ -78,7 +78,26 @@ def test_deep_question_and_explicit_deep(wiring):
     assert route == 'deep' and 'deep answer' in reply and 'not a trading instruction' in reply
     reply, _ = router.handle('1', '/deep compare sessions')
     assert wiring['deep'] == ['why is London losing?', 'compare sessions']
-    assert router.handle('1', '/deep')[0].startswith('Usage')
+    monkeypatch_configured(wiring, True)
+    assert router.handle('1', '/deep')[0].startswith(router.ui.DEEP_PROMPT)
+    assert router.handle('1', '🧠 Deep analysis')[0].startswith(router.ui.DEEP_PROMPT)
+    monkeypatch_configured(wiring, False)
+    assert 'not configured' in router.handle('1', '🧠 Deep analysis')[0]
+
+
+def monkeypatch_configured(wiring, ready):
+    wiring['monkeypatch'].setattr(router.openai_client, 'configured', lambda: (ready, ''))
+
+
+def test_buttons_and_greetings_never_ask_a_model(wiring):
+    wiring['route'] = RuntimeError('the model must not be asked')
+    assert router.handle('1', '📂 Open trades') == ('OPEN TRADES', 'command')
+    assert router.handle('1', '💹 Price') == ('PRICE ', 'command')
+    assert router.handle('1', '❓ Help')[0].startswith('🦓 Hi!')
+    for text in ['Hi bro', 'hello!', 'thanks', 'សួស្តី', 'ok']:
+        reply, route = router.handle('1', text)
+        assert route == 'greeting', text
+    assert wiring['deep'] == wiring['simple'] == []
 
 
 def test_local_model_down_never_moves_work_to_openai(wiring):
