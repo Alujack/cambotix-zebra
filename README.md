@@ -201,7 +201,7 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `RISK_PERCENT` | 0.5 | Risk per trade used for sizing |
 | `CONTRACT_SIZES` | XAUUSD=100 | Units per lot per symbol for the lots figure |
 | `MAX_SIGNAL_AGE_SECONDS` | 300 | Maximum age from confirmed bar close |
-| `OLLAMA_MODEL` | qwen2.5:1.5b | Local model with schema-constrained JSON |
+| `OLLAMA_MODEL` | qwen2.5:3b | Local model with schema-constrained JSON (signal reviews, trade notes, agent routing) |
 | `MAX_OPEN_SAME_DIRECTION` | 1 | Reject a setup while this many plans on the same symbol and side are still open (`0` = no limit) |
 | `NEWS_CAUTION_MIN` | 120 | Caution when a high-impact event is due within this many minutes (beyond the blocking window) |
 | `HISTORY_MIN_SAMPLES` / `HISTORY_DAYS` | 30 / 60 | History warning once the record has this many closed trades for the same symbol, side, model and session |
@@ -213,7 +213,7 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 
 Use matching Pine indicator thresholds when adjusting rules. Classic accepts only the 15m timeframe; CRT accepts its range timeframe (`1h`, `4h` or `1d`). `SYMBOLS` lists accepted tickers; tickers in `SESSION_EXEMPT_SYMBOLS` skip the session filter on the server, and the Pine script skips it for any `crypto` symbol. Thresholds are shared across symbols, so review the ATR band before enabling a new market. Incoming `bar_time` is the bar-close timestamp in **Unix seconds**, not milliseconds. Numeric fields must be finite JSON numbers. `macd_hist` means histogram, not the MACD line.
 
-With the default `GATE_MODE=rules`, a candidate is `approved` when every technical rule passes. When `AI_COMMENTARY=true`, the model gets only the remaining freshness window minus a transaction reserve; its failure or latency cannot veto the deterministic result. Set it false for the fastest path. With `GATE_MODE=ai` the model must also approve the existing direction, report a matching market regime and good/excellent quality, and meet the configured confidence threshold; failures retry up to three times. `approved` means ready for **manual review**, never permission to place an order. Performance is established only by the graded ledger below, never claimed in advance.
+With the default `GATE_MODE=rules`, a candidate is `approved` when every technical rule passes. When `AI_COMMENTARY=true`, the local model's review is queued and sent as its own message right after the alert (see AI agent); its failure or latency can neither delay nor veto the deterministic result. With `GATE_MODE=ai` the model must also approve the existing direction, report a matching market regime and good/excellent quality, and meet the configured confidence threshold; failures retry up to three times. `approved` means ready for **manual review**, never permission to place an order. Performance is established only by the graded ledger below, never claimed in advance.
 
 **One idea, one plan.** While a plan on the same symbol and side is still open, a new setup in that direction is rejected with `open_plan_same_direction` (`MAX_OPEN_SAME_DIRECTION`). Stacking near-identical entries turns one idea into several losses when it fails. A plan counts as open until it closes, is not filled, or passes its own entry-expiry plus hold limit, so a stopped feeder cannot block a symbol forever. Synthetic test signals skip this check.
 
@@ -221,9 +221,47 @@ With the default `GATE_MODE=rules`, a candidate is `approved` when every technic
 
 Signal identity is protected by both the primary event ID and a unique `(symbol, timeframe, bar_time, signal)` key. Concurrent inserts are atomic. A duplicate with changed values returns HTTP 409. Stale/invalid input returns 422, and database failures return 503 for retry. No successful acknowledgment is sent before database commit.
 
-The processor holds a PostgreSQL advisory lock, recovers interrupted claims, and (with `GATE_MODE=ai`) retries failed/invalid AI responses up to three times with 30-second backoff. AI-gated age is checked again after inference; optional rules-mode commentary cannot expire an otherwise valid rules decision. The accepted-signal journal and notification outbox are committed together. Invalid incoming requests are not stored; accepted signal history is available via `scripts/history.py` (latest 100) or PostgreSQL.
+The processor holds a PostgreSQL advisory lock, recovers interrupted claims, and (with `GATE_MODE=ai`) retries failed/invalid AI responses up to three times with 30-second backoff. AI-gated age is checked again after inference; rules-mode commentary runs after the decision and cannot expire it. The accepted-signal journal and notification outbox are committed together. Invalid incoming requests are not stored; accepted signal history is available via `scripts/history.py` (latest 100) or PostgreSQL.
 
 macOS setup uses `OLLAMA_RUNTIME=native`, an empty `COMPOSE_PROFILES`, and `OLLAMA_BASE_URL=http://host.docker.internal:11435`. To use Docker Ollama instead, set `OLLAMA_RUNTIME=docker`, `COMPOSE_PROFILES=docker-ai`, and `OLLAMA_BASE_URL=http://ollama:11434`, then run the start script. Docker inference on this Mac uses CPU. For a different model, change `OLLAMA_MODEL` and rerun `bash scripts/start.sh` to pull it and update the analyzer. Changing the timeout also requires regenerating and reimporting the analysis workflow.
+
+## AI agent
+
+A read-only assistant on top of the record. **It never places, edits or closes a trade, and it never decides a signal**: the technical rules keep full authority, and every AI table is separate from the ledger. Two models split the work by difficulty, not as fallbacks for each other:
+
+| Work | Who | Cost |
+|---|---|---|
+| `/open`, `/price`, `/record`, `/signals`, `/news`, `/cost`, `/status` | code, from the database | free |
+| Review of each approved signal (sent right after the alert) | Ollama | free |
+| 1–2 line review of each closed trade (sent right after the result) | Ollama | free |
+| Sorting each free-text question: command, simple or deep | Ollama | free |
+| Simple questions, answered from a code-computed snapshot | Ollama | free |
+| Deep questions (`/deep ...` or confidently routed), with read-only tools | OpenAI | paid, budgeted |
+| Weekly report: statistics by code, interpretation by OpenAI | OpenAI | paid, budgeted |
+
+When Ollama is down, alerts and results still go out without the notes, and free-text questions get a "local AI offline" reply; nothing is moved to OpenAI. When OpenAI is down, unconfigured or out of budget, deep questions get a plain explanation and the weekly report goes out with its statistics only; nothing is moved to the small local model.
+
+**How it runs.** The n8n workflow *Zebra 5 — AI agent* calls `POST /agent` every 10 seconds. One tick, under its own advisory lock: reads new Telegram messages (`getUpdates`, so the bot needs no webhook), answers up to `AGENT_MAX_UPDATES_PER_RUN`, runs up to three queued AI notes, and sends the weekly report when it is due. Telegram updates are stored before they are answered and the read position is persisted, so a restart or an overlapping run never answers twice; a reply whose delivery result was lost is marked `unknown` and never resent. Notes are an `ai_jobs` queue (three attempts with backoff); stale notes are skipped.
+
+**Access.** Only `TELEGRAM_CHAT_ID` as a *private* chat, sent by `TELEGRAM_ALLOWED_USER_ID` (default: the same id), gets an answer. Everyone else, including the community group, is ignored and their text is not stored. Questions, memory and database rows travel to the models as data, never as instructions. The last `AGENT_MEMORY_TURNS` question/answer pairs per chat are kept for follow-ups and deleted after `AGENT_MEMORY_RETENTION_DAYS`; `/forget` clears them.
+
+**Deep analysis tools** (`app/agent/tools.py`): `get_track_record`, `get_signals`, `get_signal`, `get_open_trades`, `get_closed_trades`, `get_candles`, `get_news`. Each validates its arguments and runs a fixed, parameterized query inside a `READ ONLY` transaction; there is no SQL tool and no write tool. Per question: at most `AGENT_MAX_TOOL_CALLS` tool executions (then the model must conclude), `AGENT_TOOL_OUTPUT_CHARS` per result, `AGENT_DEEP_TIMEOUT_SECONDS` overall. The instructions require cited numbers, sample sizes, and suggestions phrased as hypotheses to backtest.
+
+**Cost control.** Before **every** OpenAI request (a question with tool rounds makes several), its worst-case cost (input estimate plus `OPENAI_MAX_OUTPUT_TOKENS`) is reserved inside one locked transaction, and the request is refused without being sent when either:
+- the day already has `OPENAI_DAILY_LIMIT` deep jobs (a question or a report, with all its rounds), or
+- the month's spending plus the reservation would exceed `OPENAI_MONTHLY_BUDGET_USD − OPENAI_SAFETY_RESERVE_USD`.
+
+Concurrent requests cannot overspend. After the response, the reservation is replaced by the cost of the measured tokens (`OPENAI_PRICE_*`). A timeout or server error keeps the full reservation as cost: failures are never assumed free. Days and months follow `DIGEST_TIMEZONE`. These are estimates; OpenAI's billing page is the authority. `/cost` shows today, the month, the budget left and Ollama's request count; `/status` shows the database, Ollama (model pulled?), OpenAI configuration, provider success rates and latency, MT5 feed freshness, queue depths and Telegram failures.
+
+**Weekly report.** On `WEEKLY_REPORT_DAY` from `WEEKLY_REPORT_HOUR` (`WEEKLY_REPORT_TIMEZONE`), covering the seven days that ended at midnight: totals, win rate, R, profit factor, expectancy, the four previous weeks, sessions, symbols, cautions and data-quality notes (small samples, stale feed, ambiguous candles), all computed by code. OpenAI adds observations and 1–3 backtest suggestions. The period is claimed before any work (`ai_reports`), so a second run never sends a second report. Reports go to the digest chat.
+
+**Enable it** (stage 1 → 2 → 3):
+
+1. Deploy with `AGENT_ENABLED=false`. Run `bash scripts/check-ai.sh` to test the local model, then check `/agent` runs in n8n.
+2. Pull the local model (`OLLAMA_MODEL`, default `qwen2.5:3b`; try `qwen2.5:7b` if the VPS has 8 GB+ RAM and compare). Set `AGENT_ENABLED=true` and send `/status`, `/help` and `/open` to the bot.
+3. Add `OPENAI_API_KEY` and `OPENAI_MODEL` to the server's `.env` only, after confirming the model id your account can use with the Responses API. Start with a small `OPENAI_DAILY_LIMIT`, set the same monthly limit in the OpenAI dashboard, and watch `/cost` for a week.
+
+Settings: see the AI agent block at the end of `.env.example`. Changing `.env` needs `docker compose up -d analyzer` to take effect. Existing installations get the new workflow from `bash scripts/start.sh`, which imports only the missing one. A VPS keeps its own `.env`, so add the new keys there.
 
 ## MetaTrader 5 feeder
 

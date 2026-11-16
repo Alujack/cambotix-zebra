@@ -2,7 +2,7 @@ import hmac
 import json
 import os
 import time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
@@ -11,30 +11,27 @@ import httpx
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
-from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app import ledger
+from app.agent import jobs, worker
+from app.agent.telegram import deliver
+from app.ai import tables as ai_tables
+from app.ai.ollama import LocalAIError
+from app.ai.review import classify
+from app.db import database
 from app.domain import (Analysis, Signal, allowed_symbols, cautions, freshness, gate_mode, notification_text, outcome,
-                        session_exempt_symbols, sessions, synthetic, system_prompt, technical_rules)
+                        synthetic, technical_rules)
 from app.grader import simulate
-from app.news import news_status
-
-
-@contextmanager
-def database():
-    with psycopg.connect(host=os.getenv('DB_HOST', 'postgres'), dbname=os.getenv('DB_NAME', 'zebra'),
-                          user=os.getenv('DB_USER', 'zebra'), password=os.environ['POSTGRES_PASSWORD'],
-                          connect_timeout=1, options='-c statement_timeout=1500 -c lock_timeout=500',
-                          row_factory=dict_row) as conn:
-        yield conn
+from app.outbox import queue_message, telegram_enabled
 
 
 @asynccontextmanager
 async def lifespan(_):
     with database() as conn:
         ledger.migrate(conn)
+        ai_tables.migrate(conn)
     yield
 
 
@@ -56,7 +53,8 @@ async def database_error(request, exc):
 def health():
     with database() as conn:
         conn.execute('SELECT 1')
-    return {'status': 'ok', 'mode': 'manual_review', 'gate': gate_mode(), 'execution_enabled': False}
+    return {'status': 'ok', 'mode': 'manual_review', 'gate': gate_mode(), 'execution_enabled': False,
+            'agent_enabled': worker.enabled()}
 
 
 @app.post('/signals', dependencies=[Depends(authorize)])
@@ -87,33 +85,6 @@ async def ingest(request: Request):
     return JSONResponse(status_code=202, content={'status': 'queued', 'event_id': signal.event_id})
 
 
-def classify(signal: Signal) -> Analysis:
-    schema = Analysis.model_json_schema()
-    timeout = float(os.getenv('AI_TIMEOUT_SECONDS', '120'))
-    if gate_mode() == 'rules':
-        # Commentary must never consume the signal's remaining lifetime. Leave a small
-        # reserve for the approval and outbox transaction.
-        maximum_age = int(os.getenv('MAX_SIGNAL_AGE_SECONDS', '300'))
-        remaining = maximum_age - (time.time() - signal.bar_time) - 5
-        timeout = min(timeout, max(1.0, remaining))
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434').rstrip('/') + '/api/chat', json={
-            'model': os.getenv('OLLAMA_MODEL', 'qwen2.5:1.5b'), 'stream': False, 'format': schema,
-            'options': {'temperature': 0, 'num_predict': 600, 'num_ctx': 4096},
-            'messages': [{'role': 'system', 'content': system_prompt(signal) + '\nSchema: ' + json.dumps(schema)},
-                         {'role': 'user', 'content': json.dumps({'candidate': signal.model_dump(),
-                                                                 'sessions': sessions(signal.bar_time),
-                                                                 'trades_continuously': signal.symbol in session_exempt_symbols(),
-                                                                 'news': news_status(signal.bar_time)})}]
-        })
-        response.raise_for_status()
-        return Analysis.model_validate_json(response.json()['message']['content'])
-
-
-def telegram_enabled() -> bool:
-    return os.getenv('TELEGRAM_ENABLED', 'false').lower() == 'true'
-
-
 def finish(signal: Signal, status: str, analysis: Analysis | None, reasons: list[str], error_code=None):
     data = analysis.model_dump() if analysis else None
     with database() as conn:
@@ -127,6 +98,9 @@ def finish(signal: Signal, status: str, analysis: Analysis | None, reasons: list
             # Published in the same transaction as the approval: an approved setup is always on the record.
             now = int(time.time())
             seq, _ = ledger.append(conn, signal.event_id, 'published', now, ledger.plan_record(signal, now, warnings))
+        if status == 'approved' and analysis is None and gate_mode() == 'rules' and jobs.signal_notes_enabled():
+            # Commentary is written after the alert by the agent worker: a slow or offline model never delays it.
+            jobs.enqueue(conn, 'signal_note', signal.event_id)
         conn.execute('''INSERT INTO notifications(event_id,message,status) VALUES (%s,%s,%s)
             ON CONFLICT DO NOTHING''', (signal.event_id, notification_text(signal, status, data, reasons, ledger_seq=seq,
                                                                          warnings=warnings),
@@ -162,12 +136,12 @@ def process():
                 finish(signal, 'rejected', None, reasons)
                 return {'status': 'rejected', 'event_id': signal.event_id}
             mode = gate_mode()
-            commentary = os.getenv('AI_COMMENTARY', 'true').lower() == 'true'
             analysis = None
-            if mode == 'ai' or commentary:
+            if mode == 'ai':
+                # AI-gated mode only: the model is part of the decision. In rules mode commentary is queued instead.
                 try:
                     analysis = classify(signal)
-                except (httpx.HTTPError, ValidationError, ValueError, KeyError, TypeError):
+                except (LocalAIError, httpx.HTTPError, ValidationError, ValueError, KeyError, TypeError):
                     # No raw provider errors are logged: URLs may contain credentials.
                     analysis = None
             if analysis is None and mode == 'ai':
@@ -184,25 +158,10 @@ def process():
                 return {'status': 'rejected', 'event_id': signal.event_id}
             # Rules gate: every technical rule passed, so the setup is approved; the model only comments.
             status = outcome(signal, analysis) if mode == 'ai' else 'approved'
-            finish(signal, status, analysis, [] if status == 'approved' else ['ai_quality_gate_rejected'],
-                   None if analysis else 'ai_commentary_unavailable')
+            finish(signal, status, analysis, [] if status == 'approved' else ['ai_quality_gate_rejected'])
             return {'status': status, 'event_id': signal.event_id}
         finally:
             guard.execute('SELECT pg_advisory_unlock(914207)')
-
-
-def deliver(token: str, chat_id: str, text: str) -> tuple[str, str | None]:
-    try:
-        with httpx.Client(timeout=15) as client:
-            result = client.post(f'https://api.telegram.org/bot{token}/sendMessage', json={'chat_id': chat_id, 'text': text})
-            result.raise_for_status()
-            if result.json().get('ok') is not True:
-                return 'failed', 'telegram_rejected'
-    except httpx.HTTPStatusError as exc:
-        return ('failed' if 400 <= exc.response.status_code < 500 else 'unknown'), 'telegram_http_error'
-    except (httpx.HTTPError, ValueError):
-        return 'unknown', 'telegram_result_unknown'
-    return 'sent', None
 
 
 @app.post('/notify', dependencies=[Depends(authorize)])
@@ -288,11 +247,6 @@ async def candles(request: Request):
             'need_from': min(older) if older else through}
 
 
-def queue_message(conn, ref: str, kind: str, chat: str, text: str):
-    conn.execute('''INSERT INTO messages(ref, kind, chat, message, status) VALUES (%s,%s,%s,%s,%s)
-        ON CONFLICT DO NOTHING''', (ref, kind, chat, text, 'pending' if telegram_enabled() else 'disabled'))
-
-
 def queue_digest(conn):
     zone = ZoneInfo(os.getenv('DIGEST_TIMEZONE', 'Asia/Phnom_Penh'))
     local = datetime.now(zone)
@@ -336,6 +290,9 @@ def grade():
                                       {k: v for k, v in event.items() if k not in ('kind', 'time')})
                     queue_message(conn, f'result:{item["event_id"]}:{new[-1]["kind"]}', 'result', 'private',
                                   ledger.result_text(plan, new, item['seq']))
+                    if new[-1]['kind'] == 'closed' and jobs.trade_notes_enabled() and not synthetic(item['event_id']):
+                        # The result goes out now; the local model's short review follows as its own message.
+                        jobs.enqueue(conn, 'trade_note', item['event_id'])
                     # Commit per plan: the ledger lock stays brief for approvals running meanwhile.
                     conn.commit()
                     recorded += len(new)
@@ -362,3 +319,9 @@ def history():
     with database() as conn:
         return conn.execute('''SELECT s.*, n.status AS notification_status FROM signals s
           LEFT JOIN notifications n USING(event_id) ORDER BY received_at DESC LIMIT 100''').fetchall()
+
+
+@app.post('/agent', dependencies=[Depends(authorize)])
+def agent():
+    """Telegram assistant, queued AI notes and the weekly report: one bounded tick under its own lock."""
+    return worker.tick()

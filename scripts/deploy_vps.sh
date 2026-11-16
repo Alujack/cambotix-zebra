@@ -59,7 +59,7 @@ if [ "$(id -u)" -ne 0 ] && ! id -nG | tr ' ' '\n' | grep -qx docker; then
   echo "Added $(id -un) to the docker group."
 fi
 mem=$(awk '/MemTotal/ {print int($2/1024/1024+0.5)}' /proc/meminfo)
-[ "$mem" -ge 4 ] || echo "WARNING: ${mem} GB RAM. CPU Ollama with qwen2.5:1.5b wants about 4 GB in total; add swap or use a larger plan."
+[ "$mem" -ge 4 ] || echo "WARNING: ${mem} GB RAM. CPU Ollama with qwen2.5:3b wants about 4-5 GB in total (7b: 8 GB); add swap or use a larger plan."
 docker compose version 2>/dev/null || $sudo_cmd docker compose version
 SH
 

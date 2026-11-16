@@ -52,6 +52,16 @@ def next_event(bar_time: int, events: list | None = None) -> dict | None:
     return upcoming[0] if upcoming else None
 
 
+def upcoming(now: float, hours: int = 24, events: list | None = None) -> dict:
+    """Relevant high-impact events from one hour ago to `hours` ahead, for the agent. state: off|unknown|ok."""
+    if os.getenv('NEWS_FILTER', 'true').lower() != 'true':
+        return {'state': 'off', 'events': []}
+    events = _load() if events is None else events
+    if events is None:
+        return {'state': 'unknown', 'events': []}
+    return {'state': 'ok', 'events': [e for e in _relevant(events) if now - 3600 <= e['time'] <= now + hours * 3600]}
+
+
 def news_status(bar_time: int, events: list | None = None) -> dict:
     """{'state': 'off'|'clear'|'blocked'|'unknown', 'detail': str} for a bar close time in Unix seconds."""
     if os.getenv('NEWS_FILTER', 'true').lower() != 'true':

@@ -1,0 +1,71 @@
+{
+  "id": "zebraAgentV1",
+  "name": "Zebra 5 \u2014 AI agent",
+  "active": false,
+  "nodes": [
+    {
+      "id": "every-10-seconds",
+      "name": "Every 10 seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "run-one-agent-tick",
+      "name": "Run one agent tick",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://analyzer:8000/agent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 240000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "zebraAnalyzerAuth",
+          "name": "Zebra internal API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 10 seconds": {
+      "main": [
+        [
+          {
+            "node": "Run one agent tick",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Phnom_Penh"
+  },
+  "pinData": {},
+  "tags": []
+}

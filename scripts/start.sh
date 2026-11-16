@@ -10,23 +10,32 @@ docker compose up -d --build --wait
 if [ ! -f .local/workflows-installed ]; then
   docker compose exec -T -u root n8n n8n import:credentials --input=/imports/credentials.json
   docker compose exec -T -u root n8n n8n import:workflow --input=/imports/workflows.json
-  for workflow in zebraIngestV1 zebraAnalyzeV1 zebraNotifyV1 zebraGradeV1; do
+  for workflow in zebraIngestV1 zebraAnalyzeV1 zebraNotifyV1 zebraGradeV1 zebraAgentV1; do
     docker compose exec -T -u root n8n n8n publish:workflow --id="$workflow"
   done
-  published=$(docker compose exec -T postgres psql -U zebra -d n8n -tAc 'SELECT count(*) FROM workflow_entity WHERE id IN ('"'zebraIngestV1','zebraAnalyzeV1','zebraNotifyV1','zebraGradeV1'"') AND "activeVersionId" IS NOT NULL')
-  if [ "$published" != "4" ]; then
+  published=$(docker compose exec -T postgres psql -U zebra -d n8n -tAc 'SELECT count(*) FROM workflow_entity WHERE id IN ('"'zebraIngestV1','zebraAnalyzeV1','zebraNotifyV1','zebraGradeV1','zebraAgentV1'"') AND "activeVersionId" IS NOT NULL')
+  if [ "$published" != "5" ]; then
     echo 'Workflow publishing did not complete. Review the n8n import output.' >&2
     exit 1
   fi
   docker compose restart n8n
   docker compose up -d --wait
   touch .local/workflows-installed
-elif [ "$(docker compose exec -T postgres psql -U zebra -d n8n -tAc "SELECT count(*) FROM workflow_entity WHERE id='zebraGradeV1'")" != "1" ]; then
-  # Installed before the outcome grader existed: add only that workflow, keeping the other three as edited.
-  docker compose exec -T -u root n8n n8n import:workflow --input=/imports/grader.json
-  docker compose exec -T -u root n8n n8n publish:workflow --id=zebraGradeV1
-  docker compose restart n8n
-  docker compose up -d --wait
+else
+  # Installed before a workflow existed: add only the missing ones, keeping the others as edited.
+  added=0
+  for pair in zebraGradeV1:grader zebraAgentV1:agent; do
+    id=${pair%%:*} file=${pair##*:}
+    if [ "$(docker compose exec -T postgres psql -U zebra -d n8n -tAc "SELECT count(*) FROM workflow_entity WHERE id='$id'")" != "1" ]; then
+      docker compose exec -T -u root n8n n8n import:workflow --input="/imports/$file.json"
+      docker compose exec -T -u root n8n n8n publish:workflow --id="$id"
+      added=1
+    fi
+  done
+  if [ "$added" = "1" ]; then
+    docker compose restart n8n
+    docker compose up -d --wait
+  fi
 fi
 rm -f .local/import/credentials.json
 model=$(python3 -c 'from scripts.setup import read_env; print(read_env()["OLLAMA_MODEL"])')
