@@ -363,6 +363,7 @@ def test_cautions_appear_in_the_message():
 
 def test_compact_message_is_short_and_readable(monkeypatch):
     monkeypatch.setenv('MESSAGE_STYLE', 'compact')
+    monkeypatch.setenv('ACCOUNT_SIZE', '0')      # a local .env with sizing adds a line; the limit is about the layout
     message = notification_text(crt(), 'approved', analysis().model_dump(), [], ledger_seq=3)
     assert message.splitlines()[0] == '🟢 BUY XAUUSD · CRT 4h'
     for text in ('▶️ BUY NOW (market order): 3506.00', '🛑 Stop:   3493.40  (risk 12.60)', '🎯 TP1: 3540.00  (+2.7R)',
