@@ -5,16 +5,19 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1                    # local stack
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Symbol XAUUSDm
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Vps               # VPS analyzer via scripts\vps_feeder.ps1
+#   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Symbol EURUSDm -Models ict -LogName feeder-eurusd.log
+# Each symbol runs its own service; give a second one its own -LogName so the two logs do not interleave.
 param(
     [string]$Symbol = 'XAUUSDc',
     [string]$Models = 'classic,crt',
+    [string]$LogName = 'feeder.log',
     [switch]$Vps
 )
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $logDir = Join-Path $root '.local'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-$log = Join-Path $logDir 'feeder.log'
+$log = Join-Path $logDir $LogName
 
 function Write-Log([string]$message) {
     if ((Test-Path $log) -and (Get-Item $log).Length -gt 10MB) { Move-Item -Force $log "$log.1" }

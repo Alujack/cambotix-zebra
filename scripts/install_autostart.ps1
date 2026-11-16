@@ -6,20 +6,28 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Symbol XAUUSDm
 #   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Vps               # analyzer on the VPS
 #   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
+# A second symbol gets its own task and log, next to the first (here the ICT model on EURUSD):
+#   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Symbol EURUSDm -Models ict `
+#       -TaskName 'Cambotix Zebra Feeder EURUSD' -LogName feeder-eurusd.log
+# Reinstalling stops only the feeders of -Symbol; to move a task to another symbol, -Uninstall it with the old one first.
 param(
     [string]$Symbol = 'XAUUSDc',
     [string]$Models = 'classic,crt',
+    [string]$TaskName = 'Cambotix Zebra Feeder',
+    [string]$LogName = 'feeder.log',
     [switch]$Vps,
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
-$taskName = 'Cambotix Zebra Feeder'
+$taskName = $TaskName
 $root = Split-Path -Parent $PSScriptRoot
 
 function Stop-Feeders {
     # Stopping the task ends its PowerShell host but not the Python child; end both so no second feeder survives.
+    # Only this symbol's feeders: another symbol's task (gold next to EURUSD) keeps running.
     Get-CimInstance Win32_Process |
         Where-Object { $_.CommandLine -like '*feeder_service.ps1*' -or $_.CommandLine -like '*mt5_feeder.py*' } |
+        Where-Object { $_.CommandLine -match "(?i)-symbol\s+$([regex]::Escape($Symbol))(\s|$)" } |
         Where-Object { $_.ProcessId -ne $PID } |
         ForEach-Object {
             Write-Host "stopping $($_.Name) $($_.ProcessId)"
@@ -40,7 +48,7 @@ if (-not $Vps -and -not (Test-Path (Join-Path $root '.env'))) { throw "Missing $
 if ($Vps -and -not (Test-Path (Join-Path $root '.local\vps.env'))) { throw "Missing $root\.local\vps.env; run bash scripts/deploy_vps.sh first" }
 
 $service = Join-Path $PSScriptRoot 'feeder_service.ps1'
-$arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$service`" -Symbol $Symbol -Models $Models"
+$arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$service`" -Symbol $Symbol -Models $Models -LogName $LogName"
 if ($Vps) { $arguments += ' -Vps' }
 $user = "$env:USERDOMAIN\$env:USERNAME"
 
@@ -63,4 +71,4 @@ Start-Sleep 5
 $state = (Get-ScheduledTask -TaskName $taskName).State
 Write-Host "task '$taskName' installed and $state ($Symbol, models $Models$(if ($Vps) { ', VPS' }))."
 Write-Host "It starts 30s after you sign in. Watch it with:"
-Write-Host "  Get-Content `"$root\.local\feeder.log`" -Tail 30 -Wait"
+Write-Host "  Get-Content `"$root\.local\$LogName`" -Tail 30 -Wait"

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Replay the classic and CRT models over saved broker history and grade every plan the analyzer would publish.
+"""Replay the classic, CRT and ICT models over saved broker history and grade every plan the analyzer would publish.
 
 Same code path as live wherever it matters: detection is the feeder's (classic indicators re-implemented
-without pandas, CRT via scripts/crt_engine.detect); every payload goes through app.domain's rule checks;
+without pandas, CRT via scripts/crt_engine.detect, ICT via scripts/ict_engine.detect on M5); every payload goes through app.domain's rule checks;
 plans are frozen with app.ledger.plan_record; grading is app.grader.simulate on M1 candles including spread;
 statistics are app.grader.summarize. Settings come from the environment (.env), and --set overrides them.
 
 Not reproduced: the news blackout (no historical calendar).
 
-Data: .local/history/<SYMBOL>_{m1,m15}.csv from scripts/pull_history.py (MT5, Windows) or
+Data: .local/history/<SYMBOL>_{m1,m15}.csv (ICT also needs _m5, built from M1 when missing) from scripts/pull_history.py (MT5, Windows) or
 scripts/pull_dukascopy.py (no MT5, runs on the Mac).
 Run in the analyzer image, which has the app's dependencies and reads .env:
   docker compose run --rm --no-deps -v "$PWD:/work" -w /work analyzer python scripts/backtest.py
@@ -30,7 +30,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT), str(ROOT / 'scripts')]
 
 import crt_engine  # noqa: E402
-from app.domain import Signal, classic_rules, crt_rules  # noqa: E402
+import ict_engine  # noqa: E402
+from app.domain import MODEL_RULES, Signal  # noqa: E402
 from app.grader import simulate, summarize  # noqa: E402
 from app import ledger  # noqa: E402
 
@@ -154,6 +155,25 @@ def crt_payloads(symbol: str, data: dict) -> list[dict]:
     return crt_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in data['m15']], crt_config(symbol))
 
 
+# -- ICT ---------------------------------------------------------------------------------------------
+def m5_from_m1(m1: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for bar in m1:
+        key = bar['t'] - bar['t'] % 300
+        if out and out[-1]['t'] == key:
+            last = out[-1]
+            last['h'], last['l'], last['c'] = max(last['h'], bar['h']), min(last['l'], bar['l']), bar['c']
+        else:
+            out.append({'t': key, 'o': bar['o'], 'h': bar['h'], 'l': bar['l'], 'c': bar['c']})
+    return out
+
+
+def ict_payloads(symbol: str, data: dict) -> list[dict]:
+    m5 = data.get('m5') or m5_from_m1(data['m1'])
+    cfg = ict_engine.IctConfig(min_rr=float(os.getenv('ICT_MIN_RR', '2.0')))
+    return ict_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in m5], cfg)
+
+
 # -- publish + grade ---------------------------------------------------------------------------------
 def grade(payloads: list[dict], m1: list[dict]) -> tuple[list[dict], dict]:
     """Apply the analyzer's rules and open-plan limit in time order; grade each published plan."""
@@ -164,7 +184,7 @@ def grade(payloads: list[dict], m1: list[dict]) -> tuple[list[dict], dict]:
     trades, rejected = [], {}
     for body in sorted(payloads, key=lambda p: (p['bar_time'], p['model'], p['signal'])):
         signal = Signal.model_validate(body)
-        reasons = crt_rules(signal) if signal.model == 'crt' else classic_rules(signal)
+        reasons = MODEL_RULES[signal.model](signal)
         direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
         bar_time, opened_at = signal.bar_time, signal.bar_time - signal.bar_seconds
         if not reasons and limit > 0 and sum(1 for d, until in open_until if d == direction and until > bar_time) >= limit:
@@ -218,6 +238,8 @@ def run(data: dict, symbol: str, models: set[str]) -> tuple[list[dict], dict]:
         payloads += classic_payloads(symbol, classic_indicators(data['m15']))
     if 'crt' in models:
         payloads += crt_payloads(symbol, data)
+    if 'ict' in models:
+        payloads += ict_payloads(symbol, data)
     return grade(payloads, data['m1'])
 
 
@@ -254,10 +276,12 @@ def main() -> None:
     enabled = {x.strip().upper() for x in os.getenv('SYMBOLS', 'XAUUSD').split(',') if x.strip()}
     os.environ['SYMBOLS'] = ','.join(sorted(enabled | {args.symbol.upper()}))
     folder = Path(args.data)
-    data = {frame: load(folder, args.symbol, frame) for frame in ('m1', 'm15')}
     models = {m.strip() for m in args.models.split(',') if m.strip()}
-    if not models <= {'classic', 'crt'}:
-        raise SystemExit('--models accepts classic, crt or classic,crt')
+    if not models <= {'classic', 'crt', 'ict'}:
+        raise SystemExit('--models accepts a comma list of classic, crt and ict')
+    data = {frame: load(folder, args.symbol, frame) for frame in ('m1', 'm15')}
+    if 'ict' in models and (folder / f'{args.symbol}_m5.csv').exists():
+        data['m5'] = load(folder, args.symbol, 'm5')
     first, last = data['m1'][0]['t'], data['m1'][-1]['t']
     split = first + (last - first) * 2 // 3
     stamp = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime('%Y-%m-%d')
@@ -266,7 +290,8 @@ def main() -> None:
     if not args.sweep:
         print('settings: ' + ', '.join(f'{k}={os.getenv(k)}' for k in ('TP_R_MULTIPLES', 'STOP_ATR_MULTIPLE', 'MIN_ADX',
                                                                          'CRT_HTF_HOURS', 'CRT_KEY_TIMES', 'CRT_MIN_RR',
-                                                                         'CRT_MAX_HOLD_CANDLES')))
+                                                                         'CRT_MAX_HOLD_CANDLES', 'ICT_SYMBOLS',
+                                                                         'ICT_ENTRY_EXPIRY_MINUTES', 'ICT_MAX_HOLD_MINUTES')))
         trades, rejected = run(data, args.symbol, models)
         report(trades, rejected, split)
         if args.trades:

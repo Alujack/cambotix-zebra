@@ -119,7 +119,7 @@ Pine emits on confirmed bar close when a setup first becomes valid. It uses EMA2
 
 ## Strategy models
 
-Two detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
+Three detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
 
 **classic** (`tradingview/gold_setups.pine`): complete price/EMA20/50/200 alignment, RSI band, MACD histogram sign, ADX minimum, ATR band, and the London/New York session filter evaluated on the bar open. Levels come from ATR and the prior swing.
 
@@ -129,6 +129,14 @@ Two detection models share the same pipeline, journal, AI gate, and message form
 2. **Signal**: posted at C2's close with `timeframe` = the range timeframe (`4h`). `range_high`/`range_low` are C1, `sweep_level` is C2's wick beyond the range, `price` is C2's close.
 3. **Plan**: market entry at that close (the signal says BUY NOW / SELL NOW; a limit at the swept level lost money in every backtest), stop beyond C2's wick plus `CRT_STOP_BUFFER_ATR` x 15m ATR, TP1 at C1's opposite extreme (TP2-TP4 at `CRT_EXTRA_TARGETS_R` beyond it), at least `CRT_MIN_RR` reward per unit of risk. The trade closes at market after `CRT_MAX_HOLD_CANDLES` range candles. `CRT_KEY_TIMES` can restrict which New York candles may signal (empty = all).
 4. **Analyzer checks** (`crt_rules`): weekday candle, key time, range swept on exactly the signalled side, close back inside, stop beyond the sweep, target at the opposite extreme, stop at least 0.3 ATR, minimum reward:risk.
+
+**ict** (`scripts/ict_engine.py`, the ICT 2022 model from `docs/ICT_Trading_Khmer_Beginner_Book.md`, chapter 19): runs on M5 **next to CRT**, covering the hours when CRT is quiet. The analyzer accepts it only for `ICT_SYMBOLS` (default `EURUSD`), and every message is tagged *ICT · forward test*:
+
+1. **Liquidity**: the previous day's high/low (New York 17:00 roll), the Asia high/low (20:00-24:00 New York) and the London high/low (02:00-05:00). Each pool counts once.
+2. **Sweep**: inside a killzone (London 02:00-05:00 or NY AM 08:30-11:00 New York, weekdays), price trades beyond a fresh pool. A swept low arms a buy; a swept high arms a sell.
+3. **Market structure shift**: within 3 hours, the first M5 close back through the last 2/2 swing that formed before the sweep extreme.
+4. **Fair value gap and plan**: the latest 3-candle FVG (at least 0.1 ATR) in that leg. The signal is a **limit** at the gap's near edge (`timeframe` = `5m`, `entry`, `fvg_low`/`fvg_high`, `mss_level`, `sweep_level`). The stop goes beyond the sweep plus 0.1 x 5m ATR, with one target at `ICT_MIN_RR` (2R). The grader cancels an unfilled limit after `ICT_ENTRY_EXPIRY_MINUTES` (120) and closes at market after `ICT_MAX_HOLD_MINUTES` (360).
+5. **Analyzer checks** (`ict_rules`): enabled symbol, weekday killzone candle, a valid FVG with the entry at its near edge, sweep beyond the entry, stop beyond the sweep, stop at least 0.3 ATR, and the minimum reward:risk. There is no 15m volatility band: 5m ATR sits far below it, and the backtest used none.
 
 Both models also pass the **news** check: the analyzer reads the free ForexFactory weekly calendar and rejects any setup inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked. Every message states 1R, its percent of price, and the reward-to-risk to TP1; with `ACCOUNT_SIZE` set it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. Neither model has established live performance; both remain manual-review tools.
 
@@ -150,7 +158,17 @@ docker compose run --rm --no-deps -v "${PWD}:/work" -w /work analyzer python scr
 | EURUSD, GBPUSD, USDJPY, USTEC, XAGUSD, BTCUSD, 1 year | 107-216 each | -15R to -44R each | the same settings lose on every one |
 | US30, 1 year | 122 | +13.3R | all of it in the last third |
 
-So the edge, if real, is gold-only and thin, with losing years. Treat CRT as a forward-test candidate on a demo account, judged by the graded ledger below. Judge any new variant on all of these symbols at once, never on gold alone. The `classic` model lost 9.75R on the same gold year.
+ICT evidence: the rules were written down before any result was seen and never tuned afterwards. `--models ict` replays them through this same path:
+
+| Market and period | Trades | Result | Note |
+|---|---|---|---|
+| EURUSD Nov 2023 - Nov 2026 (Dukascopy M1) | 197 | +23.8R, PF 1.22, max drawdown 12.5R | +14.7R, -2.5R, +11.5R by year; London killzone +29R, NY AM -5R |
+| XAUUSD Nov 2023 - Nov 2026 | 79-140 | -5R to -25R | negative in every variant and every year, so ICT stays off gold |
+| GBPUSD, USDJPY, USTEC, US30, XAGUSD, BTCUSD, 1 year | 16-43 each | -8R to +10R | mixed; only GBPUSD was clearly positive |
+
+Stricter versions did not help. Requiring H4+H1 trend alignment, or a D1+H4+H1 bias with premium/discount and a reclaim, left 1-21 trades in three years, and a silver SMT filter made gold worse. Without killzones the model gave about 1.2 setups a day with no edge (PF 1.0). With CRT on gold and ICT on EURUSD, expect roughly 0.7 setups per trading day.
+
+So the CRT edge, if real, is gold-only and thin, with losing years. Treat CRT as a forward-test candidate on a demo account, judged by the graded ledger below. Judge any new variant on all of these symbols at once, never on gold alone. The `classic` model lost 9.75R on the same gold year.
 
 ## Telegram
 
@@ -265,7 +283,7 @@ Settings: see the AI agent block at the end of `.env.example`. Changing `.env` n
 
 ## MetaTrader 5 feeder
 
-`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs **both models** from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and on every M15 close that also closes a New York-aligned H4 candle it runs `scripts/crt_engine.py` over the last 600 closed M15 bars and posts a CRT setup if that candle swept the previous one and closed back inside. CRT settings are read from `.env` (`CRT_*`) so what it emits is what the analyzer accepts, and a payload is sent only for the candle that just closed, so a restart never re-sends history. `--models classic`, `--models crt` or the default `classic,crt` choose what runs. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only). If `mt5.initialize()` reports `IPC timeout`, untick *Tools > Options > Expert Advisors > Disable algorithmic trading via external Python API*:
+`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs the models from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and on every M15 close that also closes a New York-aligned H4 candle it runs `scripts/crt_engine.py` over the last 600 closed M15 bars and posts a CRT setup if that candle swept the previous one and closed back inside. CRT settings are read from `.env` (`CRT_*`) so what it emits is what the analyzer accepts, and a payload is sent only for the candle that just closed, so a restart never re-sends history. `--models` takes a comma list of `classic`, `crt` and `ict` (default `classic,crt`). With `ict` it also scans every 5 minutes: it replays the last 1500 closed M5 bars through `scripts/ict_engine.py` and posts a setup only if the candle that just closed completed it. The feeder refuses to start ICT on a symbol outside `ICT_SYMBOLS`. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only). If `mt5.initialize()` reports `IPC timeout`, untick *Tools > Options > Expert Advisors > Disable algorithmic trading via external Python API*:
 
 ```powershell
 py -m pip install MetaTrader5 pandas numpy
@@ -281,9 +299,16 @@ powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1          
 Get-Content .local\feeder.log -Tail 30 -Wait                                          # what it is doing
 ```
 
-The task "Cambotix Zebra Feeder" runs `scripts\feeder_service.ps1` hidden 30 seconds after you sign in. It starts Docker Desktop if it is not running, waits for the analyzer, runs the feeder (MT5 launches the saved terminal itself), and restarts it 30 seconds after any exit. Task Scheduler also restarts the service if PowerShell dies. Output goes to `.local\feeder.log` (rotated at 10 MB). Close any feeder you started by hand first; reinstalling stops old feeders. With `-Vps` it runs `scripts\vps_feeder.ps1` instead.
+The task "Cambotix Zebra Feeder" runs `scripts\feeder_service.ps1` hidden 30 seconds after you sign in. It starts Docker Desktop if it is not running, waits for the analyzer, runs the feeder (MT5 launches the saved terminal itself), and restarts it 30 seconds after any exit. Task Scheduler also restarts the service if PowerShell dies. Output goes to `.local\feeder.log` (rotated at 10 MB). Close any feeder you started by hand first; reinstalling stops only the old feeders of that symbol. With `-Vps` it runs `scripts\vps_feeder.ps1` instead.
 
-Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. `tests/test_crt_engine.py` builds H4 candles from hand-made M15 bars and checks that an emitted CRT payload passes the analyzer's own `crt_rules`.
+The ICT model runs as a second task next to the gold one, with its own log:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Symbol EURUSDm -Models ict -TaskName 'Cambotix Zebra Feeder EURUSD' -LogName feeder-eurusd.log
+Get-Content .local\feeder-eurusd.log -Tail 30 -Wait
+```
+
+Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. `tests/test_crt_engine.py` builds H4 candles from hand-made M15 bars and checks that an emitted CRT payload passes the analyzer's own `crt_rules`; `tests/test_ict_engine.py` does the same for an Asia-low sweep in the London killzone and its mirror image.
 
 ## Outcome grading and track record
 

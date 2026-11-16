@@ -309,7 +309,7 @@ def test_coverage_asks_for_missing_history(client, monkeypatch):
 
 @pytest.mark.parametrize('change', [
     {'end': int(time.time()) + 3600},
-    {'symbol': 'EURUSD'},
+    {'symbol': 'NOTLISTED'},                            # never in SYMBOLS (a real ticker may be enabled in .env)
     {'candles': [[1_790_000_040, 10, 9, 8, 9, 0]]},
     {'candles': [[1_790_000_050, 10, 11, 9, 10, 0]]},
     {'candles': [[1_790_000_040, 10, 11, 9, 10, -1]]},
