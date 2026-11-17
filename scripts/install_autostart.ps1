@@ -18,6 +18,10 @@ param(
     [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
+# cmd.exe keeps single quotes, so -TaskName 'A B' arrives as "'A" plus leftover words; refuse instead of making a stray task.
+if ($args.Count -gt 0 -or $TaskName -match "['`"]") {
+    throw "Unexpected arguments: $($args -join ' ') (TaskName=$TaskName). Run this from PowerShell, not cmd.exe, or use double quotes."
+}
 $taskName = $TaskName
 $root = Split-Path -Parent $PSScriptRoot
 

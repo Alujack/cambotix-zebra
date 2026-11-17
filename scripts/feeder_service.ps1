@@ -18,9 +18,20 @@ $logDir = Join-Path $root '.local'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $log = Join-Path $logDir $LogName
 
+# One service per log: a second copy (e.g. a duplicate scheduled task) would run a second feeder and fight over the log.
+$mutex = New-Object System.Threading.Mutex($false, "Local\cambotix-zebra-feeder-$($LogName.ToLowerInvariant())")
+try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
+if (-not $owned) {
+    Write-Host "another feeder service already writes $LogName; exiting"
+    exit 0
+}
+
 function Write-Log([string]$message) {
-    if ((Test-Path $log) -and (Get-Item $log).Length -gt 10MB) { Move-Item -Force $log "$log.1" }
-    Add-Content -Path $log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $message" -Encoding utf8
+    # A logging failure (file briefly locked by a reader or antivirus) must never stop the feeder.
+    try {
+        if ((Test-Path $log) -and (Get-Item $log).Length -gt 10MB) { Move-Item -Force $log "$log.1" }
+        Add-Content -Path $log -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $message" -Encoding utf8 -ErrorAction Stop
+    } catch { }
 }
 
 function Get-AnalyzerPort {
