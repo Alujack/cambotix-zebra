@@ -12,6 +12,7 @@ from app.news import news_status
 def offline_news(monkeypatch):
     monkeypatch.setenv('NEWS_FILTER', 'false')
     monkeypatch.setenv('MESSAGE_STYLE', 'detailed')      # most tests read the full breakdown; compact has its own tests
+    monkeypatch.setenv('ACCOUNT_SIZE', '0')               # sizing tests set their own account
 
 
 def candidate(**changes):
@@ -388,7 +389,16 @@ def test_compact_message_variants(monkeypatch):
     assert rejected.startswith('🧪 TEST SIGNAL (made-up prices)\n🔴 SELL XAUUSD · CRT 4h  ❌ NOT A TRADE')
     assert 'NOW' not in rejected and 'Not valid: target too close' in rejected and rejected.endswith('No action.')
     monkeypatch.setenv('ACCOUNT_SIZE', '10000')
-    assert '💰 Size:   0.04 lots (0.5% risk = 50.00)' in notification_text(crt(), 'approved', None, [])
+    monkeypatch.setenv('RISK_PERCENT', '0.5')
+    sized = notification_text(crt(), 'approved', None, [])          # 50 / 12.60 / 100 = 0.0397 lots -> 0.03
+    assert '💰 Size:   0.03 lots (risk 37.80 = 0.4%)' in sized and 'Minimum lot' not in sized
+    monkeypatch.setenv('ACCOUNT_SIZE', '1000')                        # 5 / 12.60 / 100 = 0.004 lots -> minimum 0.01
+    small = notification_text(crt(), 'approved', None, [])
+    assert '💰 Size:   0.01 lots (risk 12.60 = 1.3%)' in small
+    assert '⚠️ Minimum lot risks 1.3%, more than your 0.5%: skip or accept' in small
+    assert '↪️ Lot too small to split: close all at TP1' in small and 'close part' not in small
+    monkeypatch.setenv('ACCOUNT_SIZE', '100000')                      # 0.39 lots: splits into 4 parts
+    assert '↪️ After TP1: close part, move stop to entry' in notification_text(crt(), 'approved', None, [])
 
 
 # -- ICT ---------------------------------------------------------------------------------------------------------------
