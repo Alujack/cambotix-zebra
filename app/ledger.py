@@ -113,16 +113,23 @@ def plan_record(signal: Signal, published_at: int, warnings: list[str] | None = 
     """The frozen plan the grader scores. Later config changes never alter a published plan."""
     plan = trade_plan(signal)
     # CRT holds for CRT_MAX_HOLD_CANDLES range candles (the backtested exit); classic keeps MAX_HOLD_MINUTES.
-    hold = (int(os.getenv('CRT_MAX_HOLD_CANDLES', '3')) * signal.bar_seconds // 60 if signal.model == 'crt'
-            else int(os.getenv('MAX_HOLD_MINUTES', '1440')))
+    # ICT waits for its limit (ICT_ENTRY_EXPIRY_MINUTES) and holds ICT_MAX_HOLD_MINUTES, as backtested.
+    if signal.model == 'crt':
+        hold = int(os.getenv('CRT_MAX_HOLD_CANDLES', '3')) * signal.bar_seconds // 60
+    elif signal.model == 'ict':
+        hold = int(os.getenv('ICT_MAX_HOLD_MINUTES', '360'))
+    else:
+        hold = int(os.getenv('MAX_HOLD_MINUTES', '1440'))
+    limit = signal.model == 'ict'
+    expiry = os.getenv('ICT_ENTRY_EXPIRY_MINUTES', '120') if limit else os.getenv('ENTRY_EXPIRY_MINUTES', '120')
     return {'symbol': signal.symbol, 'model': signal.model, 'timeframe': signal.timeframe,
             'session': session_label(signal.symbol, signal.model, signal.bar_time, signal.bar_seconds), 'cautions': warnings or [],
             'direction': 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL', 'bar_time': signal.bar_time,
             'published_at': published_at,
-            'entry_type': 'market', 'entry_model': 'signal_close',
+            'entry_type': 'limit' if limit else 'market', 'entry_model': 'fvg_edge' if limit else 'signal_close',
             'entry': plan['entry'], 'stop': plan['stop'],
             'targets': [[multiple, level, note] for multiple, level, note in plan['targets']],
-            'entry_expiry_minutes': int(os.getenv('ENTRY_EXPIRY_MINUTES', '120')),
+            'entry_expiry_minutes': int(expiry),
             'max_hold_minutes': hold,
             'gate': os.getenv('GATE_MODE', 'rules')}
 

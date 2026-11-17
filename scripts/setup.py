@@ -88,10 +88,16 @@ def main():
     ]), workflow('zebraGradeV1', 'Zebra 4 — Outcome grader', [
         node('Every minute', 'scheduleTrigger', {'rule': {'interval': [{'field': 'seconds', 'secondsInterval': 60}]}}, 0, version=1.2),
         http_node('Grade open plans', '/grade', 260, timeout=20000)
+    ]), workflow('zebraAgentV1', 'Zebra 5 — AI agent', [
+        node('Every 10 seconds', 'scheduleTrigger', {'rule': {'interval': [{'field': 'seconds', 'secondsInterval': 10}]}}, 0, version=1.2),
+        # Telegram answers, queued AI notes and the weekly report; the analyzer bounds one tick to about 3 minutes.
+        http_node('Run one agent tick', '/agent', 260, timeout=240000)
     ])]
+    by_id = {item['id']: item for item in workflows}
     write(imports / 'workflows.json', json.dumps(workflows, indent=2) + '\n')
-    # Installations made before the grader existed import only this workflow; the other three stay untouched.
-    write(imports / 'grader.json', json.dumps([workflows[-1]], indent=2) + '\n')
+    # Installations made before a workflow existed import only that one; the others stay as edited.
+    write(imports / 'grader.json', json.dumps([by_id['zebraGradeV1']], indent=2) + '\n')
+    write(imports / 'agent.json', json.dumps([by_id['zebraAgentV1']], indent=2) + '\n')
     credential_path = imports / 'credentials.json'
     write(credential_path, json.dumps([{'id': 'zebraAnalyzerAuth', 'name': 'Zebra internal API',
        'type': 'httpHeaderAuth', 'data': {'name': 'X-Zebra-Token', 'value': env['ANALYZER_TOKEN']}}]))

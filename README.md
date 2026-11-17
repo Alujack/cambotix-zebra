@@ -119,7 +119,7 @@ Pine emits on confirmed bar close when a setup first becomes valid. It uses EMA2
 
 ## Strategy models
 
-Two detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
+Three detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
 
 **classic** (`tradingview/gold_setups.pine`): complete price/EMA20/50/200 alignment, RSI band, MACD histogram sign, ADX minimum, ATR band, and the London/New York session filter evaluated on the bar open. Levels come from ATR and the prior swing.
 
@@ -129,6 +129,14 @@ Two detection models share the same pipeline, journal, AI gate, and message form
 2. **Signal**: posted at C2's close with `timeframe` = the range timeframe (`4h`). `range_high`/`range_low` are C1, `sweep_level` is C2's wick beyond the range, `price` is C2's close.
 3. **Plan**: market entry at that close (the signal says BUY NOW / SELL NOW; a limit at the swept level lost money in every backtest), stop beyond C2's wick plus `CRT_STOP_BUFFER_ATR` x 15m ATR, TP1 at C1's opposite extreme (TP2-TP4 at `CRT_EXTRA_TARGETS_R` beyond it), at least `CRT_MIN_RR` reward per unit of risk. The trade closes at market after `CRT_MAX_HOLD_CANDLES` range candles. `CRT_KEY_TIMES` can restrict which New York candles may signal (empty = all).
 4. **Analyzer checks** (`crt_rules`): weekday candle, key time, range swept on exactly the signalled side, close back inside, stop beyond the sweep, target at the opposite extreme, stop at least 0.3 ATR, minimum reward:risk.
+
+**ict** (`scripts/ict_engine.py`, the ICT 2022 model from `docs/ICT_Trading_Khmer_Beginner_Book.md`, chapter 19): runs on M5 **next to CRT**, covering the hours when CRT is quiet. The analyzer accepts it only for `ICT_SYMBOLS` (default `EURUSD`), and every message is tagged *ICT · forward test*:
+
+1. **Liquidity**: the previous day's high/low (New York 17:00 roll), the Asia high/low (20:00-24:00 New York) and the London high/low (02:00-05:00). Each pool counts once.
+2. **Sweep**: inside a killzone (London 02:00-05:00 or NY AM 08:30-11:00 New York, weekdays), price trades beyond a fresh pool. A swept low arms a buy; a swept high arms a sell.
+3. **Market structure shift**: within 3 hours, the first M5 close back through the last 2/2 swing that formed before the sweep extreme.
+4. **Fair value gap and plan**: the latest 3-candle FVG (at least 0.1 ATR) in that leg. The signal is a **limit** at the gap's near edge (`timeframe` = `5m`, `entry`, `fvg_low`/`fvg_high`, `mss_level`, `sweep_level`). The stop goes beyond the sweep plus 0.1 x 5m ATR, with one target at `ICT_MIN_RR` (2R). The grader cancels an unfilled limit after `ICT_ENTRY_EXPIRY_MINUTES` (120) and closes at market after `ICT_MAX_HOLD_MINUTES` (360).
+5. **Analyzer checks** (`ict_rules`): enabled symbol, weekday killzone candle, a valid FVG with the entry at its near edge, sweep beyond the entry, stop beyond the sweep, stop at least 0.3 ATR, and the minimum reward:risk. There is no 15m volatility band: 5m ATR sits far below it, and the backtest used none.
 
 Both models also pass the **news** check: the analyzer reads the free ForexFactory weekly calendar and rejects any setup inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked. Every message states 1R, its percent of price, and the reward-to-risk to TP1; with `ACCOUNT_SIZE` set it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. Neither model has established live performance; both remain manual-review tools.
 
@@ -150,7 +158,17 @@ docker compose run --rm --no-deps -v "${PWD}:/work" -w /work analyzer python scr
 | EURUSD, GBPUSD, USDJPY, USTEC, XAGUSD, BTCUSD, 1 year | 107-216 each | -15R to -44R each | the same settings lose on every one |
 | US30, 1 year | 122 | +13.3R | all of it in the last third |
 
-So the edge, if real, is gold-only and thin, with losing years. Treat CRT as a forward-test candidate on a demo account, judged by the graded ledger below. Judge any new variant on all of these symbols at once, never on gold alone. The `classic` model lost 9.75R on the same gold year.
+ICT evidence: the rules were written down before any result was seen and never tuned afterwards. `--models ict` replays them through this same path:
+
+| Market and period | Trades | Result | Note |
+|---|---|---|---|
+| EURUSD Nov 2023 - Nov 2026 (Dukascopy M1) | 197 | +23.8R, PF 1.22, max drawdown 12.5R | +14.7R, -2.5R, +11.5R by year; London killzone +29R, NY AM -5R |
+| XAUUSD Nov 2023 - Nov 2026 | 79-140 | -5R to -25R | negative in every variant and every year, so ICT stays off gold |
+| GBPUSD, USDJPY, USTEC, US30, XAGUSD, BTCUSD, 1 year | 16-43 each | -8R to +10R | mixed; only GBPUSD was clearly positive |
+
+Stricter versions did not help. Requiring H4+H1 trend alignment, or a D1+H4+H1 bias with premium/discount and a reclaim, left 1-21 trades in three years, and a silver SMT filter made gold worse. Without killzones the model gave about 1.2 setups a day with no edge (PF 1.0). With CRT on gold and ICT on EURUSD, expect roughly 0.7 setups per trading day.
+
+So the CRT edge, if real, is gold-only and thin, with losing years. Treat CRT as a forward-test candidate on a demo account, judged by the graded ledger below. Judge any new variant on all of these symbols at once, never on gold alone. The `classic` model lost 9.75R on the same gold year.
 
 ## Telegram
 
@@ -201,7 +219,7 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `RISK_PERCENT` | 0.5 | Risk per trade used for sizing |
 | `CONTRACT_SIZES` | XAUUSD=100 | Units per lot per symbol for the lots figure |
 | `MAX_SIGNAL_AGE_SECONDS` | 300 | Maximum age from confirmed bar close |
-| `OLLAMA_MODEL` | qwen2.5:1.5b | Local model with schema-constrained JSON |
+| `OLLAMA_MODEL` | qwen2.5:3b | Local model with schema-constrained JSON (signal reviews, trade notes, agent routing) |
 | `MAX_OPEN_SAME_DIRECTION` | 1 | Reject a setup while this many plans on the same symbol and side are still open (`0` = no limit) |
 | `NEWS_CAUTION_MIN` | 120 | Caution when a high-impact event is due within this many minutes (beyond the blocking window) |
 | `HISTORY_MIN_SAMPLES` / `HISTORY_DAYS` | 30 / 60 | History warning once the record has this many closed trades for the same symbol, side, model and session |
@@ -213,7 +231,7 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 
 Use matching Pine indicator thresholds when adjusting rules. Classic accepts only the 15m timeframe; CRT accepts its range timeframe (`1h`, `4h` or `1d`). `SYMBOLS` lists accepted tickers; tickers in `SESSION_EXEMPT_SYMBOLS` skip the session filter on the server, and the Pine script skips it for any `crypto` symbol. Thresholds are shared across symbols, so review the ATR band before enabling a new market. Incoming `bar_time` is the bar-close timestamp in **Unix seconds**, not milliseconds. Numeric fields must be finite JSON numbers. `macd_hist` means histogram, not the MACD line.
 
-With the default `GATE_MODE=rules`, a candidate is `approved` when every technical rule passes. When `AI_COMMENTARY=true`, the model gets only the remaining freshness window minus a transaction reserve; its failure or latency cannot veto the deterministic result. Set it false for the fastest path. With `GATE_MODE=ai` the model must also approve the existing direction, report a matching market regime and good/excellent quality, and meet the configured confidence threshold; failures retry up to three times. `approved` means ready for **manual review**, never permission to place an order. Performance is established only by the graded ledger below, never claimed in advance.
+With the default `GATE_MODE=rules`, a candidate is `approved` when every technical rule passes. When `AI_COMMENTARY=true`, the local model's review is queued and sent as its own message right after the alert (see AI agent); its failure or latency can neither delay nor veto the deterministic result. With `GATE_MODE=ai` the model must also approve the existing direction, report a matching market regime and good/excellent quality, and meet the configured confidence threshold; failures retry up to three times. `approved` means ready for **manual review**, never permission to place an order. Performance is established only by the graded ledger below, never claimed in advance.
 
 **One idea, one plan.** While a plan on the same symbol and side is still open, a new setup in that direction is rejected with `open_plan_same_direction` (`MAX_OPEN_SAME_DIRECTION`). Stacking near-identical entries turns one idea into several losses when it fails. A plan counts as open until it closes, is not filled, or passes its own entry-expiry plus hold limit, so a stopped feeder cannot block a symbol forever. Synthetic test signals skip this check.
 
@@ -221,19 +239,57 @@ With the default `GATE_MODE=rules`, a candidate is `approved` when every technic
 
 Signal identity is protected by both the primary event ID and a unique `(symbol, timeframe, bar_time, signal)` key. Concurrent inserts are atomic. A duplicate with changed values returns HTTP 409. Stale/invalid input returns 422, and database failures return 503 for retry. No successful acknowledgment is sent before database commit.
 
-The processor holds a PostgreSQL advisory lock, recovers interrupted claims, and (with `GATE_MODE=ai`) retries failed/invalid AI responses up to three times with 30-second backoff. AI-gated age is checked again after inference; optional rules-mode commentary cannot expire an otherwise valid rules decision. The accepted-signal journal and notification outbox are committed together. Invalid incoming requests are not stored; accepted signal history is available via `scripts/history.py` (latest 100) or PostgreSQL.
+The processor holds a PostgreSQL advisory lock, recovers interrupted claims, and (with `GATE_MODE=ai`) retries failed/invalid AI responses up to three times with 30-second backoff. AI-gated age is checked again after inference; rules-mode commentary runs after the decision and cannot expire it. The accepted-signal journal and notification outbox are committed together. Invalid incoming requests are not stored; accepted signal history is available via `scripts/history.py` (latest 100) or PostgreSQL.
 
 macOS setup uses `OLLAMA_RUNTIME=native`, an empty `COMPOSE_PROFILES`, and `OLLAMA_BASE_URL=http://host.docker.internal:11435`. To use Docker Ollama instead, set `OLLAMA_RUNTIME=docker`, `COMPOSE_PROFILES=docker-ai`, and `OLLAMA_BASE_URL=http://ollama:11434`, then run the start script. Docker inference on this Mac uses CPU. For a different model, change `OLLAMA_MODEL` and rerun `bash scripts/start.sh` to pull it and update the analyzer. Changing the timeout also requires regenerating and reimporting the analysis workflow.
 
+## AI agent
+
+A read-only assistant on top of the record. **It never places, edits or closes a trade, and it never decides a signal**: the technical rules keep full authority, and every AI table is separate from the ledger. Two models split the work by difficulty, not as fallbacks for each other:
+
+| Work | Who | Cost |
+|---|---|---|
+| `/open`, `/price`, `/record`, `/signals`, `/news`, `/cost`, `/status` | code, from the database | free |
+| Review of each approved signal (sent right after the alert) | Ollama | free |
+| 1–2 line review of each closed trade (sent right after the result) | Ollama | free |
+| Sorting each free-text question: command, simple or deep | Ollama | free |
+| Simple questions, answered from a code-computed snapshot | Ollama | free |
+| Deep questions (`/deep ...` or confidently routed), with read-only tools | OpenAI | paid, budgeted |
+| Weekly report: statistics by code, interpretation by OpenAI | OpenAI | paid, budgeted |
+
+When Ollama is down, alerts and results still go out without the notes, and free-text questions get a "local AI offline" reply; nothing is moved to OpenAI. When OpenAI is down, unconfigured or out of budget, deep questions get a plain explanation and the weekly report goes out with its statistics only; nothing is moved to the small local model.
+
+**How it runs.** The n8n workflow *Zebra 5 — AI agent* calls `POST /agent` every 10 seconds. One tick, under its own advisory lock: reads new Telegram messages (`getUpdates`, so the bot needs no webhook), answers up to `AGENT_MAX_UPDATES_PER_RUN`, runs up to three queued AI notes, and sends the weekly report when it is due. Telegram updates are stored before they are answered and the read position is persisted, so a restart or an overlapping run never answers twice; a reply whose delivery result was lost is marked `unknown` and never resent. Notes are an `ai_jobs` queue (three attempts with backoff); stale notes are skipped.
+
+**Access.** Only `TELEGRAM_CHAT_ID` as a *private* chat, sent by `TELEGRAM_ALLOWED_USER_ID` (default: the same id), gets an answer. Everyone else, including the community group, is ignored and their text is not stored. Questions, memory and database rows travel to the models as data, never as instructions. The last `AGENT_MEMORY_TURNS` question/answer pairs per chat are kept for follow-ups and deleted after `AGENT_MEMORY_RETENTION_DAYS`; `/forget` clears them.
+
+**Deep analysis tools** (`app/agent/tools.py`): `get_track_record`, `get_signals`, `get_signal`, `get_open_trades`, `get_closed_trades`, `get_candles`, `get_news`. Each validates its arguments and runs a fixed, parameterized query inside a `READ ONLY` transaction; there is no SQL tool and no write tool. Per question: at most `AGENT_MAX_TOOL_CALLS` tool executions (then the model must conclude), `AGENT_TOOL_OUTPUT_CHARS` per result, `AGENT_DEEP_TIMEOUT_SECONDS` overall. The instructions require cited numbers, sample sizes, and suggestions phrased as hypotheses to backtest.
+
+**Cost control.** Before **every** OpenAI request (a question with tool rounds makes several), its worst-case cost (input estimate plus `OPENAI_MAX_OUTPUT_TOKENS`) is reserved inside one locked transaction, and the request is refused without being sent when either:
+- the day already has `OPENAI_DAILY_LIMIT` deep jobs (a question or a report, with all its rounds), or
+- the month's spending plus the reservation would exceed `OPENAI_MONTHLY_BUDGET_USD − OPENAI_SAFETY_RESERVE_USD`.
+
+Concurrent requests cannot overspend. After the response, the reservation is replaced by the cost of the measured tokens (`OPENAI_PRICE_*`). A timeout or server error keeps the full reservation as cost: failures are never assumed free. Days and months follow `DIGEST_TIMEZONE`. These are estimates; OpenAI's billing page is the authority. `/cost` shows today, the month, the budget left and Ollama's request count; `/status` shows the database, Ollama (model pulled?), OpenAI configuration, provider success rates and latency, MT5 feed freshness, queue depths and Telegram failures.
+
+**Weekly report.** On `WEEKLY_REPORT_DAY` from `WEEKLY_REPORT_HOUR` (`WEEKLY_REPORT_TIMEZONE`), covering the seven days that ended at midnight: totals, win rate, R, profit factor, expectancy, the four previous weeks, sessions, symbols, cautions and data-quality notes (small samples, stale feed, ambiguous candles), all computed by code. OpenAI adds observations and 1–3 backtest suggestions. The period is claimed before any work (`ai_reports`), so a second run never sends a second report. Reports go to the digest chat.
+
+**Enable it** (stage 1 → 2 → 3):
+
+1. Deploy with `AGENT_ENABLED=false`. Run `bash scripts/check-ai.sh` to test the local model, then check `/agent` runs in n8n.
+2. Pull the local model (`OLLAMA_MODEL`, default `qwen2.5:3b`; try `qwen2.5:7b` if the VPS has 8 GB+ RAM and compare). Set `AGENT_ENABLED=true` and send `/status`, `/help` and `/open` to the bot.
+3. Add `OPENAI_API_KEY` and `OPENAI_MODEL` to the server's `.env` only, after confirming the model id your account can use with the Responses API. Start with a small `OPENAI_DAILY_LIMIT`, set the same monthly limit in the OpenAI dashboard, and watch `/cost` for a week.
+
+Settings: see the AI agent block at the end of `.env.example`. Changing `.env` needs `docker compose up -d analyzer` to take effect. Existing installations get the new workflow from `bash scripts/start.sh`, which imports only the missing one. A VPS keeps its own `.env`, so add the new keys there.
+
 ## MetaTrader 5 feeder
 
-`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs **both models** from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and on every M15 close that also closes a New York-aligned H4 candle it runs `scripts/crt_engine.py` over the last 600 closed M15 bars and posts a CRT setup if that candle swept the previous one and closed back inside. CRT settings are read from `.env` (`CRT_*`) so what it emits is what the analyzer accepts, and a payload is sent only for the candle that just closed, so a restart never re-sends history. `--models classic`, `--models crt` or the default `classic,crt` choose what runs. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only). If `mt5.initialize()` reports `IPC timeout`, untick *Tools > Options > Expert Advisors > Disable algorithmic trading via external Python API*:
+`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs the models from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and on every M15 close that also closes a New York-aligned H4 candle it runs `scripts/crt_engine.py` over the last 600 closed M15 bars and posts a CRT setup if that candle swept the previous one and closed back inside. CRT settings are read from `.env` (`CRT_*`) so what it emits is what the analyzer accepts, and a payload is sent only for the candle that just closed, so a restart never re-sends history. `--models` takes a comma list of `classic`, `crt` and `ict` (default `crt`; live runs `crt` on gold and `ict` on EURUSD). With `ict` it also scans every 5 minutes: it replays the last 1500 closed M5 bars through `scripts/ict_engine.py` and posts a setup only if the candle that just closed completed it. The feeder refuses to start ICT on a symbol outside `ICT_SYMBOLS`. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only). If `mt5.initialize()` reports `IPC timeout`, untick *Tools > Options > Expert Advisors > Disable algorithmic trading via external Python API*:
 
 ```powershell
 py -m pip install MetaTrader5 pandas numpy
 cd \\wsl.localhost\Ubuntu\home\<you>\cambotix-zebra
-py scripts\mt5_feeder.py --symbol XAUUSDc --once --dry-run   # check readings, send nothing
-py scripts\mt5_feeder.py --symbol XAUUSDc                    # watch: candles every minute, setups every 15m
+py scripts\mt5_feeder.py --symbol XAUUSDm --once --dry-run   # check readings, send nothing
+py scripts\mt5_feeder.py --symbol XAUUSDm                    # watch: candles every minute, setups every 15m
 ```
 
 To leave it running unattended, install it once as a sign-in task instead of keeping a window open:
@@ -243,9 +299,16 @@ powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1          
 Get-Content .local\feeder.log -Tail 30 -Wait                                          # what it is doing
 ```
 
-The task "Cambotix Zebra Feeder" runs `scripts\feeder_service.ps1` hidden 30 seconds after you sign in. It starts Docker Desktop if it is not running, waits for the analyzer, runs the feeder (MT5 launches the saved terminal itself), and restarts it 30 seconds after any exit. Task Scheduler also restarts the service if PowerShell dies. Output goes to `.local\feeder.log` (rotated at 10 MB). Close any feeder you started by hand first; reinstalling stops old feeders. With `-Vps` it runs `scripts\vps_feeder.ps1` instead.
+The task "Cambotix Zebra Feeder" runs `scripts\feeder_service.ps1` hidden 30 seconds after you sign in. It starts Docker Desktop if it is not running, waits for the analyzer, runs the feeder (MT5 launches the saved terminal itself), and restarts it 30 seconds after any exit. Task Scheduler also restarts the service if PowerShell dies. Output goes to `.local\feeder.log` (rotated at 10 MB). Close any feeder you started by hand first; reinstalling stops only the old feeders of that symbol. With `-Vps` it runs `scripts\vps_feeder.ps1` instead.
 
-Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. `tests/test_crt_engine.py` builds H4 candles from hand-made M15 bars and checks that an emitted CRT payload passes the analyzer's own `crt_rules`.
+The ICT model runs as a second task next to the gold one, with its own log:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Symbol EURUSDm -Models ict -TaskName 'Cambotix Zebra Feeder EURUSD' -LogName feeder-eurusd.log
+Get-Content .local\feeder-eurusd.log -Tail 30 -Wait
+```
+
+Use a demo account for the forward test. MT5 bar times must be UTC (Exness servers are); a terminal whose server clock runs ahead of UTC is refused loudly because its candles and signals would be in the future. If the feeder was offline, the analyzer answers with the earliest time it still needs and the feeder backfills it. `tests/test_crt_engine.py` builds H4 candles from hand-made M15 bars and checks that an emitted CRT payload passes the analyzer's own `crt_rules`; `tests/test_ict_engine.py` does the same for an Asia-low sweep in the London killzone and its mirror image.
 
 ## Outcome grading and track record
 

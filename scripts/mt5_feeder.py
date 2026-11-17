@@ -1,11 +1,13 @@
 """Local signal source: MetaTrader 5 -> analyzer /signals.
 
 Replaces the TradingView webhook for accounts without a webhook-capable plan.
-Runs both detection models from the broker's own candles:
+Runs the detection models from the broker's own candles:
   classic  mirrors tradingview/gold_setups.pine bar for bar (EMA/RSI/MACD/ADX/ATR)
   crt      Candle Range Theory via scripts/crt_engine.py: on each New York-aligned
            H4 close, posts a setup when that candle swept one side of the previous
            H4 range and closed back inside it
+  ict      ICT 2022 model via scripts/ict_engine.py: every 5 minutes, posts a limit
+           setup when a killzone sweep, a structure shift and an FVG complete on M5
 Same JSON contract as the analyzer's /signals; the analyzer re-validates everything.
 
 Every minute it also sends the broker's closed M1 candles (bid prices plus the
@@ -33,10 +35,13 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from crt_engine import CrtConfig, detect, slot_closes  # noqa: E402
+import ict_engine  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BARS = 600                 # >= 200 for EMA200 plus warmup
 TF_SECONDS = 900
+M5_SECONDS = 300
+ICT_BARS = 1500            # ~5 trading days of M5: covers the previous day's pools and the swing lookback
 DIRECTIONS = ('BUY_SETUP', 'SELL_SETUP')
 CANDLE_CHUNK = 2 * 86400   # M1 rows per request stay well under the analyzer's 1 MB limit
 FIRST_CANDLES = 3 * 3600   # history sent on the very first push
@@ -134,9 +139,12 @@ class NoFreshBars(Exception):
     """No recent closed bar: market closed (weekend, holiday, daily break) or the feed stalled. Wait, don't exit."""
 
 
-def bars(symbol: str, attempts: int = 8, count: int = BARS) -> pd.DataFrame:
-    """MT5 serves stale history for a few seconds after a cold terminal launch, while ticks are already current.
-    Without recent ticks the market is closed or the feed is down, so retrying now cannot help."""
+def bars(symbol: str, attempts: int = 8, count: int = BARS, timeframe: int | None = None,
+         seconds: int = TF_SECONDS) -> pd.DataFrame:
+    """Closed bars only, oldest first. MT5 serves stale history for a few seconds after a cold terminal launch,
+    while ticks are already current. Without recent ticks the market is closed or the feed is down, so retrying now
+    cannot help. The still-forming bar is dropped by time, not position: in a quiet minute MT5 has not opened the
+    next bar yet, and dropping the last row would then discard the bar that just closed."""
     if not mt5.initialize():
         raise SystemExit(f'MT5 initialize failed: {mt5.last_error()}')
     mt5.symbol_select(symbol, True)
@@ -145,12 +153,12 @@ def bars(symbol: str, attempts: int = 8, count: int = BARS) -> pd.DataFrame:
     if tick_age > 2 * TF_SECONDS:
         raise NoFreshBars(f'no ticks for {tick_age / 3600:.1f}h: market closed or the feed is stalled')
     for attempt in range(attempts):
-        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15, 0, count)
+        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M15 if timeframe is None else timeframe, 0, count)
         if rates is not None and len(rates) >= 250:
             df = pd.DataFrame(rates)
-            age = time.time() - (int(df['time'].iloc[-1]) + TF_SECONDS)
-            if age < 2 * TF_SECONDS:
-                return df
+            age = time.time() - (int(df['time'].iloc[-1]) + seconds)
+            if age < 2 * seconds:
+                return df[df['time'] + seconds <= time.time()].reset_index(drop=True)
             print(f'  warmup {attempt + 1}/{attempts}: history {age / 3600:.1f}h stale, resyncing')
         time.sleep(3)
     raise NoFreshBars('ticks are current but MT5 history stays stale; check the terminal is connected')
@@ -171,7 +179,7 @@ def scan_crt(cfg: dict, df: pd.DataFrame, close_epoch: int, dry_run: bool) -> No
     if not slot_closes(close_epoch - TF_SECONDS, crt.htf_hours):
         return
     rows = [{'t': int(r.time), 'o': float(r.open), 'h': float(r.high), 'l': float(r.low), 'c': float(r.close)}
-            for r in df.itertuples()][:-1]           # drop the still-forming bar
+            for r in df.itertuples()]
     setups = [body for body in detect(cfg['symbol'], rows, crt) if body['bar_time'] == close_epoch]
     if not setups:
         print(f'  crt: H{crt.htf_hours} candle closed; no sweep-and-close-back setup')
@@ -181,6 +189,33 @@ def scan_crt(cfg: dict, df: pd.DataFrame, close_epoch: int, dry_run: bool) -> No
             continue
         status, text = post(body, cfg['url'], cfg['token'])
         print(f'  sent {body["signal"]} (crt) -> HTTP {status} {text}')
+
+
+def scan_ict(cfg: dict, dry_run: bool) -> None:
+    """Replay the last ICT_BARS closed M5 bars and post the setup completed by the bar that just closed, if any."""
+    try:
+        raw = bars(cfg['mt5_symbol'], count=ICT_BARS, timeframe=mt5.TIMEFRAME_M5, seconds=M5_SECONDS)
+    except NoFreshBars as reason:
+        print(f'{dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC  ict: no fresh M5 bars ({reason})')
+        return
+    rows = [{'t': int(r.time), 'o': float(r.open), 'h': float(r.high), 'l': float(r.low), 'c': float(r.close)}
+            for r in raw.itertuples()]
+    close_epoch = rows[-1]['t'] + M5_SECONDS
+    age = time.time() - close_epoch
+    if age > cfg['max_age']:
+        print(f'  ict: M5 bar is {age:.0f}s old; analyzer rejects beyond {cfg["max_age"]}s, nothing sent')
+        return
+    setups = [body for body in ict_engine.detect(cfg['symbol'], rows, cfg['ict']) if body['bar_time'] == close_epoch]
+    zone = ict_engine.killzone(rows[-1]['t'], cfg['ict'])
+    if zone and not setups:
+        stamp = dt.datetime.fromtimestamp(close_epoch, dt.timezone.utc)
+        print(f'ict M5 closed {stamp:%Y-%m-%d %H:%M} UTC ({zone} killzone)  close={rows[-1]["c"]:.5f}  no setup')
+    for body in setups:
+        if dry_run:
+            print(f'  [dry-run] would send {body["signal"]} (ict): {json.dumps(body)}')
+            continue
+        status, text = post(body, cfg['url'], cfg['token'])
+        print(f'  sent {body["signal"]} (ict) -> HTTP {status} {text}')
 
 
 # -- emission -----------------------------------------------------------------
@@ -257,7 +292,7 @@ def scan(cfg: dict, dry_run: bool) -> None:
         print(f'{dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC  no fresh bars ({reason}); next check at the next 15m close')
         return
     df = indicators(raw, cfg['swing_bars'])
-    closed, previous = df.iloc[-2], df.iloc[-3]      # -1 is the still-forming bar
+    closed, previous = df.iloc[-1], df.iloc[-2]
     close_epoch = int(closed['time']) + TF_SECONDS
     stamp = dt.datetime.fromtimestamp(close_epoch, dt.timezone.utc)
     age = time.time() - close_epoch
@@ -301,9 +336,10 @@ def main() -> None:
     parser.add_argument('--once', action='store_true', help='scan the last closed bar and exit')
     parser.add_argument('--dry-run', action='store_true', help='print the payload instead of sending')
     parser.add_argument('--no-candles', action='store_true', help='do not send M1 candles for outcome grading')
-    parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDc'),
-                        help='broker symbol as named in MT5 (default XAUUSDc)')
-    parser.add_argument('--models', default='classic,crt', help='detection models to run: classic, crt or both (default both)')
+    parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDm'),
+                        help='broker symbol as named in MT5 (default XAUUSDm)')
+    parser.add_argument('--models', default='crt',
+                        help='comma list of detection models: classic, crt, ict (default crt)')
     args = parser.parse_args()
 
     settings = env()
@@ -311,8 +347,8 @@ def main() -> None:
     analyzer = os.getenv('ZEBRA_ANALYZER_URL', f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}').rstrip('/')
     broker_symbol = args.symbol
     models = {m.strip().lower() for m in args.models.split(',') if m.strip()}
-    if not models <= {'classic', 'crt'}:
-        raise SystemExit('--models accepts classic, crt or classic,crt')
+    if not models <= {'classic', 'crt', 'ict'}:
+        raise SystemExit('--models accepts a comma list of classic, crt and ict')
     cfg = {
         'models': models,
         'mt5_symbol': broker_symbol,
@@ -332,6 +368,13 @@ def main() -> None:
     if 'crt' in models:
         exempt = {s.strip().upper() for s in settings.get('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if s.strip()}
         cfg['crt'] = crt_config(settings, cfg['symbol'] in exempt)
+    if 'ict' in models:
+        ict_symbols = {s.strip().upper() for s in settings.get('ICT_SYMBOLS', 'EURUSD').split(',') if s.strip()}
+        if cfg['symbol'] not in ict_symbols:
+            raise SystemExit(f'{cfg["symbol"]} is not in ICT_SYMBOLS ({",".join(sorted(ict_symbols))}); the analyzer '
+                             'would reject every ICT setup. The ICT backtest lost money on gold.')
+        cfg['ict'] = ict_engine.IctConfig(min_rr=float(settings.get('ICT_MIN_RR', 2.0)))
+    m15_models = bool(models & {'classic', 'crt'})
     print(f'{cfg["mt5_symbol"]} -> {cfg["symbol"]}  {cfg["url"]}  models={",".join(sorted(models))}  '
           f'(ADX>={cfg["min_adx"]}, ATR% {cfg["min_atr"]}-{cfg["max_atr"]})')
 
@@ -341,18 +384,26 @@ def main() -> None:
         if args.once:
             if candles:
                 push_candles(cfg, state)
-            scan(cfg, args.dry_run)
+            if m15_models:
+                scan(cfg, args.dry_run)
+            if 'ict' in models:
+                scan_ict(cfg, args.dry_run)
             return
-        print('watching; candles every minute, setup scan 10s after each 15m close. Ctrl+C to stop.')
-        scanned = None
+        cadence = ', '.join((['15m scan'] if m15_models else []) + (['5m ICT scan'] if 'ict' in models else []))
+        print(f'watching; candles every minute, {cadence} 10s after each bar close. Ctrl+C to stop.')
+        scanned = scanned_m5 = None
         while True:
             time.sleep(max(1.0, 60 - time.time() % 60 + 10))
             if candles:
                 push_candles(cfg, state)
             bar = int(time.time()) // TF_SECONDS
-            if time.time() % TF_SECONDS < 60 and bar != scanned:
+            if m15_models and time.time() % TF_SECONDS < 60 and bar != scanned:
                 scanned = bar
                 scan(cfg, args.dry_run)
+            bar_m5 = int(time.time()) // M5_SECONDS
+            if 'ict' in models and time.time() % M5_SECONDS < 60 and bar_m5 != scanned_m5:
+                scanned_m5 = bar_m5
+                scan_ict(cfg, args.dry_run)
             sys.stdout.flush()
     except KeyboardInterrupt:
         print('stopped')

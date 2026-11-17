@@ -10,6 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import ledger, main
+from app.agent import jobs
+from app.ai import tables as ai_tables
+from app.ai.ollama import LocalAIError
 from tests.test_domain import analysis, candidate, crt
 
 
@@ -28,11 +31,16 @@ def isolated_database(monkeypatch):
     monkeypatch.delenv('CRT_KEY_TIMES', raising=False)
     monkeypatch.delenv('CRT_MIN_RR', raising=False)
     monkeypatch.delenv('CRT_MAX_HOLD_CANDLES', raising=False)
+    monkeypatch.delenv('AI_COMMENTARY', raising=False)
+    monkeypatch.setenv('AGENT_ENABLED', 'false')
+    monkeypatch.setenv('WEEKLY_REPORT_ENABLED', 'false')
     with main.database() as conn:
         ledger.migrate(conn)
+        ai_tables.migrate(conn)
         # Test-only reset: replica mode skips the append-only triggers, which requires a database superuser.
         conn.execute('SET session_replication_role = replica')
-        conn.execute('TRUNCATE messages, ledger, candles, coverage, notifications, signals')
+        conn.execute('TRUNCATE messages, ledger, candles, coverage, notifications, signals, ai_usage, ai_jobs, '
+                     'ai_reports, agent_state, agent_updates, agent_messages')
     yield
 
 
@@ -63,12 +71,18 @@ def test_concurrent_deduplication(client):
 
 
 def test_valid_signal_is_analyzed_and_audited(client, monkeypatch):
-    monkeypatch.setattr(main, 'classify', lambda signal: analysis())
+    monkeypatch.setattr(main, 'classify', lambda signal: pytest.fail('rules mode never waits for the model'))
+    monkeypatch.setattr(jobs, 'classify', lambda signal: analysis())
     assert client.post('/signals', json=payload()).status_code == 202
     assert client.post('/process').json()['status'] == 'approved'
     row = client.get('/signals').json()[0]
-    assert row['analysis']['confidence'] == 80
-    assert row['notification_status'] == 'disabled'
+    assert row['analysis'] is None and row['notification_status'] == 'disabled'
+    # The local review runs afterwards in the agent worker and follows the alert as its own message.
+    assert client.post('/agent').json()['jobs'] == 1
+    assert client.get('/signals').json()[0]['analysis']['confidence'] == 80
+    with main.database() as conn:
+        review = conn.execute("SELECT ref, message FROM messages WHERE kind='ai_review'").fetchone()
+    assert review['ref'] == 'ai:' + row['event_id'] and 'AI commentary only' in review['message']
     assert client.post('/process').json()['status'] == 'idle'
     assert client.post('/notify').json()['status'] == 'disabled'
 
@@ -110,17 +124,22 @@ def test_signal_expired_during_ai_is_rejected(client, monkeypatch):
 def test_rules_mode_commentary_cannot_veto_signal(client, monkeypatch):
     def slow_commentary(signal):
         monkeypatch.setattr(main, 'freshness', lambda signal: False)
-        return analysis()
-    monkeypatch.setattr(main, 'classify', slow_commentary)
+        return analysis(decision='REJECT', setup_quality='poor')
+    monkeypatch.setattr(jobs, 'classify', slow_commentary)
     client.post('/signals', json=payload())
     assert client.post('/process').json()['status'] == 'approved'
+    client.post('/agent')
+    row = client.get('/signals').json()[0]
+    assert row['status'] == 'approved' and row['analysis']['decision'] == 'REJECT'
 
 
 def test_rules_mode_can_skip_ai_commentary(client, monkeypatch):
     monkeypatch.setenv('AI_COMMENTARY', 'false')
     monkeypatch.setattr(main, 'classify', lambda signal: pytest.fail('commentary is disabled'))
+    monkeypatch.setattr(jobs, 'classify', lambda signal: pytest.fail('commentary is disabled'))
     client.post('/signals', json=payload())
     assert client.post('/process').json()['status'] == 'approved'
+    assert client.post('/agent').json()['jobs'] == 0
 
 
 def test_restart_recovers_claim_and_overlapping_workers_skip(client, monkeypatch):
@@ -174,12 +193,20 @@ def ledger_rows():
 
 def test_rules_gate_publishes_when_ai_is_down(client, monkeypatch):
     def down(signal):
-        raise httpx.ConnectError('model offline')
-    monkeypatch.setattr(main, 'classify', down)
+        raise LocalAIError('unavailable')
+    monkeypatch.setattr(jobs, 'classify', down)
     client.post('/signals', json=payload())
     assert client.post('/process').json()['status'] == 'approved'
+    for _ in range(3):
+        client.post('/agent')
+        with main.database() as conn:
+            conn.execute('UPDATE ai_jobs SET next_attempt_at=now()')
+    with main.database() as conn:
+        job = conn.execute('SELECT status, attempts, error_code FROM ai_jobs').fetchone()
+        assert conn.execute("SELECT count(*) AS n FROM messages WHERE kind='ai_review'").fetchone()['n'] == 0
+    assert job == {'status': 'failed', 'attempts': 3, 'error_code': 'unavailable'}
     row = client.get('/signals').json()[0]
-    assert row['error_code'] == 'ai_commentary_unavailable' and row['analysis'] is None
+    assert row['error_code'] is None and row['analysis'] is None and row['status'] == 'approved'
     rows = ledger_rows()
     assert [item['kind'] for item in rows] == ['published']
     plan = json.loads(rows[0]['body'])
@@ -282,7 +309,7 @@ def test_coverage_asks_for_missing_history(client, monkeypatch):
 
 @pytest.mark.parametrize('change', [
     {'end': int(time.time()) + 3600},
-    {'symbol': 'EURUSD'},
+    {'symbol': 'NOTLISTED'},                            # never in SYMBOLS (a real ticker may be enabled in .env)
     {'candles': [[1_790_000_040, 10, 9, 8, 9, 0]]},
     {'candles': [[1_790_000_050, 10, 11, 9, 10, 0]]},
     {'candles': [[1_790_000_040, 10, 11, 9, 10, -1]]},

@@ -21,27 +21,35 @@ def session_exempt_symbols() -> set[str]:
 
 CLASSIC_FIELDS = ('ema20', 'ema50', 'ema200', 'rsi', 'macd_hist', 'adx')
 CRT_FIELDS = ('range_high', 'range_low', 'sweep_level', 'entry', 'stop', 'target_liquidity')
+ICT_FIELDS = ('sweep_level', 'mss_level', 'fvg_high', 'fvg_low', 'entry', 'stop', 'target_liquidity')
+MODEL_FIELDS = {'classic': CLASSIC_FIELDS, 'crt': CRT_FIELDS, 'ict': ICT_FIELDS}
 NUMERIC_FIELDS = ('price', 'atr', 'ema20', 'ema50', 'ema200', 'rsi', 'macd_hist', 'adx', 'swing_high', 'swing_low',
-                  'sweep_level', 'range_high', 'range_low', 'entry', 'stop', 'target_liquidity')
+                  'sweep_level', 'range_high', 'range_low', 'entry', 'stop', 'target_liquidity', 'mss_level',
+                  'fvg_high', 'fvg_low')
 NAME_PATTERN = r'^[A-Za-z0-9 _\-/.]*$'
 NY = ZoneInfo('America/New_York')
 
-# Bar length of each timeframe: classic runs on 15m bars, CRT on the higher-timeframe candle whose close is the signal.
-TIMEFRAME_SECONDS = {'15m': 900, '1h': 3600, '4h': 14400, '1d': 86400}
+# Bar length of each timeframe: classic runs on 15m bars, CRT on the higher-timeframe candle whose close is the signal,
+# ICT on the 5m candle that completed the setup.
+TIMEFRAME_SECONDS = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400}
+# ICT killzones in New York minutes of the day (scripts/ict_engine.py KILLZONES).
+ICT_KILLZONES = {'London': (2 * 60, 5 * 60), 'NY AM': (8 * 60 + 30, 11 * 60)}
 
 
 class Signal(BaseModel):
     """One setup candidate. `model` selects which field group is mandatory:
     classic = EMA/RSI/MACD/ADX indicator setup on 15m bars;
     crt     = Candle Range Theory: the previous HTF candle's range (range_high/range_low) was swept on one side by
-              the next candle (its wick: sweep_level), which closed back inside at `price`."""
+              the next candle (its wick: sweep_level), which closed back inside at `price`;
+    ict     = ICT 2022 model on 5m: a killzone sweep of a liquidity pool (sweep_level), a close through the last swing
+              (mss_level) and a fair value gap (fvg_low-fvg_high) whose near edge is the limit `entry`."""
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     event_id: str = Field(min_length=1, max_length=180, pattern=r'^[A-Za-z0-9_.:\-]+$')
     symbol: str = Field(min_length=3, max_length=20, pattern=r'^[A-Z0-9]+$')
-    timeframe: Literal['15m', '1h', '4h', '1d']
+    timeframe: Literal['5m', '15m', '1h', '4h', '1d']
     bar_time: int = Field(gt=0, strict=True)
     signal: Literal['BUY_SETUP', 'SELL_SETUP']
-    model: Literal['classic', 'crt'] = 'classic'
+    model: Literal['classic', 'crt', 'ict'] = 'classic'
     price: float = Field(gt=0)
     atr: float = Field(gt=0)
     # classic indicator model
@@ -60,6 +68,10 @@ class Signal(BaseModel):
     entry: float | None = Field(default=None, gt=0)
     stop: float | None = Field(default=None, gt=0)
     target_liquidity: float | None = Field(default=None, gt=0)
+    # ICT model (also uses sweep_level, entry, stop, target_liquidity)
+    mss_level: float | None = Field(default=None, gt=0)
+    fvg_high: float | None = Field(default=None, gt=0)
+    fvg_low: float | None = Field(default=None, gt=0)
     swept_name: str | None = Field(default=None, max_length=24, pattern=NAME_PATTERN)
     target_name: str | None = Field(default=None, max_length=24, pattern=NAME_PATTERN)
 
@@ -78,7 +90,7 @@ class Signal(BaseModel):
     @field_validator('timeframe', mode='before')
     @classmethod
     def normalize_timeframe(cls, value):
-        aliases = {'15': '15m', '15M': '15m', '60': '1h', '240': '4h', 'H4': '4h', '4H': '4h', 'D': '1d', '1D': '1d'}
+        aliases = {'5': '5m', 'M5': '5m', '15': '15m', '15M': '15m', '60': '1h', '240': '4h', 'H4': '4h', '4H': '4h', 'D': '1d', '1D': '1d'}
         return aliases.get(value, value) if isinstance(value, str) else value
 
     @property
@@ -94,14 +106,16 @@ class Signal(BaseModel):
 
     @model_validator(mode='after')
     def fields_for_model(self):
-        needed = CLASSIC_FIELDS if self.model == 'classic' else CRT_FIELDS
+        needed = MODEL_FIELDS[self.model]
         missing = [name for name in needed if getattr(self, name) is None]
         if missing:
             raise ValueError(f'{self.model} setup is missing {", ".join(missing)}')
         if self.model == 'classic' and self.timeframe != '15m':
             raise ValueError('classic setups are 15m only')
-        if self.model == 'crt' and self.timeframe == '15m':
+        if self.model == 'crt' and self.timeframe in ('5m', '15m'):
             raise ValueError('crt setups use the range candle timeframe (1h, 4h or 1d)')
+        if self.model == 'ict' and self.timeframe != '5m':
+            raise ValueError('ict setups are 5m only')
         return self
 
 
@@ -200,13 +214,58 @@ def crt_rules(signal: Signal) -> list[str]:
     return reasons
 
 
+def ict_symbols() -> set[str]:
+    """Symbols the ICT model may signal on. Its backtest held up on EURUSD and lost on gold, so it is opt-in."""
+    return {item.strip().upper() for item in os.getenv('ICT_SYMBOLS', 'EURUSD').split(',') if item.strip()}
+
+
+def ict_killzone(signal: Signal) -> str | None:
+    """Killzone the setup candle opened in, or None."""
+    opened = datetime.fromtimestamp(signal.bar_time - signal.bar_seconds, timezone.utc).astimezone(NY)
+    minute = opened.hour * 60 + opened.minute
+    return next((name for name, (start, end) in ICT_KILLZONES.items() if start <= minute < end), None)
+
+
+def ict_rules(signal: Signal) -> list[str]:
+    """ICT 2022 geometry: a killzone setup, a valid FVG with the limit at its near edge, the sweep beyond the entry,
+    the stop beyond the sweep, and a target at least ICT_MIN_RR away."""
+    reasons = []
+    buy = signal.signal == 'BUY_SETUP'
+    if signal.symbol not in ict_symbols():
+        reasons.append('ict_not_enabled_for_symbol')
+    opened = datetime.fromtimestamp(signal.bar_time - signal.bar_seconds, timezone.utc).astimezone(NY)
+    if opened.weekday() >= 5 and signal.symbol not in session_exempt_symbols():
+        reasons.append('weekend_candle')
+    elif ict_killzone(signal) is None:
+        reasons.append('outside_ict_killzone')
+    if not signal.fvg_low < signal.fvg_high:
+        reasons.append('invalid_fvg')
+    elif not math.isclose(signal.entry, signal.fvg_high if buy else signal.fvg_low, rel_tol=1e-9):
+        reasons.append('entry_not_at_fvg_edge')
+    if not ((signal.sweep_level < signal.entry) if buy else (signal.sweep_level > signal.entry)):
+        reasons.append('sweep_not_beyond_entry')
+    if not ((signal.stop < signal.sweep_level) if buy else (signal.stop > signal.sweep_level)):
+        reasons.append('stop_not_beyond_sweep')
+    risk = abs(signal.entry - signal.stop)
+    if risk < 0.3 * signal.atr:
+        reasons.append('stop_too_tight')
+    reward = (signal.target_liquidity - signal.entry) if buy else (signal.entry - signal.target_liquidity)
+    # The target sits exactly at ICT_MIN_RR; payload prices are rounded to 8 decimals, so allow 0.001R of slack.
+    if risk <= 0 or reward / risk < float(os.getenv('ICT_MIN_RR', '2.0')) - 1e-3:
+        reasons.append('target_too_close')
+    return reasons
+
+
+MODEL_RULES = {'classic': classic_rules, 'crt': crt_rules, 'ict': ict_rules}
+
+
 def technical_rules(signal: Signal, now: float | None = None) -> list[str]:
     reasons = []
     if not freshness(signal, now):
         reasons.append('stale_or_future_signal')
     if news_status(signal.bar_time)['state'] == 'blocked':
         reasons.append('high_impact_news_window')
-    return reasons + (crt_rules(signal) if signal.model == 'crt' else classic_rules(signal))
+    return reasons + MODEL_RULES[signal.model](signal)
 
 
 def position_size(signal: Signal, risk_distance: float) -> dict | None:
@@ -257,6 +316,10 @@ MODEL_INPUTS = {
             '(range_high/range_low), the next candle sweeping one side of it (sweep_level) and closing back inside the '
             'range (price), the stop beyond the sweep wick, the target at the opposite range extreme, and ATR (15m). '
             'Judge whether these elements are coherent for the fixed direction.'),
+    'ict': ('Evaluate only the supplied ICT 2022 model elements on 5m candles: the liquidity pool swept inside a killzone '
+            '(swept_name, sweep_level), the close through the last swing that shifted structure (mss_level), the fair '
+            'value gap left by that move (fvg_low-fvg_high) with a limit entry at its near edge, the stop beyond the '
+            'sweep, the target in R, and ATR (5m). Judge whether these elements are coherent for the fixed direction.'),
 }
 
 
@@ -270,7 +333,8 @@ def trade_plan(signal: Signal) -> dict:
     classic: stop beyond the prior swing plus a 0.2 ATR buffer when within 1 to 3 ATR, else STOP_ATR_MULTIPLE x ATR;
              targets at TP_R_MULTIPLES multiples of the stop distance (R).
     crt:     market entry at the sweep candle's close, stop beyond its wick, a single target at the opposite extreme
-             of the swept range (the backtested plan; no further R multiples)."""
+             of the swept range (the backtested plan; no further R multiples).
+    ict:     limit at the FVG's near edge, stop beyond the sweep, one target at ICT_MIN_RR (the backtested plan)."""
     buy = signal.signal == 'BUY_SETUP'
     sign = 1 if buy else -1
     multiples = [float(m) for m in os.getenv('TP_R_MULTIPLES', '1,2,3,4').split(',') if m.strip()]
@@ -286,6 +350,12 @@ def trade_plan(signal: Signal) -> dict:
         return {'entry': entry, 'entry_note': 'market at the sweep candle close', 'stop': signal.stop, 'risk': distance,
                 'risk_atr': distance / signal.atr, 'basis': f'beyond the sweep wick {signal.sweep_level:g}',
                 'targets': targets}
+    if signal.model == 'ict':
+        entry, distance = signal.entry, abs(signal.entry - signal.stop)
+        reward_r = abs(signal.target_liquidity - entry) / distance if distance else 0.0
+        return {'entry': entry, 'entry_note': 'limit at the FVG edge', 'stop': signal.stop, 'risk': distance,
+                'risk_atr': distance / signal.atr, 'basis': f'beyond the sweep {signal.sweep_level:g}',
+                'targets': [(round(reward_r, 2), signal.target_liquidity, signal.target_name or '')]}
     entry, atr = signal.price, signal.atr
     multiple = float(os.getenv('STOP_ATR_MULTIPLE', '1.5'))
     distance, basis = multiple * atr, 'no usable prior swing'
@@ -315,6 +385,13 @@ def rule_support(signal: Signal) -> list[str]:
                 f'{signal.sweep_level:g} and closed back inside at {signal.price:g} ({position:.0f}% of the range)',
                 f'Target: range {other} {signal.target_liquidity:g} (TP1)',
                 volatility, news_line(signal)]
+    if signal.model == 'ict':
+        side = 'low' if buy else 'high'
+        return [f'Sweep: {ict_killzone(signal) or "outside"} killzone took the {signal.swept_name or "liquidity " + side} '
+                f'to {signal.sweep_level:g}',
+                f'Shift: a 5m close {"above" if buy else "below"} the last swing {signal.mss_level:g}',
+                f'Gap: FVG {signal.fvg_low:g}-{signal.fvg_high:g}; limit at its edge {signal.entry:g}',
+                f'Target: {signal.target_name or "TP1"} at {signal.target_liquidity:g}', news_line(signal)]
     active = sessions(signal.bar_time - signal.bar_seconds)
     session = ', '.join(active) if active else ('24/7 market' if signal.symbol in session_exempt_symbols()
                                                  else 'outside London/New York hours')
@@ -334,6 +411,11 @@ def session_label(symbol: str, model: str, bar_time: int, bar_seconds: int = 900
     if model == 'crt':
         opened = datetime.fromtimestamp(bar_time - bar_seconds, timezone.utc).astimezone(NY)
         return f'{opened:%H}:00 NY candle'
+    if model == 'ict':
+        opened = datetime.fromtimestamp(bar_time - bar_seconds, timezone.utc).astimezone(NY)
+        minute = opened.hour * 60 + opened.minute
+        zone = next((name for name, (start, end) in ICT_KILLZONES.items() if start <= minute < end), 'outside')
+        return f'{zone} killzone'
     active = sessions(bar_time - bar_seconds)
     if len(active) == 2:
         return 'London/New York overlap'
@@ -349,7 +431,9 @@ def cautions(signal: Signal, events: list | None = None) -> list[str]:
     plan = trade_plan(signal)
     low, high = float(os.getenv('MIN_ATR_PERCENT', '0.02')), float(os.getenv('MAX_ATR_PERCENT', '0.5'))
     atr_percent = signal.atr / signal.price * 100
-    if atr_percent >= 0.85 * high:
+    if signal.model == 'ict':
+        pass                      # 5m ATR sits far below the 15m percent band; the ICT backtest used no volatility filter
+    elif atr_percent >= 0.85 * high:
         found.append(f'High volatility: ATR {atr_percent:.2f}% is near the {high:g}% limit; expect wide swings')
     elif atr_percent <= 1.25 * low:
         found.append(f'Low volatility: ATR {atr_percent:.2f}% is near the {low:g}% floor; price may stall before TP1')
@@ -361,7 +445,7 @@ def cautions(signal: Signal, events: list | None = None) -> list[str]:
         position = (signal.price - signal.range_low) / width * 100 if width else 50.0
         if (position > 50) if buy else (position < 50):
             found.append(f'Close already past the range midpoint ({position:.0f}%); less room to the target')
-    else:
+    elif signal.model == 'classic':
         if (signal.rsi >= 67) if buy else (signal.rsi <= 33):
             found.append(f'Stretched momentum: RSI {signal.rsi:g} is at the edge of its band')
         minimum = float(os.getenv('MIN_ADX', '20'))
@@ -402,6 +486,10 @@ def plain_reason(signal: Signal) -> str:
         verb = 'dipped below' if buy else 'pushed above'
         return (f'price {verb} the previous {signal.timeframe} range {side} ({signal.sweep_level:g}) and closed back inside. '
                 f'Aiming for the range {other}.')
+    if signal.model == 'ict':
+        pool = signal.swept_name or ('liquidity low' if buy else 'liquidity high')
+        return (f'the {ict_killzone(signal) or "session"} killzone swept the {pool} ({signal.sweep_level:g}), then price '
+                f'broke structure and left a fair value gap. {"Buy" if buy else "Sell"} on the retrace into it.')
     trend = 'Uptrend' if buy else 'Downtrend'
     return (f'{trend}: price {"above" if buy else "below"} EMA20, EMA50 and EMA200, '
             f'RSI {signal.rsi:.0f}, ADX {signal.adx:.0f} (trend strength).')
@@ -411,7 +499,7 @@ def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: in
                  warnings: list[str] | None) -> str:
     buy = signal.signal == 'BUY_SETUP'
     decimals = 2 if signal.price >= 100 else 5
-    tag = 'CRT' if signal.model == 'crt' else 'Classic'
+    tag = {'crt': 'CRT', 'ict': 'ICT · forward test'}.get(signal.model, 'Classic')
     structural = not [code for code in reasons if code not in AI_STAGE_CODES]
     lines = ['🧪 TEST SIGNAL (made-up prices)'] if synthetic(signal.event_id) else []
     head = f'{"🟢 BUY" if buy else "🔴 SELL"} {signal.symbol} · {tag} {signal.timeframe}'
@@ -420,7 +508,12 @@ def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: in
     lines += [head, '']
     if structural:
         plan = trade_plan(signal)
-        lines += [f'▶️ {"BUY" if buy else "SELL"} NOW (market order): {plan["entry"]:.{decimals}f}',
+        if signal.model == 'ict':
+            expiry = int(os.getenv('ICT_ENTRY_EXPIRY_MINUTES', '120'))
+            order = f'▶️ {"BUY" if buy else "SELL"} LIMIT: {plan["entry"]:.{decimals}f}  (cancel if not filled in {expiry} min)'
+        else:
+            order = f'▶️ {"BUY" if buy else "SELL"} NOW (market order): {plan["entry"]:.{decimals}f}'
+        lines += [order,
                   f'🛑 Stop:   {plan["stop"]:.{decimals}f}  (risk {plan["risk"]:.{decimals}f})']
         for index, (multiple, level, _) in enumerate(plan['targets'], 1):
             label = 'Target' if len(plan['targets']) == 1 else f'TP{index}'
@@ -450,7 +543,7 @@ def notification_text(signal: Signal, status: str, analysis: dict | None, reason
     direction = 'BUY' if buy else 'SELL'
     decimals = 2 if signal.price >= 100 else 5
     icon = {'approved': '✅', 'rejected': '❌', 'error': '⚠️'}.get(status, '•')
-    tag = 'CRT' if signal.model == 'crt' else 'classic'
+    tag = {'crt': 'CRT', 'ict': 'ICT forward test'}.get(signal.model, 'classic')
     lines = [f'{"🟢" if buy else "🔴"} {direction} {signal.symbol} {signal.timeframe} [{tag}] | {icon} {status.upper()}'
              + (' (manual review)' if status == 'approved' else ''),
              f'Event: {signal.event_id}',
