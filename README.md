@@ -186,7 +186,7 @@ Each message has a fixed structure: direction and result header, the `Ledger: #n
 
 Delivery is deliberately conservative: an ambiguous network result becomes `unknown` and is not automatically resent. `failed` and `unknown` entries are visible in the journal and need manual inspection. This avoids duplicate notifications after a timeout; it cannot promise exactly-once delivery to Telegram.
 
-Graded results (fill, each target, stop, break-even, time limit, close) arrive as `RESULT` messages after signal alerts. The daily record arrives once per day at `DIGEST_HOUR` in `DIGEST_TIMEZONE`, to `TELEGRAM_DIGEST_CHAT_ID` when set (for example a public channel) and otherwise to `TELEGRAM_CHAT_ID`.
+Graded results (fill, each target, stop, break-even, time limit, close) arrive as `RESULT` messages after signal alerts. With `TELEGRAM_COMMUNITY_CHAT_ID` set (a group or channel the bot was added to), every real approved signal is also posted there without your lot size, followed by its results; synthetic tests and rejected setups stay in the private chat. The daily record arrives once per day at `DIGEST_HOUR` in `DIGEST_TIMEZONE`, to `TELEGRAM_DIGEST_CHAT_ID` when set (for example a public channel) and otherwise to `TELEGRAM_CHAT_ID`.
 
 ## Configuration and behavior
 

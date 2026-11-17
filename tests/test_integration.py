@@ -25,6 +25,8 @@ def isolated_database(monkeypatch):
     monkeypatch.setenv('DIGEST_HOUR', '24')
     monkeypatch.delenv('GATE_MODE', raising=False)
     monkeypatch.setenv('MESSAGE_STYLE', 'detailed')
+    monkeypatch.setenv('ACCOUNT_SIZE', '0')               # sizing tests set their own account
+    monkeypatch.setenv('AI_COMMENTARY', 'true')           # the pipeline tests exercise the commentary path
     # Plan geometry the assertions below are written for, independent of the local .env.
     monkeypatch.setenv('TP_R_MULTIPLES', '1,2,3,4')
     monkeypatch.setenv('STOP_ATR_MULTIPLE', '1.5')
@@ -370,7 +372,8 @@ def test_losing_history_warns_the_next_signal(client, monkeypatch):
     monkeypatch.setenv('HISTORY_MIN_SAMPLES', '2')
     monkeypatch.setattr(main, 'classify', lambda signal: analysis())
     for index in range(2):
-        signal, plan = publish_in_past(client, monkeypatch, seconds_ago=3600, event_id=f'loss-{index}', offset=20 + index)
+        # 60 s apart so a second ticking between iterations cannot give both the same bar_time (a refused duplicate).
+        signal, plan = publish_in_past(client, monkeypatch, seconds_ago=3600, event_id=f'loss-{index}', offset=20 + index * 60)
         with main.database() as conn:
             ledger.append(conn, signal.event_id, 'closed', plan['published_at'] + 600,
                           {'exit': 'sl', 'targets_hit': 0, 'ambiguous': False, 'r_tp1': -1.0, 'r_scaled': -1.0})
@@ -406,3 +409,34 @@ def test_recent_history_lookup_matches_the_full_record(client, monkeypatch):
     assert [item['event_id'] for item in recent] == ['aged-1', 'aged-2']
     assert all(set(item) >= {'symbol', 'model', 'direction', 'session', 'cautioned', 'r_tp1'} for item in recent)
     assert client.get('/track-record').json()['headline']['closed'] == 3
+
+
+def test_community_gets_only_real_approved_signals_and_results(client, monkeypatch):
+    monkeypatch.setenv('TELEGRAM_COMMUNITY_CHAT_ID', '-100123')
+    monkeypatch.setenv('ACCOUNT_SIZE', '1000')
+    monkeypatch.setenv('MESSAGE_STYLE', 'compact')
+    monkeypatch.setattr(main, 'classify', lambda signal: analysis())
+    signal, plan = publish_in_past(client, monkeypatch)                       # real and approved
+    now = int(time.time())
+    client.post('/signals', json=payload(event_id='DEMO-SYNTHETIC-x', bar_time=now - 100))
+    client.post('/signals', json=payload(event_id='weak', adx=5, bar_time=now - 160))
+    client.post('/process')
+    client.post('/process')
+
+    def community():
+        with main.database() as conn:
+            return conn.execute("SELECT ref, message FROM messages WHERE chat='community' ORDER BY created_at").fetchall()
+    rows = community()
+    assert [row['ref'] for row in rows] == ['community:signal:test-1']
+    assert 'Size your own trade' in rows[0]['message'] and '💰' not in rows[0]['message'] and 'Ledger #1' in rows[0]['message']
+    with main.database() as conn:
+        private = conn.execute("SELECT message FROM notifications WHERE event_id='test-1'").fetchone()['message']
+    assert '💰 Size:' in private                                              # the owner still gets the sizing
+
+    first = (plan['published_at'] // 60 + 1) * 60
+    entry, tp1 = plan['entry'], plan['targets'][0][1]
+    candles = [[first, entry, entry + 0.5, entry - 0.5, entry + 0.2, 0.0],
+               [first + 60, entry + 0.2, tp1 + 0.3, entry + 0.1, tp1, 0.0]]
+    client.post('/candles', json={'symbol': 'XAUUSD', 'start': first - 60, 'end': first + 120, 'candles': candles})
+    client.post('/grade')
+    assert [row['ref'].split(':')[1] for row in community()] == ['signal', 'result']
