@@ -246,6 +246,9 @@ def post(body: dict, url: str, token: str, limit: int = 200) -> tuple[int, str]:
         return exc.code, exc.read().decode()[:limit]
     except urllib.error.URLError as exc:
         return 0, str(exc.reason)
+    except (TimeoutError, ConnectionError) as exc:
+        # Docker Desktop's port forward stalls now and then; one failed post must not kill the feeder and its scans.
+        return 0, f'{type(exc).__name__}: {exc}'
 
 
 def push_candles(cfg: dict, state: dict) -> None:
