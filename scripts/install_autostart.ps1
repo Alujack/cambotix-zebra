@@ -2,8 +2,7 @@
 # scripts\feeder_service.ps1 hidden at sign-in, so the MT5 feeder (and Docker Desktop) come back after every reboot.
 # Rerun it to change options; it replaces the existing task.
 #
-#   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1                    # local stack, XAUUSDc
-#   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Symbol XAUUSDm
+#   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1                    # local stack, XAUUSDm (CRT)
 #   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Vps               # analyzer on the VPS
 #   powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1 -Uninstall
 # A second symbol gets its own task and log, next to the first (here the ICT model on EURUSD):
@@ -11,8 +10,8 @@
 #       -TaskName 'Cambotix Zebra Feeder EURUSD' -LogName feeder-eurusd.log
 # Reinstalling stops only the feeders of -Symbol; to move a task to another symbol, -Uninstall it with the old one first.
 param(
-    [string]$Symbol = 'XAUUSDc',
-    [string]$Models = 'classic,crt',
+    [string]$Symbol = 'XAUUSDm',
+    [string]$Models = 'crt',
     [string]$TaskName = 'Cambotix Zebra Feeder',
     [string]$LogName = 'feeder.log',
     [switch]$Vps,

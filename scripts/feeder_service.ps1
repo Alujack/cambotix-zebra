@@ -3,13 +3,12 @@
 # Normally started at sign-in by the scheduled task from scripts\install_autostart.ps1; it can also be run by hand.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1                    # local stack
-#   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Symbol XAUUSDm
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Vps               # VPS analyzer via scripts\vps_feeder.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Symbol EURUSDm -Models ict -LogName feeder-eurusd.log
 # Each symbol runs its own service; give a second one its own -LogName so the two logs do not interleave.
 param(
-    [string]$Symbol = 'XAUUSDc',
-    [string]$Models = 'classic,crt',
+    [string]$Symbol = 'XAUUSDm',
+    [string]$Models = 'crt',
     [string]$LogName = 'feeder.log',
     [switch]$Vps
 )

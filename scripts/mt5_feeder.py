@@ -141,8 +141,10 @@ class NoFreshBars(Exception):
 
 def bars(symbol: str, attempts: int = 8, count: int = BARS, timeframe: int | None = None,
          seconds: int = TF_SECONDS) -> pd.DataFrame:
-    """MT5 serves stale history for a few seconds after a cold terminal launch, while ticks are already current.
-    Without recent ticks the market is closed or the feed is down, so retrying now cannot help."""
+    """Closed bars only, oldest first. MT5 serves stale history for a few seconds after a cold terminal launch,
+    while ticks are already current. Without recent ticks the market is closed or the feed is down, so retrying now
+    cannot help. The still-forming bar is dropped by time, not position: in a quiet minute MT5 has not opened the
+    next bar yet, and dropping the last row would then discard the bar that just closed."""
     if not mt5.initialize():
         raise SystemExit(f'MT5 initialize failed: {mt5.last_error()}')
     mt5.symbol_select(symbol, True)
@@ -156,7 +158,7 @@ def bars(symbol: str, attempts: int = 8, count: int = BARS, timeframe: int | Non
             df = pd.DataFrame(rates)
             age = time.time() - (int(df['time'].iloc[-1]) + seconds)
             if age < 2 * seconds:
-                return df
+                return df[df['time'] + seconds <= time.time()].reset_index(drop=True)
             print(f'  warmup {attempt + 1}/{attempts}: history {age / 3600:.1f}h stale, resyncing')
         time.sleep(3)
     raise NoFreshBars('ticks are current but MT5 history stays stale; check the terminal is connected')
@@ -177,7 +179,7 @@ def scan_crt(cfg: dict, df: pd.DataFrame, close_epoch: int, dry_run: bool) -> No
     if not slot_closes(close_epoch - TF_SECONDS, crt.htf_hours):
         return
     rows = [{'t': int(r.time), 'o': float(r.open), 'h': float(r.high), 'l': float(r.low), 'c': float(r.close)}
-            for r in df.itertuples()][:-1]           # drop the still-forming bar
+            for r in df.itertuples()]
     setups = [body for body in detect(cfg['symbol'], rows, crt) if body['bar_time'] == close_epoch]
     if not setups:
         print(f'  crt: H{crt.htf_hours} candle closed; no sweep-and-close-back setup')
@@ -197,7 +199,7 @@ def scan_ict(cfg: dict, dry_run: bool) -> None:
         print(f'{dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC  ict: no fresh M5 bars ({reason})')
         return
     rows = [{'t': int(r.time), 'o': float(r.open), 'h': float(r.high), 'l': float(r.low), 'c': float(r.close)}
-            for r in raw.itertuples()][:-1]           # drop the still-forming bar
+            for r in raw.itertuples()]
     close_epoch = rows[-1]['t'] + M5_SECONDS
     age = time.time() - close_epoch
     if age > cfg['max_age']:
@@ -290,7 +292,7 @@ def scan(cfg: dict, dry_run: bool) -> None:
         print(f'{dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC  no fresh bars ({reason}); next check at the next 15m close')
         return
     df = indicators(raw, cfg['swing_bars'])
-    closed, previous = df.iloc[-2], df.iloc[-3]      # -1 is the still-forming bar
+    closed, previous = df.iloc[-1], df.iloc[-2]
     close_epoch = int(closed['time']) + TF_SECONDS
     stamp = dt.datetime.fromtimestamp(close_epoch, dt.timezone.utc)
     age = time.time() - close_epoch
@@ -334,10 +336,10 @@ def main() -> None:
     parser.add_argument('--once', action='store_true', help='scan the last closed bar and exit')
     parser.add_argument('--dry-run', action='store_true', help='print the payload instead of sending')
     parser.add_argument('--no-candles', action='store_true', help='do not send M1 candles for outcome grading')
-    parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDc'),
-                        help='broker symbol as named in MT5 (default XAUUSDc)')
-    parser.add_argument('--models', default='classic,crt',
-                        help='comma list of detection models: classic, crt, ict (default classic,crt)')
+    parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDm'),
+                        help='broker symbol as named in MT5 (default XAUUSDm)')
+    parser.add_argument('--models', default='crt',
+                        help='comma list of detection models: classic, crt, ict (default crt)')
     args = parser.parse_args()
 
     settings = env()
