@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Replay the classic, CRT and ICT models over saved broker history and grade every plan the analyzer would publish.
+"""Replay the classic, CRT, ICT and EMA models over saved broker history and grade every plan the analyzer would publish.
 
 Same code path as live wherever it matters: detection is the feeder's (classic indicators re-implemented
-without pandas, CRT via scripts/crt_engine.detect, ICT via scripts/ict_engine.detect on M5); every payload goes through app.domain's rule checks;
+without pandas, CRT via scripts/crt_engine.detect, ICT via scripts/ict_engine.detect on M5, the EMA scalp via
+scripts/ema_engine.detect on M1); every payload goes through app.domain's rule checks;
 plans are frozen with app.ledger.plan_record; grading is app.grader.simulate on M1 candles including spread;
 statistics are app.grader.summarize. Settings come from the environment (.env), and --set overrides them.
 
@@ -30,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT), str(ROOT / 'scripts')]
 
 import crt_engine  # noqa: E402
+import ema_engine  # noqa: E402
 import ict_engine  # noqa: E402
 from app.domain import MODEL_RULES, Signal  # noqa: E402
 from app.grader import simulate, summarize  # noqa: E402
@@ -174,20 +176,33 @@ def ict_payloads(symbol: str, data: dict) -> list[dict]:
     return ict_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in m5], cfg)
 
 
+# -- EMA scalp ---------------------------------------------------------------------------------------
+def ema_payloads(symbol: str, data: dict) -> list[dict]:
+    exempt = {x.strip().upper() for x in os.getenv('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if x.strip()}
+    cfg = ema_engine.EmaConfig(min_rr=float(os.getenv('EMA_MIN_RR', '1.5')),
+                               pullback_bars=int(os.getenv('EMA_PULLBACK_BARS', '5')),
+                               stop_buffer_atr=float(os.getenv('EMA_STOP_BUFFER_ATR', '0.2')),
+                               min_risk_atr=float(os.getenv('EMA_MIN_RISK_ATR', '1.0')),
+                               max_risk_atr=float(os.getenv('EMA_MAX_RISK_ATR', '4.0')),
+                               cooldown_bars=int(os.getenv('EMA_COOLDOWN_BARS', '10')), crypto=symbol in exempt)
+    return ema_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in data['m1']], cfg)
+
+
 # -- publish + grade ---------------------------------------------------------------------------------
 def grade(payloads: list[dict], m1: list[dict]) -> tuple[list[dict], dict]:
     """Apply the analyzer's rules and open-plan limit in time order; grade each published plan."""
     times = [c['t'] for c in m1]
     end = m1[-1]['t'] + MINUTE if m1 else 0
     limit = int(os.getenv('MAX_OPEN_SAME_DIRECTION', '1'))
-    open_until: list[tuple[str, int]] = []
+    open_until: list[tuple[str, str, int]] = []        # (model, direction, open until): the analyzer's per-model limit
     trades, rejected = [], {}
     for body in sorted(payloads, key=lambda p: (p['bar_time'], p['model'], p['signal'])):
         signal = Signal.model_validate(body)
         reasons = MODEL_RULES[signal.model](signal)
         direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
         bar_time, opened_at = signal.bar_time, signal.bar_time - signal.bar_seconds
-        if not reasons and limit > 0 and sum(1 for d, until in open_until if d == direction and until > bar_time) >= limit:
+        if not reasons and limit > 0 and sum(1 for m, d, until in open_until
+                                             if m == signal.model and d == direction and until > bar_time) >= limit:
             reasons = ['open_plan_same_direction']
         if reasons:
             for r in reasons:
@@ -200,7 +215,8 @@ def grade(payloads: list[dict], m1: list[dict]) -> tuple[list[dict], dict]:
         lo, hi = bisect.bisect_left(times, bar_time), bisect.bisect_left(times, horizon)
         events = simulate(plan, m1[lo:hi], horizon)
         last = events[-1] if events else None
-        open_until.append((direction, last['time'] if last and last['kind'] in ('closed', 'not_filled') else horizon))
+        open_until.append((plan['model'], direction,
+                           last['time'] if last and last['kind'] in ('closed', 'not_filled') else horizon))
         if last and last['kind'] == 'closed':
             ny = datetime.fromtimestamp(opened_at, timezone.utc).astimezone(ZoneInfo('America/New_York'))
             trades.append({**last, 'seq': len(trades), 'model': plan['model'], 'direction': direction,
@@ -240,6 +256,8 @@ def run(data: dict, symbol: str, models: set[str]) -> tuple[list[dict], dict]:
         payloads += crt_payloads(symbol, data)
     if 'ict' in models:
         payloads += ict_payloads(symbol, data)
+    if 'ema' in models:
+        payloads += ema_payloads(symbol, data)
     return grade(payloads, data['m1'])
 
 
@@ -277,8 +295,8 @@ def main() -> None:
     os.environ['SYMBOLS'] = ','.join(sorted(enabled | {args.symbol.upper()}))
     folder = Path(args.data)
     models = {m.strip() for m in args.models.split(',') if m.strip()}
-    if not models <= {'classic', 'crt', 'ict'}:
-        raise SystemExit('--models accepts a comma list of classic, crt and ict')
+    if not models <= {'classic', 'crt', 'ict', 'ema'}:
+        raise SystemExit('--models accepts a comma list of classic, crt, ict and ema')
     data = {frame: load(folder, args.symbol, frame) for frame in ('m1', 'm15')}
     if 'ict' in models and (folder / f'{args.symbol}_m5.csv').exists():
         data['m5'] = load(folder, args.symbol, 'm5')
@@ -291,7 +309,8 @@ def main() -> None:
         print('settings: ' + ', '.join(f'{k}={os.getenv(k)}' for k in ('TP_R_MULTIPLES', 'STOP_ATR_MULTIPLE', 'MIN_ADX',
                                                                          'CRT_HTF_HOURS', 'CRT_KEY_TIMES', 'CRT_MIN_RR',
                                                                          'CRT_MAX_HOLD_CANDLES', 'ICT_SYMBOLS',
-                                                                         'ICT_ENTRY_EXPIRY_MINUTES', 'ICT_MAX_HOLD_MINUTES')))
+                                                                         'ICT_ENTRY_EXPIRY_MINUTES', 'ICT_MAX_HOLD_MINUTES',
+                                                                         'EMA_SYMBOLS', 'EMA_MIN_RR', 'EMA_MAX_HOLD_MINUTES')))
         trades, rejected = run(data, args.symbol, models)
         report(trades, rejected, split)
         if args.trades:

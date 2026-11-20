@@ -117,14 +117,21 @@ def plan_record(signal: Signal, published_at: int, warnings: list[str] | None = 
     plan = trade_plan(signal)
     # CRT holds for CRT_MAX_HOLD_CANDLES range candles (the backtested exit); classic keeps MAX_HOLD_MINUTES.
     # ICT waits for its limit (ICT_ENTRY_EXPIRY_MINUTES) and holds ICT_MAX_HOLD_MINUTES, as backtested.
+    # The EMA scalp fills at market on the next 1m candle and holds EMA_MAX_HOLD_MINUTES; its expiry is only the
+    # grace the grader allows for that first candle to arrive.
     if signal.model == 'crt':
         hold = int(os.getenv('CRT_MAX_HOLD_CANDLES', '3')) * signal.bar_seconds // 60
     elif signal.model == 'ict':
         hold = int(os.getenv('ICT_MAX_HOLD_MINUTES', '360'))
+    elif signal.model == 'ema':
+        hold = int(os.getenv('EMA_MAX_HOLD_MINUTES', '45'))
     else:
         hold = int(os.getenv('MAX_HOLD_MINUTES', '1440'))
     limit = signal.model == 'ict'
-    expiry = os.getenv('ICT_ENTRY_EXPIRY_MINUTES', '120') if limit else os.getenv('ENTRY_EXPIRY_MINUTES', '120')
+    if limit:
+        expiry = os.getenv('ICT_ENTRY_EXPIRY_MINUTES', '120')
+    else:
+        expiry = '5' if signal.model == 'ema' else os.getenv('ENTRY_EXPIRY_MINUTES', '120')
     return {'symbol': signal.symbol, 'model': signal.model, 'timeframe': signal.timeframe,
             'session': session_label(signal.symbol, signal.model, signal.bar_time, signal.bar_seconds), 'cautions': warnings or [],
             'direction': 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL', 'bar_time': signal.bar_time,
@@ -154,10 +161,13 @@ def open_plans(conn, symbol: str | None = None) -> list[dict]:
     return [item for item in plans if symbol is None or item['plan']['symbol'] == symbol]
 
 
-def open_count(conn, symbol: str, direction: str, now: float) -> int:
+def open_count(conn, symbol: str, direction: str, now: float, model: str | None = None) -> int:
     """Open plans on this symbol and side that can still be live by their own frozen expiry and hold limits.
-    A plan past both limits is finished by definition, even if missing candles kept it from being graded."""
+    A plan past both limits is finished by definition, even if missing candles kept it from being graded.
+    With `model`, only that model's plans count: a 1m scalp and an H4 CRT plan on the same symbol are different
+    bets with different horizons, so neither blocks the other."""
     return sum(1 for item in open_plans(conn, symbol) if item['plan']['direction'] == direction and
+               (model is None or item['plan']['model'] == model) and
                item['plan']['published_at'] + 60 * (item['plan']['entry_expiry_minutes'] + item['plan']['max_hold_minutes']) > now)
 
 

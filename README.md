@@ -119,7 +119,7 @@ Pine emits on confirmed bar close when a setup first becomes valid. It uses EMA2
 
 ## Strategy models
 
-Three detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
+Four detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
 
 **classic** (`tradingview/gold_setups.pine`): complete price/EMA20/50/200 alignment, RSI band, MACD histogram sign, ADX minimum, ATR band, and the London/New York session filter evaluated on the bar open. Levels come from ATR and the prior swing.
 
@@ -138,7 +138,16 @@ Three detection models share the same pipeline, journal, AI gate, and message fo
 4. **Fair value gap and plan**: the latest 3-candle FVG (at least 0.1 ATR) in that leg. The signal is a **limit** at the gap's near edge (`timeframe` = `5m`, `entry`, `fvg_low`/`fvg_high`, `mss_level`, `sweep_level`). The stop goes beyond the sweep plus 0.1 x 5m ATR, with one target at `ICT_MIN_RR` (2R). The grader cancels an unfilled limit after `ICT_ENTRY_EXPIRY_MINUTES` (120) and closes at market after `ICT_MAX_HOLD_MINUTES` (360).
 5. **Analyzer checks** (`ict_rules`): enabled symbol, weekday killzone candle, a valid FVG with the entry at its near edge, sweep beyond the entry, stop beyond the sweep, stop at least 0.3 ATR, and the minimum reward:risk. There is no 15m volatility band: 5m ATR sits far below it, and the backtest used none.
 
-Both models also pass the **news** check: the analyzer reads the free ForexFactory weekly calendar and rejects any setup inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked. Every message states 1R, its percent of price, and the reward-to-risk to TP1; with `ACCOUNT_SIZE` set it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. Neither model has established live performance; both remain manual-review tools.
+**ema** (`scripts/ema_engine.py`, EMA pullback scalp): runs on **M1** and can be added to the gold feeder (`--models crt,ema`). The analyzer accepts it only for `EMA_SYMBOLS` (default `XAUUSD`) and tags every message *EMA scalp · forward test*:
+
+1. **Trend**: the trigger candle closes with `close > EMA20 > EMA50 > EMA200` on M1 (reversed for a sell). EMAs use the same recursion as the classic model; the first 600 candles of any window never signal, so the live feeder (1500 M1 bars) and the backtest see the same values.
+2. **Pullback**: within the previous 5 candles at least one low touched or crossed EMA20, and the pullback low (the lowest low of those candles and the trigger) stayed above EMA200: a dip in a trend, not a reversal.
+3. **Trigger and plan**: a bullish close above EMA20 that also breaks the previous candle's high. **Market** entry at that close (`timeframe` = `1m`, `entry` = `price`, `swing_low`/`swing_high` = the pullback extremes), stop beyond the pullback extreme plus 0.2 x 1m ATR, one target at `EMA_MIN_RR` (1.5R). The stop must be 1-4 ATR wide: tighter is spread noise, wider is not a scalp. London or New York hours only, and no second setup in the same direction for 10 candles. The grader closes at market after `EMA_MAX_HOLD_MINUTES` (45).
+4. **Analyzer checks** (`ema_rules`): enabled symbol, London/New York hours, the EMA stack in the trade's direction, entry at the close, stop beyond the pullback extreme, stop 0.5-5 ATR, and the minimum reward:risk. No 15m volatility band, as for ICT.
+
+The open-plan limit (`MAX_OPEN_SAME_DIRECTION`) counts plans **per model**: a 1m scalp and an H4 CRT plan on the same symbol are different bets with different horizons, so neither blocks the other.
+
+All models also pass the **news** check: the analyzer reads the free ForexFactory weekly calendar and rejects any setup inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked. Every message states 1R, its percent of price, and the reward-to-risk to TP1; with `ACCOUNT_SIZE` set it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. Neither model has established live performance; both remain manual-review tools.
 
 ### Backtesting
 
@@ -220,7 +229,7 @@ Edit `.env`, then run `docker compose up -d analyzer` for filter/model/Telegram 
 | `CONTRACT_SIZES` | XAUUSD=100 | Units per lot per symbol for the lots figure |
 | `MAX_SIGNAL_AGE_SECONDS` | 300 | Maximum age from confirmed bar close |
 | `OLLAMA_MODEL` | qwen2.5:3b | Local model with schema-constrained JSON (signal reviews, trade notes, agent routing) |
-| `MAX_OPEN_SAME_DIRECTION` | 1 | Reject a setup while this many plans on the same symbol and side are still open (`0` = no limit) |
+| `MAX_OPEN_SAME_DIRECTION` | 1 | Reject a setup while this many plans from the same model on the same symbol and side are still open (`0` = no limit) |
 | `NEWS_CAUTION_MIN` | 120 | Caution when a high-impact event is due within this many minutes (beyond the blocking window) |
 | `HISTORY_MIN_SAMPLES` / `HISTORY_DAYS` | 30 / 60 | History warning once the record has this many closed trades for the same symbol, side, model and session |
 | `ENTRY_EXPIRY_MINUTES` | 120 | Limit entries not filled within this time are recorded as not filled (both models currently enter at market) |
@@ -283,7 +292,7 @@ Settings: see the AI agent block at the end of `.env.example`. Changing `.env` n
 
 ## MetaTrader 5 feeder
 
-`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs the models from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and on every M15 close that also closes a New York-aligned H4 candle it runs `scripts/crt_engine.py` over the last 600 closed M15 bars and posts a CRT setup if that candle swept the previous one and closed back inside. CRT settings are read from `.env` (`CRT_*`) so what it emits is what the analyzer accepts, and a payload is sent only for the candle that just closed, so a restart never re-sends history. `--models` takes a comma list of `classic`, `crt` and `ict` (default `crt`; live runs `crt` on gold and `ict` on EURUSD). With `ict` it also scans every 5 minutes: it replays the last 1500 closed M5 bars through `scripts/ict_engine.py` and posts a setup only if the candle that just closed completed it. The feeder refuses to start ICT on a symbol outside `ICT_SYMBOLS`. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only). If `mt5.initialize()` reports `IPC timeout`, untick *Tools > Options > Expert Advisors > Disable algorithmic trading via external Python API*:
+`scripts/mt5_feeder.py` replaces the TradingView webhook entirely, so no TradingView plan and no tunnel are needed. It runs the models from the broker's own candles and posts setups straight to the analyzer at `127.0.0.1:ANALYZER_PORT`: the classic model mirrors `gold_setups.pine` bar for bar, and on every M15 close that also closes a New York-aligned H4 candle it runs `scripts/crt_engine.py` over the last 600 closed M15 bars and posts a CRT setup if that candle swept the previous one and closed back inside. CRT settings are read from `.env` (`CRT_*`) so what it emits is what the analyzer accepts, and a payload is sent only for the candle that just closed, so a restart never re-sends history. `--models` takes a comma list of `classic`, `crt`, `ict` and `ema` (default `crt`; live runs `crt` on gold and `ict` on EURUSD). With `ict` it also scans every 5 minutes: it replays the last 1500 closed M5 bars through `scripts/ict_engine.py` and posts a setup only if the candle that just closed completed it. With `ema` it scans every minute: the last 1500 closed M1 bars go through `scripts/ema_engine.py` and only a setup triggered by the candle that just closed is posted (quiet minutes print nothing; a heartbeat line appears every 15 minutes). The feeder refuses to start ICT or EMA on a symbol outside `ICT_SYMBOLS` / `EMA_SYMBOLS`. It also sends the broker's closed M1 candles every minute; these are what the grader scores. It runs on **Windows Python** next to a logged-in MetaTrader 5 terminal (the `MetaTrader5` package is Windows-only). If `mt5.initialize()` reports `IPC timeout`, untick *Tools > Options > Expert Advisors > Disable algorithmic trading via external Python API*:
 
 ```powershell
 py -m pip install MetaTrader5 pandas numpy

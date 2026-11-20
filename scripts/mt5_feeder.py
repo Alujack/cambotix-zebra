@@ -8,6 +8,8 @@ Runs the detection models from the broker's own candles:
            H4 range and closed back inside it
   ict      ICT 2022 model via scripts/ict_engine.py: every 5 minutes, posts a limit
            setup when a killzone sweep, a structure shift and an FVG complete on M5
+  ema      EMA pullback scalp via scripts/ema_engine.py: every minute, posts a market
+           setup when a 1m candle resumes the EMA20/50/200 trend after a dip into EMA20
 Same JSON contract as the analyzer's /signals; the analyzer re-validates everything.
 
 Every minute it also sends the broker's closed M1 candles (bid prices plus the
@@ -35,13 +37,16 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from crt_engine import CrtConfig, detect, slot_closes  # noqa: E402
+import ema_engine  # noqa: E402
 import ict_engine  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BARS = 600                 # >= 200 for EMA200 plus warmup
 TF_SECONDS = 900
 M5_SECONDS = 300
+M1_SECONDS = 60
 ICT_BARS = 1500            # ~5 trading days of M5: covers the previous day's pools and the swing lookback
+EMA_BARS = 1500            # M1: the engine's 600-bar EMA warmup plus the pullback window, with room for a daily break
 DIRECTIONS = ('BUY_SETUP', 'SELL_SETUP')
 CANDLE_CHUNK = 2 * 86400   # M1 rows per request stay well under the analyzer's 1 MB limit
 FIRST_CANDLES = 3 * 3600   # history sent on the very first push
@@ -218,6 +223,34 @@ def scan_ict(cfg: dict, dry_run: bool) -> None:
         print(f'  sent {body["signal"]} (ict) -> HTTP {status} {text}')
 
 
+def scan_ema(cfg: dict, dry_run: bool) -> None:
+    """Replay the last EMA_BARS closed M1 bars and post the scalp setup triggered by the bar that just closed, if any.
+    Quiet minutes print nothing; a heartbeat every 15 minutes shows the scan is alive."""
+    try:
+        raw = bars(cfg['mt5_symbol'], count=EMA_BARS, timeframe=mt5.TIMEFRAME_M1, seconds=M1_SECONDS)
+    except NoFreshBars as reason:
+        print(f'{dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC  ema: no fresh M1 bars ({reason})')
+        return
+    rows = [{'t': int(r.time), 'o': float(r.open), 'h': float(r.high), 'l': float(r.low), 'c': float(r.close)}
+            for r in raw.itertuples()]
+    close_epoch = rows[-1]['t'] + M1_SECONDS
+    age = time.time() - close_epoch
+    if age > cfg['max_age']:
+        print(f'  ema: M1 bar is {age:.0f}s old; analyzer rejects beyond {cfg["max_age"]}s, nothing sent')
+        return
+    setups = [body for body in ema_engine.detect(cfg['symbol'], rows, cfg['ema']) if body['bar_time'] == close_epoch]
+    if not setups and close_epoch % TF_SECONDS == 0:
+        stamp = dt.datetime.fromtimestamp(close_epoch, dt.timezone.utc)
+        session = 'session' if ema_engine.in_session(rows[-1]['t'], cfg['ema']) else 'outside session'
+        print(f'ema M1 closed {stamp:%Y-%m-%d %H:%M} UTC ({session})  close={rows[-1]["c"]:.5f}  no setup this quarter')
+    for body in setups:
+        if dry_run:
+            print(f'  [dry-run] would send {body["signal"]} (ema): {json.dumps(body)}')
+            continue
+        status, text = post(body, cfg['url'], cfg['token'])
+        print(f'  sent {body["signal"]} (ema) -> HTTP {status} {text}')
+
+
 # -- emission -----------------------------------------------------------------
 def payload(row: pd.Series, close_epoch: int, symbol: str, direction: str) -> dict:
     def number(value) -> float:
@@ -342,7 +375,7 @@ def main() -> None:
     parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDm'),
                         help='broker symbol as named in MT5 (default XAUUSDm)')
     parser.add_argument('--models', default='crt',
-                        help='comma list of detection models: classic, crt, ict (default crt)')
+                        help='comma list of detection models: classic, crt, ict, ema (default crt)')
     args = parser.parse_args()
 
     settings = env()
@@ -350,8 +383,8 @@ def main() -> None:
     analyzer = os.getenv('ZEBRA_ANALYZER_URL', f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}').rstrip('/')
     broker_symbol = args.symbol
     models = {m.strip().lower() for m in args.models.split(',') if m.strip()}
-    if not models <= {'classic', 'crt', 'ict'}:
-        raise SystemExit('--models accepts a comma list of classic, crt and ict')
+    if not models <= {'classic', 'crt', 'ict', 'ema'}:
+        raise SystemExit('--models accepts a comma list of classic, crt, ict and ema')
     cfg = {
         'models': models,
         'mt5_symbol': broker_symbol,
@@ -377,6 +410,13 @@ def main() -> None:
             raise SystemExit(f'{cfg["symbol"]} is not in ICT_SYMBOLS ({",".join(sorted(ict_symbols))}); the analyzer '
                              'would reject every ICT setup. The ICT backtest lost money on gold.')
         cfg['ict'] = ict_engine.IctConfig(min_rr=float(settings.get('ICT_MIN_RR', 2.0)))
+    if 'ema' in models:
+        ema_symbols = {s.strip().upper() for s in settings.get('EMA_SYMBOLS', 'XAUUSD').split(',') if s.strip()}
+        if cfg['symbol'] not in ema_symbols:
+            raise SystemExit(f'{cfg["symbol"]} is not in EMA_SYMBOLS ({",".join(sorted(ema_symbols))}); the analyzer '
+                             'would reject every EMA setup.')
+        exempt = {s.strip().upper() for s in settings.get('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if s.strip()}
+        cfg['ema'] = ema_engine.EmaConfig(min_rr=float(settings.get('EMA_MIN_RR', 1.5)), crypto=cfg['symbol'] in exempt)
     m15_models = bool(models & {'classic', 'crt'})
     print(f'{cfg["mt5_symbol"]} -> {cfg["symbol"]}  {cfg["url"]}  models={",".join(sorted(models))}  '
           f'(ADX>={cfg["min_adx"]}, ATR% {cfg["min_atr"]}-{cfg["max_atr"]})')
@@ -391,14 +431,19 @@ def main() -> None:
                 scan(cfg, args.dry_run)
             if 'ict' in models:
                 scan_ict(cfg, args.dry_run)
+            if 'ema' in models:
+                scan_ema(cfg, args.dry_run)
             return
-        cadence = ', '.join((['15m scan'] if m15_models else []) + (['5m ICT scan'] if 'ict' in models else []))
+        cadence = ', '.join((['15m scan'] if m15_models else []) + (['5m ICT scan'] if 'ict' in models else [])
+                            + (['1m EMA scan'] if 'ema' in models else []))
         print(f'watching; candles every minute, {cadence} 10s after each bar close. Ctrl+C to stop.')
         scanned = scanned_m5 = None
         while True:
             time.sleep(max(1.0, 60 - time.time() % 60 + 10))
             if candles:
                 push_candles(cfg, state)
+            if 'ema' in models:
+                scan_ema(cfg, args.dry_run)
             bar = int(time.time()) // TF_SECONDS
             if m15_models and time.time() % TF_SECONDS < 60 and bar != scanned:
                 scanned = bar

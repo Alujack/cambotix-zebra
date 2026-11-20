@@ -137,10 +137,10 @@ def process():
             reasons = technical_rules(signal)
             limit = int(os.getenv('MAX_OPEN_SAME_DIRECTION', '1'))
             if not reasons and limit > 0 and not synthetic(signal.event_id):
-                # One idea, one plan: a second entry in the same direction doubles the same bet.
+                # One idea, one plan: a second entry in the same direction from the same model doubles the same bet.
                 direction = 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL'
                 with database() as conn:
-                    if ledger.open_count(conn, signal.symbol, direction, time.time()) >= limit:
+                    if ledger.open_count(conn, signal.symbol, direction, time.time(), signal.model) >= limit:
                         reasons = ['open_plan_same_direction']
             if reasons:
                 finish(signal, 'rejected', None, reasons)
