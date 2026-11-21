@@ -43,3 +43,24 @@ jobs:
         run: tail -n +2 db/init.sql | psql -h localhost -U zebra -d zebra_tests -v ON_ERROR_STOP=1 >/dev/null
       - name: Unit and database tests
         run: python -m pytest -q -p no:cacheprovider tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - name: Production build (no API at build time; pages stream data at request time)
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+

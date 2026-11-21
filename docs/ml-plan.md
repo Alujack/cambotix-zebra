@@ -28,7 +28,7 @@ table below is the translation, with where each phase stands on disk today (2026
 
 | Roadmap phase | This plan | State now |
 |---|---|---|
-| 1. Data collection — XAUUSD OHLCV, timestamp checks, multi-timeframe sets | §3 (Phase 0) | **In progress 2026-11-21:** `pull_dukascopy.py` rewritten (`--from/--to/--out`, yearly files, m5+h1), `ml/check_history.py` + tests written, both smoke-tested; full gold pull from 2003 running |
+| 1. Data collection — XAUUSD OHLCV, timestamp checks, multi-timeframe sets | §3 (Phase 0) | **Done 2026-11-21.** 8,010,604 M1 bars 2003-05-05 .. 2026-11-20 in `.local/history_dukascopy_full/` with m5/m15/h1/h4/d1/w1; `ml/check_history.py` PASSED. Usable range and spread caveats in §3 |
 | 2. ICT detection engine — concepts as testable modules | §4 (Phase 1) | **Built 2026-11-21:** `ml/ict_features.py` split into concept functions, 22 tests in `tests/test_ict_features.py`, `ml/check_candidates.py` + tests for the per-year check. Run on one cached year of Dukascopy gold (Nov 2025 – Nov 2026): 1,362 candidates, no rejects. **Still to do: run `check_candidates.py` on the full history once the pull finishes** |
 | 3. Dataset generation — labeled samples, validated | §5 (Phase 2) | Draft `ml/labels.py`, `ml/dataset.py`; `ml/data/ict_dataset.csv.gz` (20 MB) built from the 3-year file and **committed and pushed in `d7fbae8`**, which §5 says datasets should not be; not yet validated against `scripts/backtest.py` |
 | 4. ML training — setup classification, outcome prediction | §6 (Phase 3) | `ml/train.py` drafted, never run |
@@ -75,8 +75,29 @@ or remove it.
 
 ## 3. Phase 0 — Download the full XAUUSD history (first step)
 
-**Status 2026-11-21: built and running.** `scripts/pull_dukascopy.py` has the changes below, `ml/check_history.py`
-exists with tests, and the full gold pull was started (see the roadmap table at the top for the result).
+**Status 2026-11-21: done.** Pull finished in about 3.5 hours with no refused files; the check PASSED
+(report: `ml/reports/xauusd_history_check.md`).
+
+| Result | Value |
+|---|---|
+| M1 bars | 8,010,604, first 2003-05-05 00:01 UTC, last 2026-11-20 21:59 UTC |
+| Frames | m5 1,679,641 · m15 567,203 · h1 142,817 · h4 37,814 · d1 7,334 · w1 1,229, all equal to resampled M1 |
+| Bad timestamps / prices / Saturday bars | 0 / 0 / 0 |
+| Missing trading hours | 1,207: 40 full days (Christmas, New Year, Good Friday, 2013 on) + 150 partial (US holiday early closes) |
+| Overlap with Exness Nov 2023 – Nov 2026 | 1,063,220 shared minutes; median close difference 0.15 (p99 0.63) |
+
+**What the check found that matters for Phase 2:**
+
+1. **Use 2007 onward for the dataset.** 2003–2004 have only about 70–75% of London/NY minutes, 2005 about 88%,
+   2006 about 95%; from 2007 every year is complete. Sparse minutes would fake sweeps and gaps. Keep 2003–2006 as
+   indicator warm-up only. That still leaves about 20 years.
+2. **Spread before 2011 is coarse.** 2003–2010 use under 600 distinct values and never exceed 0.706, so news
+   spikes are missing; from 2011 it is a real spread (max 3–15). Grade 2003–2010 with a floor of the year's p99
+   so those years are not flattered, or start the dataset at 2011 if the floor still looks optimistic.
+3. **2012 has 8,145 zero spreads** (2.2% of bars, scattered). Replace with that hour's median spread when grading.
+4. **Dukascopy is about 3× Exness on spread** in the overlap (2025: 0.58 vs 0.16; 2026: 0.66 vs 0.26), so labels
+   graded here are conservative for your broker. Gate 5 still re-scores on Exness.
+5. 2020 (Covid crash) and 2025–2026 have real spread spikes up to about 15; those are kept.
 
 **Source:** Dukascopy (free; BID and ASK minute candles, so spread is real, not assumed). Gold history there starts
 in May 2003; we pull everything it serves and record the real first date.
@@ -273,7 +294,7 @@ instead of edge, market entry, session pools only), never tuning on the test fol
 
 | Step | Deliverable | Done when |
 |---|---|---|
-| 0 | `pull_dukascopy.py` `--out`/`--from`/yearly files; `ml/check_history.py` | Full XAUUSD M1 downloaded, all checks pass (code done; pull running) |
+| 0 | `pull_dukascopy.py` `--out`/`--from`/yearly files; `ml/check_history.py` | **Done 2026-11-21**: full XAUUSD M1 downloaded, checks pass |
 | 1 | `ml/ict_features.py` + tests (no-lookahead, FVG/MSS cases); `ml/check_candidates.py` | Tests pass (done); candidate counts look sane per year (one cached year done; full history after the pull) |
 | 2 | `ml/labels.py`, `ml/dataset.py` | Dataset built; labels match `scripts/backtest.py` on the ICT subset |
 | 3 | `ml/train.py` | Walk-forward + control + baselines run end to end |
