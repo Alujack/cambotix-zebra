@@ -8,6 +8,9 @@ export const site = {
   markets: ["XAUUSD", "EURUSD", "BTCUSD"],
 };
 
+// Units per standard lot, for the position-size calculator on a plan's detail page.
+export const contractSize: { [symbol: string]: number } = { XAUUSD: 100, EURUSD: 100000, GBPUSD: 100000, BTCUSD: 1, BTCUSDT: 1 };
+
 export type Member = { name: string; role: string; blurb?: string; links?: { label: string; href: string }[] };
 
 // Placeholder until real names, photos and follower counts are supplied.

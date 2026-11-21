@@ -117,3 +117,17 @@ def test_api_cannot_write():
     with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
         with api.readonly() as conn:
             conn.execute("INSERT INTO coverage(symbol, since, through) VALUES ('XAUUSD', 1, 2)")
+
+
+def test_single_plan_by_ledger_number(client):
+    won = publish('won', 7200)
+    close('won', won, 1.0)
+    publish('open', 600)
+    closed = client.get('/signals/1').json()
+    assert closed['event_id'] == 'won' and closed['status'] == 'closed' and closed['levels']['entry'] == 3510.25
+    assert [event['kind'] for event in closed['events']] == ['filled', 'tp1', 'be', 'closed']
+    open_seq = client.get('/signals').json()[0]['seq']
+    open_plan = client.get(f'/signals/{open_seq}').json()
+    assert open_plan['event_id'] == 'open' and open_plan['levels_public'] is False and 'levels' not in open_plan
+    assert client.get('/signals/2').status_code == 404        # row 2 is a fill event, not a plan
+    assert client.get('/signals/999').status_code == 404

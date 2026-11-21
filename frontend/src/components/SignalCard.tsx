@@ -1,63 +1,87 @@
+import Link from "next/link";
 import type { Plan } from "@/lib/api";
 import { modelName, price, r, utc } from "@/lib/format";
-import { t, type Lang } from "@/lib/i18n";
+import { href, t, type Lang } from "@/lib/i18n";
 
-function Outcome({ plan, lang }: { plan: Plan; lang: Lang }) {
+export function Direction({ direction }: { direction: "BUY" | "SELL" }) {
+  const buy = direction === "BUY";
+  return (
+    <span className={`badge ${buy ? "border-win/50 bg-win/10 text-win" : "border-loss/50 bg-loss/10 text-loss"}`}>
+      <span className={`chip-dot ${buy ? "bg-win" : "bg-loss"}`} /> {direction}
+    </span>
+  );
+}
+
+export function Outcome({ plan, lang }: { plan: Plan; lang: Lang }) {
   const d = t(lang);
-  if (plan.status === "open") return <span className="rounded-full bg-wait/15 px-2 py-0.5 text-xs text-wait">{d.card.open}</span>;
+  if (plan.status === "open") return <span className="badge border-wait/50 bg-wait/10 text-wait">{d.card.open}</span>;
   if (plan.status === "not_filled") {
-    return <span className="rounded-full bg-muted/15 px-2 py-0.5 text-xs text-muted">{d.card.notFilled} · {plan.result?.reason?.replaceAll("_", " ")}</span>;
+    return <span className="badge border-line bg-card text-muted">{d.card.notFilled} · {plan.result?.reason?.replaceAll("_", " ")}</span>;
   }
   const win = (plan.result?.r_tp1 ?? 0) > 0;
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs ${win ? "bg-win/15 text-win" : "bg-loss/15 text-loss"}`}>
+    <span className={`badge ${win ? "border-win/50 bg-win/10 text-win" : "border-loss/50 bg-loss/10 text-loss"}`}>
       {d.exits[plan.result?.exit ?? ""] ?? plan.result?.exit} · {r(plan.result?.r_tp1)}
       {plan.result?.ambiguous ? ` · ${d.card.ambiguous}` : ""}
     </span>
   );
 }
 
+function Row({ label, value, tone }: { label: string; value: string; tone?: "win" | "loss" }) {
+  const color = tone === "win" ? "text-win" : tone === "loss" ? "text-loss" : "text-fg";
+  return (
+    <div className="flex items-baseline justify-between border-t border-line py-2 first:border-t-0">
+      <span className="label">{label}</span>
+      <span className={`price ${color}`}>{value}</span>
+    </div>
+  );
+}
+
+// The compact card: symbol and timeframe, two badges, the three levels, a couple of quality chips, status pills,
+// then one full-width action. Everything else lives on the detail page.
 export default function SignalCard({ plan, lang }: { plan: Plan; lang: Lang }) {
   const d = t(lang);
-  const buy = plan.direction === "BUY";
+  const shown = plan.cautions.slice(0, 2);
+  const hidden = plan.cautions.length - shown.length;
   return (
-    <article className="rounded-xl border border-line bg-card p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className={`rounded-md px-2 py-0.5 text-sm font-semibold ${buy ? "bg-win/15 text-win" : "bg-loss/15 text-loss"}`}>{plan.direction}</span>
-          <span className="font-semibold">{plan.symbol}</span>
-          <span className="text-sm text-muted">{plan.timeframe} · {modelName[plan.model] ?? plan.model}</span>
+    <article className="card flex flex-col p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-lg font-bold">{plan.symbol}</div>
+          <div className="text-xs text-muted">{modelName[plan.model] ?? plan.model} · {plan.timeframe}</div>
         </div>
-        <Outcome plan={plan} lang={lang} />
+        <span className="pill uppercase">{d.card.intraday} ({plan.timeframe})</span>
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Direction direction={plan.direction} />
+        <span className="badge border-line bg-card text-muted">{plan.entry_type === "limit" ? d.card.limit : d.card.market}</span>
+      </div>
+      <div className="mt-3">
         {plan.levels_public && plan.levels ? (
           <>
-            <div><div className="text-xs text-muted">{d.card.entry}</div><div className="tabular-nums">{price(plan.levels.entry)}</div></div>
-            <div><div className="text-xs text-muted">{d.card.stop}</div><div className="tabular-nums">{price(plan.levels.stop)}</div></div>
-            <div><div className="text-xs text-muted">{d.card.tp1}{plan.levels.targets[0]?.[2] ? ` · ${plan.levels.targets[0][2]}` : ""}</div><div className="tabular-nums">{price(plan.levels.targets[0]?.[1] ?? 0)}</div></div>
+            <Row label={d.card.entry} value={price(plan.levels.entry)} />
+            <Row label={`${d.card.target} · ${plan.levels.targets[0]?.[2] || "TP1"}`} value={price(plan.levels.targets[0]?.[1] ?? 0)} tone="win" />
+            <Row label={d.card.stop} value={price(plan.levels.stop)} tone="loss" />
           </>
         ) : (
-          <div className="col-span-3 rounded-lg border border-dashed border-line px-3 py-2 text-xs text-muted">{d.card.hidden}</div>
+          <div className="level tone-info text-xs text-fg">⏳ {d.card.hidden}</div>
         )}
       </div>
-      {plan.cautions.length > 0 && (
-        <ul className="mt-3 space-y-1 text-xs text-wait">{plan.cautions.map((item) => <li key={item}>⚠ {item}</li>)}</ul>
-      )}
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
-        <span>{d.card.published} {utc(plan.published_at)} · {plan.session ?? ""}</span>
-        <span>{d.card.ledger} #{plan.seq}</span>
-      </div>
-      {plan.events.length > 0 && (
-        <ol className="mt-2 space-y-0.5 border-t border-line pt-2 text-xs text-muted">
-          {plan.events.filter((event) => event.kind !== "closed").map((event, index) => (
-            <li key={index} className="flex justify-between tabular-nums">
-              <span>{d.exits[event.kind] ?? event.kind}{event.price !== undefined ? ` ${price(event.price)}` : ""}{event.r !== undefined && event.kind !== "filled" ? ` (${r(event.r)})` : ""}</span>
-              <span>{utc(event.time)}</span>
-            </li>
+      {shown.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {shown.map((item) => (
+            <span key={item} className="chip" title={item}><span className="chip-dot bg-wait" />{item.length > 42 ? item.slice(0, 40) + "…" : item}</span>
           ))}
-        </ol>
+          {hidden > 0 && <span className="chip text-muted">+{hidden} {d.card.more} ⌄</span>}
+        </div>
       )}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <Outcome plan={plan} lang={lang} />
+        {plan.session && <span className="pill">{plan.session}</span>}
+        <span className="pill">{d.card.ledger} #{plan.seq}</span>
+        <span className="ml-auto text-xs text-muted">{utc(plan.published_at)}</span>
+      </div>
+      <Link href={href(lang, `/signals/${plan.seq}`)} className="btn-primary mt-4 w-full">{d.card.view}</Link>
     </article>
   );
 }

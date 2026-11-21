@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 
 from app import ledger
 from app.db import readonly
@@ -121,6 +121,46 @@ def record():
 @app.get('/signals')
 def signals(limit: int = Query(60, ge=1, le=200)):
     return cached(f'signals:{limit}', lambda: build_signals(limit))
+
+
+def build_plan(seq: int) -> dict | None:
+    with readonly() as conn:
+        head = conn.execute("SELECT event_id FROM ledger WHERE seq=%s AND kind='published'", (seq,)).fetchone()
+        if not head:
+            return None
+        rows = conn.execute('SELECT seq, kind, body FROM ledger WHERE event_id=%s ORDER BY seq', (head['event_id'],)).fetchall()
+    plan = json.loads(rows[0]['body'])
+    return plan_view(seq, plan, [json.loads(row['body']) for row in rows[1:]])
+
+
+@app.get('/signals/{seq}')
+def signal(seq: int):
+    """One published plan by its ledger number, with the same redaction as the list."""
+    view = cached(f'plan:{seq}', lambda: build_plan(seq))
+    if view is None:
+        raise HTTPException(404, 'No published plan with that ledger number')
+    return view
+
+
+def build_news() -> list[dict]:
+    """The economic calendar the rules already use, as a feed: severity from impact, no invented trade ideas."""
+    events = news.load_events() or []
+    currencies = {c.strip().upper() for c in os.getenv('NEWS_CURRENCIES', 'USD').split(',') if c.strip()}
+    now = time.time()
+    items = []
+    for event in sorted(events, key=lambda item: item['time']):
+        if event['time'] < now - 86400 or event['time'] > now + 7 * 86400:
+            continue
+        severity = {'High': 'HIGH', 'Medium': 'MEDIUM'}.get(event['impact'], 'LOW')
+        items.append({'time': int(event['time']), 'title': event['title'], 'country': event['country'], 'severity': severity,
+                      'affects': ['XAUUSD', 'EURUSD'] if event['country'] in ('USD', 'EUR') else [],
+                      'blocks_setups': severity == 'HIGH' and event['country'] in currencies})
+    return items[:40]
+
+
+@app.get('/news')
+def news_feed():
+    return cached('news', build_news)
 
 
 @app.get('/tickers')

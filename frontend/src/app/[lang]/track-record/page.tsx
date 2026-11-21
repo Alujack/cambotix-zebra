@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Suspense } from "react";
 import StatTile from "@/components/StatTile";
 import { getRecord, getSignals, type Summary } from "@/lib/api";
 import { modelName, percent, price, r, utc } from "@/lib/format";
-import { isLang, t, type Dict, type Lang } from "@/lib/i18n";
+import { href, isLang, t, type Dict, type Lang } from "@/lib/i18n";
 
 export const metadata: Metadata = { title: "Track record", description: "The complete graded record: every plan, every outcome, verifiable hash chain." };
 
@@ -81,7 +82,7 @@ async function Record({ lang }: { lang: Lang }) {
               const result = plan.status === "open" ? d.record.openWord : plan.status === "not_filled" ? `${d.record.notFilledWord} · ${plan.result?.reason?.replaceAll("_", " ")}` : `${d.exits[plan.result?.exit ?? ""] ?? plan.result?.exit}${plan.result?.ambiguous ? " *" : ""}`;
               return (
                 <tr key={plan.event_id} className="border-t border-line">
-                  <td className="px-3 py-2 text-right">{plan.seq}</td>
+                  <td className="px-3 py-2 text-right"><Link href={href(lang, `/signals/${plan.seq}`)} className="text-accent underline">{plan.seq}</Link></td>
                   <td className="px-3 py-2 whitespace-nowrap">{utc(plan.published_at)}</td>
                   <td className="px-3 py-2">{plan.symbol}</td>
                   <td className={`px-3 py-2 ${plan.direction === "BUY" ? "text-win" : "text-loss"}`}>{plan.direction}</td>

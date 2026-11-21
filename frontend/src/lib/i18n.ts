@@ -8,7 +8,14 @@ export const isLang = (value: string): value is Lang => (languages as readonly s
 export const href = (lang: Lang, path: string) => (lang === "en" ? path : `/km${path === "/" ? "" : path}` || "/km");
 
 const en = {
-  nav: { home: "Home", signals: "Signals", record: "Track record", pricing: "Pricing", method: "Method", telegram: "Daily record on Telegram", other: "ខ្មែរ" },
+  nav: { home: "Home", signals: "Signals", record: "Track record", pricing: "Pricing", method: "Method", telegram: "Daily record on Telegram", other: "ខ្មែរ",
+    overview: "Overview", terminal: "Terminal", chart: "Chart", indicators: "Indicators", trades: "My Trades", alerts: "Alerts", more: "More",
+    aiChat: "AI Chat", backtest: "Backtest", refer: "Refer", upgrade: "Upgrade", settings: "Settings", support: "Support", soon: "soon" },
+  shell: {
+    help: "How this page works", close: "Close", scan: "Scan now", scanTodo: "On-demand scans are not available yet; setups are detected on each 15-minute close.",
+    disclaimer: "Signals are for educational purposes only. Not financial advice. Trading involves risk.",
+    comingSoon: "Not built yet", comingSoonText: "This screen needs an account. It will open once Telegram sign-in exists.", guestNote: "Guest mode — nothing here is saved.",
+  },
   ticker: { empty: "Broker prices appear here once the feeder is sending candles.", source: "broker feed · ~1 min delay" },
   hero: {
     kicker: "Rule-based desk · broker-graded · nothing deleted",
@@ -64,7 +71,17 @@ const en = {
   card: {
     open: "OPEN · being graded", notFilled: "NOT FILLED", ambiguous: "ambiguous, worst case",
     hidden: "Entry, stop and targets are delivered live on Telegram. They appear here once the plan closes, with its result.",
-    entry: "Entry", stop: "Stop", tp1: "TP1", published: "Published", ledger: "Ledger",
+    entry: "Entry", stop: "Stop", tp1: "TP1", target: "Target", published: "Published", ledger: "Ledger",
+    limit: "Resting order", market: "Market entry", intraday: "Intraday", view: "View details", graded: "Graded", more: "more",
+  },
+  detail: {
+    back: "All signals", summary: "Summary", direction: "Direction", model: "Model", session: "Session", order: "Order type",
+    rr: "R / R to TP1", risk: "1R", status: "Status", levels: "Trade levels", fromEntry: "from entry", result: "Result",
+    timeline: "What happened", cautions: "Quality warnings", noCautions: "No warnings on this plan.",
+    openNote: "This plan is still open. Its levels went out live on Telegram and will appear here, with the outcome, when it closes.",
+    calc: "Position size", account: "Account size", riskPct: "Risk per trade", riskMoney: "Risk", units: "Units", lots: "Lots",
+    rewardTp1: "Reward at TP1", notional: "Notional at entry", calcNote: "Arithmetic on the published levels. Not advice; check your broker's contract size.",
+    notFilledWhy: "Never filled", closedAt: "Closed", tp1Basis: "TP1 basis", scaleOut: "scale-out",
   },
   record: {
     title: "Track record",
@@ -99,7 +116,14 @@ const en = {
 export type Dict = typeof en;
 
 const km: Dict = {
-  nav: { home: "ទំព័រដើម", signals: "សញ្ញា", record: "កំណត់ត្រាលទ្ធផល", pricing: "តម្លៃ", method: "វិធីសាស្ត្រ", telegram: "របាយការណ៍ប្រចាំថ្ងៃលើ Telegram", other: "English" },
+  nav: { home: "ទំព័រដើម", signals: "សញ្ញា", record: "កំណត់ត្រាលទ្ធផល", pricing: "តម្លៃ", method: "វិធីសាស្ត្រ", telegram: "របាយការណ៍ប្រចាំថ្ងៃលើ Telegram", other: "English",
+    overview: "ទិដ្ឋភាពរួម", terminal: "Terminal", chart: "ក្រាហ្វ", indicators: "សូចនាករ", trades: "Trade របស់ខ្ញុំ", alerts: "ការជូនដំណឹង", more: "ផ្សេងទៀត",
+    aiChat: "AI Chat", backtest: "Backtest", refer: "ណែនាំមិត្ត", upgrade: "ដំឡើង", settings: "ការកំណត់", support: "ជំនួយ", soon: "ឆាប់ៗ" },
+  shell: {
+    help: "ទំព័រនេះដំណើរការយ៉ាងណា", close: "បិទ", scan: "ស្កេនឥឡូវ", scanTodo: "ការស្កេនតាមតម្រូវការមិនទាន់មានទេ; setup ត្រូវរកឃើញរាល់ពេលបិទ candle 15 នាទី។",
+    disclaimer: "សញ្ញាគឺសម្រាប់ការសិក្សាតែប៉ុណ្ណោះ។ មិនមែនជាការណែនាំហិរញ្ញវត្ថុទេ។ ការជួញដូរមានហានិភ័យ។",
+    comingSoon: "មិនទាន់បានបង្កើត", comingSoonText: "អេក្រង់នេះត្រូវការគណនី។ វានឹងបើកនៅពេលមានការចូលតាម Telegram។", guestNote: "របៀបភ្ញៀវ — គ្មានអ្វីត្រូវរក្សាទុកទេ។",
+  },
   ticker: { empty: "តម្លៃពី broker នឹងបង្ហាញនៅទីនេះ នៅពេល feeder ផ្ញើ candle មក។", source: "ទិន្នន័យ broker · យឺត ~1 នាទី" },
   hero: {
     kicker: "ផ្អែកលើច្បាប់ · ដាក់ពិន្ទុតាម candle របស់ broker · មិនលុបអ្វីទាំងអស់",
@@ -155,7 +179,17 @@ const km: Dict = {
   card: {
     open: "កំពុងបើក · កំពុងដាក់ពិន្ទុ", notFilled: "មិនបានចូល", ambiguous: "candle មិនច្បាស់ គិតករណីអាក្រក់",
     hidden: "Entry, stop និង target ត្រូវផ្ញើផ្ទាល់តាម Telegram។ វានឹងបង្ហាញនៅទីនេះនៅពេលផែនការបិទ ជាមួយលទ្ធផល។",
-    entry: "Entry", stop: "Stop", tp1: "TP1", published: "ផ្សាយ", ledger: "Ledger",
+    entry: "Entry", stop: "Stop", tp1: "TP1", target: "Target", published: "ផ្សាយ", ledger: "Ledger",
+    limit: "Order រង់ចាំ", market: "ចូលតាមទីផ្សារ", intraday: "Intraday", view: "មើលលម្អិត", graded: "បានដាក់ពិន្ទុ", more: "ទៀត",
+  },
+  detail: {
+    back: "សញ្ញាទាំងអស់", summary: "សង្ខេប", direction: "ទិស", model: "ម៉ូដែល", session: "Session", order: "ប្រភេទ order",
+    rr: "R / R ដល់ TP1", risk: "1R", status: "ស្ថានភាព", levels: "កម្រិតតម្លៃ", fromEntry: "ពី entry", result: "លទ្ធផល",
+    timeline: "អ្វីបានកើតឡើង", cautions: "ការព្រមានគុណភាព", noCautions: "គ្មានការព្រមានលើផែនការនេះ។",
+    openNote: "ផែនការនេះនៅបើក។ កម្រិតតម្លៃបានផ្ញើផ្ទាល់តាម Telegram ហើយនឹងបង្ហាញនៅទីនេះ ជាមួយលទ្ធផល នៅពេលបិទ។",
+    calc: "ទំហំ position", account: "ទំហំគណនី", riskPct: "ហានិភ័យក្នុងមួយ trade", riskMoney: "ហានិភ័យ", units: "ឯកតា", lots: "Lot",
+    rewardTp1: "ចំណេញនៅ TP1", notional: "តម្លៃសរុបនៅ entry", calcNote: "គណនាពីកម្រិតតម្លៃដែលបានផ្សាយ។ មិនមែនការណែនាំទេ; ពិនិត្យ contract size របស់ broker អ្នក។",
+    notFilledWhy: "មិនបានចូល", closedAt: "បានបិទ", tp1Basis: "គិតតាម TP1", scaleOut: "scale-out",
   },
   record: {
     title: "កំណត់ត្រាលទ្ធផល",

@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { Suspense } from "react";
 import LangToggle from "@/components/LangToggle";
 import { href, t, type Lang } from "@/lib/i18n";
 import { site } from "@/lib/site";
@@ -29,8 +30,10 @@ export default function Nav({ lang }: { lang: Lang }) {
               {link.label}
             </Link>
           ))}
-          <LangToggle lang={lang} label={d.nav.other} />
-          <a href={site.telegram} className="ml-1 hidden rounded-md bg-accent px-3 py-1.5 font-medium text-bg hover:opacity-90 lg:inline">
+          <Suspense fallback={<span className="rounded-md border border-line px-2.5 py-1 text-xs text-muted">{d.nav.other}</span>}>
+            <LangToggle lang={lang} label={d.nav.other} />
+          </Suspense>
+          <a href={site.telegram} className="btn-primary ml-1 hidden !py-1.5 text-sm lg:inline-flex">
             {d.nav.telegram}
           </a>
         </nav>

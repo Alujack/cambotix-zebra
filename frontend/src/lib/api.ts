@@ -106,5 +106,6 @@ export const emptyRecord: Record = {
 
 export const getRecord = () => get<Record>("/record", emptyRecord);
 export const getSignals = (limit = 60) => get<Plan[]>(`/signals?limit=${limit}`, []);
+export const getPlan = (seq: number) => get<Plan | null>(`/signals/${seq}`, null);
 export const getTickers = () => get<Ticker[]>("/tickers", []);
 export const getLedger = (after = 0) => get<LedgerRow[]>(`/ledger?after=${after}`, []);
