@@ -1,8 +1,8 @@
 // Typed client for the read-only record API (web/api.py). Server-side only: API_URL points at the
-// internal `api` container, which is never published. Pages revalidate every 60 s, matching its cache.
+// internal `api` container, which is never published. Reads are uncached here (Cache Components keep
+// them out of the static shell) because the API itself caches every answer for 60 seconds.
 
 const API_URL = process.env.API_URL ?? "http://127.0.0.1:8090";
-export const REVALIDATE = 60;
 
 export type Summary = {
   closed: number;
@@ -79,7 +79,7 @@ export type LedgerRow = { seq: number; event_id: string; kind: string; body: str
 
 async function get<T>(path: string, fallback: T): Promise<T> {
   try {
-    const response = await fetch(`${API_URL}${path}`, { next: { revalidate: REVALIDATE } });
+    const response = await fetch(`${API_URL}${path}`, { cache: "no-store" });
     if (!response.ok) return fallback;
     return (await response.json()) as T;
   } catch {

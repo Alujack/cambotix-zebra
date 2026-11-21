@@ -1,17 +1,17 @@
-export default function Footer({ headHash, headSeq }: { headHash?: string; headSeq?: number }) {
+import { t, type Lang } from "@/lib/i18n";
+
+export default function Footer({ lang, headHash, headSeq }: { lang: Lang; headHash?: string; headSeq?: number }) {
+  const d = t(lang);
   return (
     <footer className="mt-16 border-t border-line">
       <div className="mx-auto max-w-6xl space-y-3 px-4 py-8 text-xs text-muted">
         {headHash && (
           <p>
-            Ledger chain head #{headSeq}: <code className="break-all">{headHash}</code>
+            {d.footer.head} #{headSeq}: <code className="break-all">{headHash}</code>
           </p>
         )}
-        <p>
-          Signals are published analysis for education, graded on broker candles after the fact. Not financial advice.
-          Trading leveraged products carries a high risk of loss. No order is ever placed by this system.
-        </p>
-        <p>© {new Date().getFullYear()} Cambotix Solutions · Zebra. Nothing in the record is ever removed.</p>
+        <p>{d.footer.disclaimer}</p>
+        <p>{d.footer.copyright}</p>
       </div>
     </footer>
   );

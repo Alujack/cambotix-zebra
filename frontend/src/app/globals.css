@@ -1,26 +1,73 @@
 @import "tailwindcss";
 
+/* Zebra Empire: gold on black, like the logo. Light theme when the OS asks for it. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0a0a0b;
+  --fg: #ece9e1;
+  --card: #141416;
+  --line: #27272c;
+  --muted: #9a978f;
+  --accent: #d4af37;
+  --win: #35d08a;
+  --loss: #ff5d6c;
+  --wait: #e3a93a;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg: #faf8f3;
+    --fg: #16151a;
+    --card: #ffffff;
+    --line: #e4e0d5;
+    --muted: #6a675f;
+    --accent: #9a7b1c;
+    --win: #138a52;
+    --loss: #c8323f;
+    --wait: #a8700e;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-win: var(--win);
+  --color-loss: var(--loss);
+  --color-wait: var(--wait);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-khmer: var(--font-khmer);
 }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-geist-sans), var(--font-khmer), system-ui, sans-serif;
+}
+
+.font-khmer {
+  font-family: var(--font-khmer), var(--font-geist-sans), system-ui, sans-serif;
+  line-height: 1.8;
+}
+
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Markdown on the Method page. */
+.prose-zebra h1 { font-size: 1.75rem; font-weight: 600; margin: 2rem 0 0.75rem; }
+.prose-zebra h2 { font-size: 1.35rem; font-weight: 600; margin: 2rem 0 0.5rem; color: var(--accent); }
+.prose-zebra h3 { font-size: 1.1rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
+.prose-zebra p, .prose-zebra li { color: var(--fg); margin: 0.6rem 0; line-height: 1.75; }
+.prose-zebra ul, .prose-zebra ol { padding-left: 1.4rem; }
+.prose-zebra ul { list-style: disc; }
+.prose-zebra ol { list-style: decimal; }
+.prose-zebra strong { color: var(--accent); }
+.prose-zebra blockquote { border-left: 3px solid var(--accent); padding-left: 1rem; color: var(--muted); }
+.prose-zebra code { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; font-size: 0.9em; }
+.prose-zebra table { border: 1px solid var(--line); border-collapse: collapse; margin: 1rem 0; width: 100%; font-size: 0.9rem; }
+.prose-zebra th, .prose-zebra td { border: 1px solid var(--line); padding: 0.4rem 0.6rem; text-align: left; }
+.prose-zebra hr { border-color: var(--line); margin: 2rem 0; }

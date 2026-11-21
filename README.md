@@ -353,6 +353,21 @@ python3 scripts/track_record.py --html record.html    # full public record as on
 
 The forward-test verdict is `GO` only with at least `GO_MIN_TRADES` closed trades, positive expectancy on the TP1 basis, and a maximum drawdown within `GO_MAX_DRAWDOWN_R`. Until then it reads `NOT ENOUGH DATA`; do not publish or charge for signals before it reads `GO`.
 
+## Public website
+
+A Next.js site shows the record the way a visitor needs to see it: home with live broker tickers and the headline numbers, every published plan with its graded outcome, the full track record with breakdowns and the hash chain, and a pricing page that stays "not for sale" until the forward test reads GO. Two compose services carry it:
+
+- `api` (`web/api.py`): the public record as JSON — `/record`, `/signals`, `/tickers`, `/ledger`, `/health`. No authentication, read-only transactions, answers cached for `WEB_CACHE_SECONDS` (60). It has no published port; only the frontend container reaches it. Open plans are served **without** their entry, stop and targets — the levels go out live on Telegram and appear on the site once the plan closes, together with the result. Synthetic test traffic never counts.
+- `frontend` (`frontend/`, Next.js 16, TypeScript, Tailwind): server-rendered pages on `127.0.0.1:WEB_PORT` (3000). Pages are a static shell with the data streamed in at request time, so nothing stale is ever baked into a build. `/ledger.json` hands anyone the raw chain to verify.
+
+```bash
+bash scripts/start.sh                     # builds and starts both with the rest of the stack
+open http://localhost:3000
+cd frontend && npm install && npm run dev # local development against the Docker api on port 8090 (set API_URL)
+```
+
+English is served at the clean URLs and Khmer under `/km/...` (a `proxy.ts` rewrite; the toggle in the header keeps the current page). All strings live in `frontend/src/lib/i18n.ts`; the brand, markets, Telegram link and team cards in `frontend/src/lib/site.ts`; the logo is `frontend/public/logo.jpg` (also the favicon). The Method page renders `frontend/content/method.km.md` — a copy of `docs/ICT_Trading_Khmer_Beginner_Book.md` without its diagram images, which are not in the repository — and a short English summary, `method.en.md`; edit the book in `docs/` and re-copy. Set `NEXT_PUBLIC_TELEGRAM_URL` in the frontend environment to point the Telegram buttons at your channel. Publish the site through a tunnel (a named Cloudflare Tunnel to `http://localhost:3000`); never the analyzer, the api or n8n. The Pro tier stays "not for sale" until the forward test reads GO.
+
 ## Workflows and maintenance
 
 The four JSON templates in `n8n/` contain no secrets. `scripts/setup.py` renders the actual webhook and header credential into ignored `.local/import/`. The start script imports them once, publishes them, restarts n8n, and removes the plaintext credential import. Repeated starts preserve workflow edits.

@@ -1,3 +1,4 @@
+import json
 import os
 import time
 
@@ -65,7 +66,8 @@ def test_open_plans_hide_levels_and_closed_plans_show_them(client):
     open_plan = items[1]
     assert open_plan['status'] == 'open' and open_plan['levels_public'] is False and 'levels' not in open_plan
     assert open_plan['cautions'] == ['Weak trend: ADX 21'] and open_plan['events'] == []
-    assert 'entry' not in str(open_plan)
+    assert not any(key in open_plan for key in ('levels', 'entry', 'stop', 'targets'))
+    assert '3510.25' not in json.dumps(open_plan) and '3503.95' not in json.dumps(open_plan)   # no level leaks anywhere
     closed = items[3]
     assert closed['status'] == 'closed' and closed['levels']['entry'] == 3510.25 and closed['levels']['targets'][0][0] == 1
     assert closed['result'] == {'exit': 'be', 'targets_hit': 1, 'ambiguous': False, 'r_tp1': 1.0, 'r_scaled': 0.25}
