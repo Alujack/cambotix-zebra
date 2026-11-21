@@ -86,6 +86,41 @@ def load_m1(symbol: str, folder: Path | None = None, start: int | None = None, e
     return from_frame(df.reset_index(drop=True))
 
 
+def repair_spread(m1: Bars, coarse_before_year: int | None = None) -> tuple[Bars, dict]:
+    """Make the recorded spread safe to grade with (docs/ml-plan.md section 3, data check findings).
+
+    - A spread of zero or less (Dukascopy 2012 has a few thousand) becomes the median positive spread of the same
+      UTC hour in the same year, or that year's median when the hour has none.
+    - Years before `coarse_before_year` have a coarse spread with no news spikes (Dukascopy gold before 2011 never
+      exceeds 0.706), so every bar there is raised to at least that year's 99th-percentile spread. That makes those
+      years more expensive to trade, never cheaper.
+
+    Returns the repaired bars (prices untouched) and a report of what changed per year."""
+    spread = m1.spread.astype(float).copy()
+    year = m1.t.astype('datetime64[s]').astype('datetime64[Y]').astype(np.int64) + 1970
+    hour = (m1.t % 86400) // 3600
+    report: dict[str, dict] = {}
+    df = pd.DataFrame({'year': year, 'hour': hour, 's': spread})
+    positive = df[df['s'] > 0]
+    hour_median = positive.groupby(['year', 'hour'])['s'].median()
+    year_median = positive.groupby('year')['s'].median()
+    bad = df['s'] <= 0
+    if bad.any():
+        keys = list(zip(df.loc[bad, 'year'], df.loc[bad, 'hour']))
+        fill = np.array([hour_median.get(k, year_median.get(k[0], 0.0)) for k in keys], dtype=float)
+        spread[bad.to_numpy()] = fill
+        for y, count in df.loc[bad, 'year'].value_counts().items():
+            report.setdefault(str(int(y)), {})['zero_replaced'] = int(count)
+    if coarse_before_year is not None:
+        for y in np.unique(year[year < coarse_before_year]):
+            mask = year == y
+            floor = float(np.quantile(spread[mask], 0.99))
+            raised = int((spread[mask] < floor).sum())
+            spread[mask] = np.maximum(spread[mask], floor)
+            report.setdefault(str(int(y)), {}).update({'coarse_floor': round(floor, 6), 'raised': raised})
+    return Bars(m1.t, m1.o, m1.h, m1.l, m1.c, spread), report
+
+
 def resample(m1: Bars, seconds: int = 300) -> Bars:
     """Aggregate M1 into `seconds` bars on UTC boundaries (as scripts/backtest.m5_from_m1). Spread = the mean."""
     key = m1.t - m1.t % seconds

@@ -1,6 +1,6 @@
 # XAUUSD history check
 
-Folder: `D:\tradingPlatform\cambotix-zebra\.local\history_dukascopy_full` - checked 2026-11-21 07:00 UTC - **PASSED**
+Folder: `D:\tradingPlatform\cambotix-zebra\.local\history_dukascopy_full` - checked 2026-11-21 11:10 UTC - **PASSED**
 
 ## M1
 
@@ -80,15 +80,3 @@ Full missing weekdays (holidays expected: Christmas, New Year, Good Friday):
 | h1 | 142,817 | 0 | 0 | 0 | yes |
 | h4 | 37,814 | 0 | 0 | 0 | yes |
 | d1 | 7,334 | 0 | 0 | 0 | yes |
-
-## Overlap with D:\tradingPlatform\cambotix-zebra\.local\history\XAUUSD_m1.csv
-
-2023-11-10 06:55 .. 2026-11-13 21:57: 1,063,220 minutes in both, 263 only in the other file, 3,834 only here.
-Median |close difference| 0.151 (p99 0.631); median spread here 0.523 vs 0.18 there.
-
-| Year | Minutes | Close diff median | p99 | Spread here | Spread there |
-|---|---|---|---|---|---|
-| 2023 | 47,198 | 0.06 | 0.2 | 0.32 | 0.2 |
-| 2024 | 354,218 | 0.096 | 0.273 | 0.377 | 0.199 |
-| 2025 | 353,056 | 0.212 | 0.593 | 0.58 | 0.16 |
-| 2026 | 308,748 | 0.216 | 0.886 | 0.66 | 0.26 |

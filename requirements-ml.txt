@@ -2,3 +2,6 @@
 # those tests are skipped. Tested on pandas 2.3 and 3.1.
 numpy>=1.26
 pandas>=2.2
+pyarrow>=15
+lightgbm>=4.3
+scikit-learn>=1.4

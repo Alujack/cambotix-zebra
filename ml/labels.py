@@ -24,7 +24,8 @@ WEEKEND = 3 * 86_400
 
 
 def plan_for(row: dict, rr: float, expiry: int = ENTRY_EXPIRY_MINUTES, hold: int = MAX_HOLD_MINUTES) -> dict:
-    return {'direction': row['side'], 'entry_type': 'limit', 'entry': row['entry'], 'stop': row['stop'],
+    return {'direction': row['side'], 'entry_type': row.get('entry_type', 'limit'), 'entry': row['entry'],
+            'stop': row['stop'],
             'targets': [[rr, row['target'], f'{rr:g}R']], 'published_at': int(row['bar_time']),
             'entry_expiry_minutes': expiry, 'max_hold_minutes': hold}
 

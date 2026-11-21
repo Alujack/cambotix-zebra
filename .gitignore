@@ -8,3 +8,9 @@ __pycache__/
 frontend/node_modules/
 frontend/.next/
 frontend/next-env.d.ts
+
+# ML datasets are rebuilt from .local history, never committed (docs/ml-plan.md section 5).
+ml/data/*.parquet
+ml/data/*.json
+# Trained models live on the PC that runs them (ml/retrain.py rebuilds them); reports in ml/reports/ are kept.
+ml/models/

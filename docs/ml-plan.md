@@ -1,6 +1,6 @@
 # Zebra ML: ICT model for XAUUSD — plan
 
-Status: **plan for review. Nothing below is implemented yet except the draft noted in section 2.**
+Status: **all phases built and run (2026-11-21). Verdict: the gates failed, so nothing goes live; see the verdict below the roadmap table.**
 
 ## 1. Goal
 
@@ -29,17 +29,37 @@ table below is the translation, with where each phase stands on disk today (2026
 | Roadmap phase | This plan | State now |
 |---|---|---|
 | 1. Data collection — XAUUSD OHLCV, timestamp checks, multi-timeframe sets | §3 (Phase 0) | **Done 2026-11-21.** 8,010,604 M1 bars 2003-05-05 .. 2026-11-20 in `.local/history_dukascopy_full/` with m5/m15/h1/h4/d1/w1; `ml/check_history.py` PASSED. Usable range and spread caveats in §3 |
-| 2. ICT detection engine — concepts as testable modules | §4 (Phase 1) | **Built 2026-11-21:** `ml/ict_features.py` split into concept functions, 22 tests in `tests/test_ict_features.py`, `ml/check_candidates.py` + tests for the per-year check. Run on one cached year of Dukascopy gold (Nov 2025 – Nov 2026): 1,362 candidates, no rejects. **Still to do: run `check_candidates.py` on the full history once the pull finishes** |
-| 3. Dataset generation — labeled samples, validated | §5 (Phase 2) | Draft `ml/labels.py`, `ml/dataset.py`; `ml/data/ict_dataset.csv.gz` (20 MB) built from the 3-year file and **committed and pushed in `d7fbae8`**, which §5 says datasets should not be; not yet validated against `scripts/backtest.py` |
-| 4. ML training — setup classification, outcome prediction | §6 (Phase 3) | `ml/train.py` drafted, never run |
-| 5. Backtesting — unseen periods, spread and slippage | §6 walk-forward, §7 report, §8 gates | Not started. Spread is already in the grader; **slippage is not modelled anywhere yet** (added to §6 below) |
-| 6. Live inference — live data, real-time signals | §9 (Phase 5) | Not started; only after the §8 gates |
-| 7. Monitoring — performance, drift, degradation | §10 (Phase 6) | Not started |
+| 2. ICT detection engine — concepts as testable modules | §4 (Phase 1) | **Done 2026-11-21.** Each concept a tested function in `ml/ict_features.py`; full history: 28,493 candidates 2003–2026, all hard checks pass (`ml/reports/xauusd_ict_candidates.md`) |
+| 3. Dataset generation — labeled samples, validated | §5 (Phase 2) | **Done 2026-11-21.** `ml/data/xauusd_ict.parquet`: 26,882 candidates 2008–2026, 16,826 filled; labels identical to `scripts/backtest.py` (129 of 129 comparable trades). Raw baseline −0.182R per filled trade (`ml/reports/xauusd_ict_dataset.md`) |
+| 4. ML training — setup classification, outcome prediction | §6 (Phase 3) | **Done 2026-11-21.** `ml/train.py`: LightGBM P(win), 26 walk-forward folds 2014–2026, out-of-sample AUC 0.574 vs 0.498 for the shuffled control |
+| 5. Backtesting — unseen periods, spread and slippage | §6 walk-forward, §7 report, §8 gates | **Done 2026-11-21: FAILED all five gates**, and so did all five pre-listed variants (`ml/reports/xauusd_variants.md`). Best: −0.028R per trade against the required +0.10R |
+| 6. Live inference — live data, real-time signals | §9 (Phase 5) | **Built, locked.** `ml/predict.py` scores the latest bar and refuses any model that failed the gates; not wired into the feeder, because no model passed |
+| 7. Monitoring — performance, drift, degradation | §10 (Phase 6) | **Built.** `ml/monitor.py` (live R vs walk-forward, feature drift), `ml/retrain.py` (monthly cycle; a failed model never replaces a passing one) |
 
 Two roadmap items the plan did not cover before this mapping: **multi-timeframe datasets** (roadmap 1) are
 only partly there, since the engine works on M5 resampled from M1 and the HTF bias uses M5 EMAs as a stand-in
 for H1/H4; real H1/H4 resampling is listed under "Later" in §4. **Slippage** (roadmap 5) is now a test-time
 assumption in §6.
+
+## Verdict (2026-11-21): no tradable edge; the model stays off
+
+The whole roadmap ran end to end. The model learns something real but not enough to pay for trading costs:
+
+- **Skill is real but small.** Out-of-sample AUC 0.574 against 0.498 for the same model trained on shuffled
+  labels, and well calibrated: the predicted win rate tracks the actual one decile by decile.
+- **No subset makes money.** Even the model's most confident tenth of setups loses 0.046R per trade after spread
+  and slippage. The final model found no profitable threshold on its own validation slice.
+- **Every pre-listed variant fails every gate** (`ml/reports/xauusd_variants.md`): 1.5R and 3R targets, FVG
+  midpoint entry, market entry, session/day pools only. Best: 1.5R target at −0.028R per trade; required +0.10R.
+- **Spread is the main cost.** The model's top feature is spread/risk (26% of gain), and a plain spread/risk
+  cut-off did as well as the model (−0.018R). On Exness's cheaper spread the same fold models still lost
+  (−0.094R, 92 trades).
+- **Drift worth watching.** In the last 90 days gold's ATR is about 1.7x its training average and spread/risk is
+  less than half (PSI 1.8–2.0): setups are cheaper to trade than ever, and 2026 is the least bad year (−0.083R
+  unfiltered). That is a reason to re-run `python -m ml.retrain` in a few months, not a reason to trade now.
+
+As the plan says: report it plainly, no forward test, no more variants on this data. `ml/predict.py` refuses the
+saved model; `ml/retrain.py` will promote a future model only if it passes all five gates.
 
 ## 2. Where we start
 
@@ -139,7 +159,11 @@ bars per frame, check summary), `XAUUSD_check.json` and `ml/reports/xauusd_histo
 
 ## 4. Phase 1 — ICT detection engine (`ml/ict_features.py`)
 
-**Status 2026-11-21: built and tested; the full-history run waits for the Phase 0 pull.**
+**Status 2026-11-21: done.** On the full Dukascopy history the engine found 28,493 candidates in 11 seconds with no
+rejects (no stop or target on the wrong side, no duplicates, no missing required feature), BUY share 49–51% every
+year, killzone share about 30%. 2003–2006 run at 0.4–1.7 candidates a day against a median of 5.4, and 2007 at 3.0:
+until mid-2007 Dukascopy's M5 bars are about twice as wide relative to price (17 vs 8 basis points), so the early
+feed is built differently. Candidates are therefore used from 2008 on; earlier years are warm-up only.
 
 - Each concept is its own function with its own tests: `session_of` / `in_killzone` (session clock),
   `trading_days` (17:00 New York roll), `pivots` (swings), `SessionRange` (session pools), `find_fvg` /
@@ -197,17 +221,52 @@ H1/H4 structure from real resampled bars.
 
 ## 5. Phase 2 — Dataset and labels (`ml/labels.py`, `ml/dataset.py`)
 
+**Status 2026-11-21: done.** `python -m ml.dataset` builds `ml/data/xauusd_ict.parquet` (gitignored) with
+`xauusd_ict.meta.json` beside it and the report `ml/reports/xauusd_ict_dataset.md`. Tests: `tests/test_labels.py`.
+
+How it is built:
+
 - Each candidate becomes the plan the analyzer would freeze for an ICT signal (limit, 120-minute entry expiry,
-  360-minute hold, one 2R target) and is graded by **`app.grader.simulate` on M1 with spread**. The label means
-  exactly what a live graded trade would mean.
-- Stored per row: features, `outcome` (closed / not filled + reason), `r` (the grader's R; 0 if never filled),
-  `win` (filled trades only), fill and end time.
-- Weekends inside the trade window: give the grader the candles after the gap, as live would.
-- Output: `ml/data/xauusd_ict.parquet` (gitignored: datasets are rebuilt, not committed).
-- **Expected size with full history:** around 25,000–30,000 gold candidates (~1,400 a year), versus 4,328 from the
-  3-year file.
+  360-minute hold, one 2R target) and is graded by **`app.grader.simulate` on M1 with spread**. A weekend inside
+  the window gets the candles after the gap, as the live grader does. Unfilled limits score 0R.
+- Spread first goes through `ml.data.repair_spread`: 8,145 zero spreads in 2012 get their hour's median, and every
+  bar before 2011 is raised to at least its year's 99th-percentile spread (0.60–0.81), because that era's recorded
+  spread has no news spikes. Rows carry `spread_coarse` = 1 for 2008–2010.
+- Detection runs over the whole 2003–2026 history, so 2003–2007 is warm-up; candidates are kept from 2008-01-01.
+- The builder refuses a history folder that `ml/check_history.py` has not passed.
+
+**Validation against `scripts/backtest.py`:** the killzone ICT engine's setups on the Exness 3-year gold file were
+graded through backtest.py (analyzer rules, `ledger.plan_record`, grader) and through `ml.labels`. All 129
+comparable trades have the same R and the same exit; the 130th falls inside the detector's warm-up at the start of
+the file. A test repeats this on 150 days of random data with the open-plan limit off.
+
+**Result: the raw candidates lose in every year.**
+
+| | Filled | Win rate | Expectancy | Total |
+|---|---|---|---|---|
+| All, 2008–2026 | 16,826 | 30.9% | −0.182R | −3,064R |
+| 2011–2026 (real spread) | 14,302 | 32.0% | −0.152R | −2,174R |
+| 2008–2010 (p99 spread floor) | 2,524 | 24.7% | −0.353R | −890R |
+| Killzone + session/day pools (the ict_engine-style baseline) | 2,476 | 33.0% | −0.159R | −394R |
+
+Spread is the biggest single driver. Median spread is 14% of the risk; by fifths of spread/risk the expectancy runs
+−0.036R, −0.116R, −0.180R, −0.188R, −0.390R. On Exness's cheaper spread the same setups were about −0.055R
+(the draft dataset, section 2). So:
+
+1. **Train on 2011 on.** The p99 floor makes 2008–2010 cost about twice as much per trade; a model trained on them
+   learns the floor, not the market. Keep 2008–2010 as a stress test only.
+2. **Expect `spread_risk` and `risk_atr` to dominate** the model. That is legitimate (wider stops pay less spread),
+   but it means the model mostly learns "take setups with room", which gate 2 has to show beats a simple
+   spread/risk cut-off and not just the unfiltered baseline. Add that cut-off as baseline (d) in section 6.
+3. Gate 5 (re-score on Exness) matters more than planned: Dukascopy costs about 0.1R a trade more than the broker.
 
 ## 6. Phase 3 — Model training (`ml/train.py`)
+
+**Status 2026-11-21: done** (`python -m ml.train`, report `ml/reports/xauusd_walkforward.md`, tests
+`tests/test_ml_model.py`). As below, with: training from 2011, test folds of 6 months from 2014 (26 folds), net R
+with slippage, baselines (a)–(d), gates computed in code, the same fold models re-scored on Exness candidates
+(gate 5), and the final model scored on 2008–2010 as a stress test. Variants: `--data` (a dataset built with
+`--rr` or `--entry`), `--pools session`, `--tag`. Result: see the verdict at the top.
 
 - **Model:** LightGBM binary classifier, P(win) for filled trades. Conservative settings (15 leaves, at least 150
   samples per leaf, L2, early stopping) because market data is noisy and small.
@@ -223,6 +282,8 @@ H1/H4 structure from real resampled bars.
   on those exits; the gates in §8 must hold with slippage on.
 - **Baselines in every fold:** (a) every candidate, (b) ict_engine-style subset (killzone + session/day pools),
   (c) **the same model trained on shuffled labels**. Anything the shuffled model also "finds" is noise.
+  (d) **a plain spread/risk cut-off** chosen on the same validation slice, since spread is the strongest single
+  driver of the raw result (section 5).
 - **Regime checks:** results by year, by session, by side, and pre/post 2020 (gold's volatility and price level
   changed a lot; features are ATR-normalised so they carry across years).
 - Tracked runs: parameters, data range and results saved to `ml/reports/` (MLflow later, if wanted).
@@ -248,6 +309,13 @@ instead of edge, market entry, session pools only), never tuning on the test fol
 
 ## 9. Phase 5 — Inference and integration (only after the gates)
 
+**Status 2026-11-21: inference built, integration not done (the gates failed).** `python -m ml.predict` loads the
+promoted model and scores the latest closed M5 bar; it raises `ModelRefused` for a model that failed the gates or
+has no threshold (`--allow-failed-gates` for research). Its lookback is 15,000 M5 bars, not 3,000: the H4 EMA50
+proxy spans 2,400 bars and would be about 8% unconverged on 3,000, so live features would differ from training
+(a test checks they match). The feeder flag and `ict_ml` analyzer rules below are the remaining step for a model
+that passes.
+
 - `ml/predict.py`: loads `ml/models/xauusd_ict_lgbm.txt` + its JSON (features, threshold, training range),
   runs the detection engine on the latest ~3,000 M5 bars and returns setups on the just-closed bar with their
   probability.
@@ -259,6 +327,12 @@ instead of edge, market entry, session pools only), never tuning on the test fol
 - Demo account only. Telegram signals stay manual-review.
 
 ## 10. Phase 6 — Monitoring and retraining
+
+**Status 2026-11-21: built.** `python -m ml.monitor [--trades graded.csv]`: live R against the walk-forward
+expectation saved with the model (alert below two standard errors or outside the 95% win-rate band, from 50
+trades) and feature drift of the last 90 days against the training data (PSI, alert above 0.25 on the top-10
+features); exit code 1 on an alert. `python -m ml.retrain`: pull → check → datasets → train → monitor; models are
+versioned by training end date and the pointer moves only to a model that passes.
 
 - Weekly: compare live graded results with what the walk-forward predicted (win rate, expectancy,
   probability calibration). Alert if 50 live trades fall outside the expected range.
@@ -295,8 +369,8 @@ instead of edge, market entry, session pools only), never tuning on the test fol
 | Step | Deliverable | Done when |
 |---|---|---|
 | 0 | `pull_dukascopy.py` `--out`/`--from`/yearly files; `ml/check_history.py` | **Done 2026-11-21**: full XAUUSD M1 downloaded, checks pass |
-| 1 | `ml/ict_features.py` + tests (no-lookahead, FVG/MSS cases); `ml/check_candidates.py` | Tests pass (done); candidate counts look sane per year (one cached year done; full history after the pull) |
-| 2 | `ml/labels.py`, `ml/dataset.py` | Dataset built; labels match `scripts/backtest.py` on the ICT subset |
-| 3 | `ml/train.py` | Walk-forward + control + baselines run end to end |
-| 4 | Report | `ml/reports/xauusd_walkforward.md` reviewed together |
-| 5 | `ml/predict.py`, feeder flag, `ict_ml` rules | Only if section 8 gates pass |
+| 1 | `ml/ict_features.py` + tests (no-lookahead, FVG/MSS cases); `ml/check_candidates.py` | **Done 2026-11-21**: tests pass; full-history counts sane from 2008 |
+| 2 | `ml/labels.py`, `ml/dataset.py` | **Done 2026-11-21**: dataset built; labels match `scripts/backtest.py` (129/129) |
+| 3 | `ml/train.py` | **Done 2026-11-21**: walk-forward, control, four baselines, gates, Exness re-score |
+| 4 | Report | **Done 2026-11-21**: `ml/reports/xauusd_walkforward.md`, `xauusd_variants.md`: gates FAILED |
+| 5 | `ml/predict.py`, feeder flag, `ict_ml` rules | `ml/predict.py` + `ml/monitor.py` + `ml/retrain.py` built and locked; feeder/analyzer wiring waits for a passing model |

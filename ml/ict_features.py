@@ -100,6 +100,8 @@ class CandidateConfig:
     swing_life_bars: int = 288       # and stays a pool for one day
     warmup_bars: int = 2400          # the H4 EMA50 proxy needs about eight trading days
     crypto: bool = False             # trade weekends
+    entry: str = 'edge'              # 'edge' (limit at the FVG's near edge, the ICT engine), 'mid' (limit at the
+                                     # FVG midpoint) or 'market' (fill on the next candle; plan section 8 variants)
 
 
 def session_of(minute: int) -> int:
@@ -397,10 +399,15 @@ def _candidate(symbol, s, i, bars, ctx, pools, cfg, asset, day_open, day_high, d
     A = float(ctx['atr'][i])
     if not A:
         return None
-    entry = float(s['fvg_high'] if buy else s['fvg_low'])
+    if cfg.entry == 'market':
+        entry = float(c[i])
+    elif cfg.entry == 'mid':
+        entry = float((s['fvg_high'] + s['fvg_low']) / 2)
+    else:
+        entry = float(s['fvg_high'] if buy else s['fvg_low'])
     stop = float(s['extreme'] - cfg.stop_buffer_atr * A if buy else s['extreme'] + cfg.stop_buffer_atr * A)
     risk = abs(entry - stop)
-    if risk < cfg.min_risk_atr * A or d * (c[i] - entry) < 0:
+    if risk < cfg.min_risk_atr * A or d * (c[i] - entry) < 0 or d * (entry - stop) <= 0:
         return None                     # too tight, or price already through the limit (it would fill at market)
     target = entry + d * cfg.rr * risk
     ei, mi, fi = s['extreme_i'], s['mss_i'], s['fvg_i']
@@ -469,6 +476,7 @@ def _candidate(symbol, s, i, bars, ctx, pools, cfg, asset, day_open, day_high, d
     }
     return {
         'symbol': symbol.upper(), 'bar_index': i, 'bar_time': close_time, 'side': 'BUY' if buy else 'SELL',
+        'entry_type': 'market' if cfg.entry == 'market' else 'limit',
         'entry': entry, 'stop': stop, 'target': target, 'risk': risk, 'atr': A,
         'fvg_high': float(fh), 'fvg_low': float(fl), 'sweep_level': float(s['extreme']), 'mss_level': float(s['mss']),
         'swept_name': s['name'], **{k: float(v) for k, v in feats.items()},
