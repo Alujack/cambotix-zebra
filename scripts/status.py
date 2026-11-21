@@ -6,6 +6,7 @@ from setup import read_env
 
 env = read_env()
 print('n8n editor: http://localhost:' + env['N8N_PORT'])
+print('Public website: http://localhost:' + env.get('WEB_PORT', '3000'))
 print('Private TradingView URL: .local/webhook-url.txt')
 print('Mode: signal analysis / manual review (no trading execution)')
 print('Telegram enabled: ' + env.get('TELEGRAM_ENABLED', 'false'))

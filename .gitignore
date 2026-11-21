@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 *.pyc
 .DS_Store
+frontend/node_modules/
+frontend/.next/
+frontend/next-env.d.ts

@@ -81,6 +81,40 @@ services:
       interval: 10s
       timeout: 3s
       retries: 20
+  api:
+    # Public record JSON for the website: read-only, unauthenticated, reachable only from the frontend container.
+    build: .
+    restart: unless-stopped
+    command: [uvicorn, web.api:app, --host, '0.0.0.0', --port, '8000', --no-access-log]
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_NAME: zebra
+      DB_USER: zebra
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://localhost:8000/health")']
+      interval: 10s
+      timeout: 3s
+      retries: 20
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8000
+      NEXT_TELEMETRY_DISABLED: '1'
+    ports:
+      - '127.0.0.1:${WEB_PORT:-3000}:3000'
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://localhost:3000/']
+      interval: 10s
+      timeout: 5s
+      retries: 20
   gateway:
     image: nginx:1.28-alpine
     restart: unless-stopped
