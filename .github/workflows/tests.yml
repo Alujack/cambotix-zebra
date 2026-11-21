@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt -r requirements-ml.txt
       - name: Create the schema (as scripts/test.sh does)
         env:
           PGPASSWORD: ci-only-password

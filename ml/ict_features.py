@@ -7,7 +7,8 @@ from more liquidity pools, so the model sees thousands of setups instead of a fe
               (02:00-05:00), NY AM high/low (08:30-11:00), and M5 swing highs/lows (a 6/6 fractal, known six bars
               after its pivot, fresh for `swing_life_bars`). A pool is spent once price trades through it.
     sweep     price trades beyond a fresh pool: a high swept arms a SELL, a low swept arms a BUY. Deeper wicks move
-              the sweep extreme. Weekend bars never arm (crypto excepted).
+              the sweep extreme. The most significant pool taken names the sweep (day, London, Asia, NY AM, swing),
+              within one candle and across the run. Weekend bars never arm (crypto excepted).
     MSS       within `mss_wait_bars` of the extreme, the first M5 close back beyond the last 2/2 pivot that formed
               before the extreme (at most `pivot_age_bars` earlier).
     FVG       the latest 3-candle fair value gap (>= min_fvg_atr x ATR) in the leg, found by the candle after the MSS.
@@ -16,7 +17,20 @@ from more liquidity pools, so the model sees thousands of setups instead of a fe
 
 The killzone, the pool type, the session and everything else that ict_engine uses as a hard filter become features
 here, and the model decides which combinations matter. Every feature at bar i uses bars 0..i only (tests check that
-truncating the future never changes a candidate).
+truncating or rewriting the future never changes a candidate).
+
+Each ICT concept is a small function that tests/test_ict_features.py exercises on its own:
+
+    session_of, in_killzone      New York session clock
+    trading_days                 the 17:00 New York day roll
+    pivots                       swing highs/lows (strict w/w fractals)
+    SessionRange                 a forming session range that becomes two pools when its window ends
+    find_fvg, count_fvgs         fair value gaps in a leg
+    order_block                  the last opposite candle before the displacement
+    retracement                  where the entry sits in the leg (OTE is 62-79%)
+    detect                       the sweep -> MSS -> FVG state machine that ties them together
+
+Check the candidates of a saved history year by year with ml/check_candidates.py.
 """
 from __future__ import annotations
 
@@ -64,6 +78,14 @@ FEATURES = (
     'ret_1h_atr', 'ret_4h_atr', 'ret_1d_atr',
 )
 CATEGORICAL = ('pool_kind', 'session_sweep', 'session_now', 'weekday', 'asset')
+# Features that are NaN when what they measure does not exist: no candle against the trade in the leg, no pool
+# ahead of the entry, no finished Asia session yet today, a zero-range candle, or (only inside the warm-up) not
+# enough history. Every other feature is always a finite number.
+MAY_BE_MISSING = frozenset({
+    'ob_dist_atr', 'opp_pool_r', 'target_before_pool', 'asia_range_atr', 'sweep_wick_ratio', 'mss_body_ratio',
+    'pd_prev_day', 'pd_week', 'atr_ratio_day', 'atr_ratio_week', 'ema_h1_50_slope_atr', 'ret_1h_atr', 'ret_4h_atr',
+    'ret_1d_atr',
+})
 
 
 @dataclass
@@ -96,8 +118,26 @@ def session_of(minute: int) -> int:
     return 6
 
 
-def _pivots(high: np.ndarray, low: np.ndarray, w: int) -> tuple[np.ndarray, np.ndarray]:
-    """Strict w/w fractals at their centre index (known w bars later)."""
+def in_killzone(minute: int, weekday: int) -> bool:
+    """London or NY AM killzone on a weekday (New York minute of the day and weekday), as scripts/ict_engine.py."""
+    return weekday < 5 and any(start <= minute < end for start, end in KILLZONES)
+
+
+def trading_days(t: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """For bar open times in UTC seconds: New York minute of the day, New York weekday and a trading-day number
+    that changes at 17:00 New York (so Sunday evening already belongs to Monday)."""
+    local = pd.to_datetime(np.asarray(t, dtype=np.int64), unit='s', utc=True).tz_convert('America/New_York')
+    minute = (local.hour * 60 + local.minute).to_numpy()
+    # Whole days since 1970 of the local calendar date. Going through datetime64[D] keeps this independent of
+    # the index resolution: pandas 2 stores nanoseconds, pandas 3 seconds, and dividing asi8 by a fixed number
+    # of nanoseconds silently gave every bar the same day on pandas 3.
+    wall_clock = local.tz_localize(None).to_numpy().astype('datetime64[s]')
+    day = (wall_clock + np.timedelta64(7, 'h')).astype('datetime64[D]').astype(np.int64)
+    return minute, local.day_of_week.to_numpy(), day
+
+
+def pivots(high: np.ndarray, low: np.ndarray, w: int) -> tuple[np.ndarray, np.ndarray]:
+    """Strict w/w fractals at their centre index (known w bars later). Equal highs or lows make no pivot."""
     n = len(high)
     ph, pl = np.zeros(n, bool), np.zeros(n, bool)
     if n < 2 * w + 1:
@@ -110,6 +150,70 @@ def _pivots(high: np.ndarray, low: np.ndarray, w: int) -> tuple[np.ndarray, np.n
     return ph, pl
 
 
+def find_fvg(h: np.ndarray, l: np.ndarray, atr: np.ndarray, direction: int, first: int, last: int,
+             min_atr: float = 0.0) -> tuple[int, float, float] | None:
+    """The latest fair value gap whose three candles all lie in first..last, as (index of its third candle, low,
+    high). Bullish (direction 1): the third candle's low is above the first candle's high. Bearish (-1): the third
+    candle's high is below the first candle's low. Gaps smaller than min_atr x ATR at the third candle are ignored."""
+    for k in range(last, first + 1, -1):
+        if direction == 1 and l[k] > h[k - 2] and l[k] - h[k - 2] >= min_atr * atr[k]:
+            return k, float(h[k - 2]), float(l[k])
+        if direction == -1 and h[k] < l[k - 2] and l[k - 2] - h[k] >= min_atr * atr[k]:
+            return k, float(h[k]), float(l[k - 2])
+    return None
+
+
+def count_fvgs(h: np.ndarray, l: np.ndarray, direction: int, first: int, last: int) -> int:
+    """Fair value gaps of any size in the trade's direction whose three candles lie in first..last."""
+    if last - first < 2:
+        return 0
+    third, one = slice(first + 2, last + 1), slice(first, last - 1)
+    return int(np.sum(l[third] > h[one]) if direction == 1 else np.sum(h[third] < l[one]))
+
+
+def order_block(o: np.ndarray, h: np.ndarray, l: np.ndarray, c: np.ndarray, direction: int, first: int,
+                last: int) -> tuple[int, float, float] | None:
+    """The last candle in first..last that closed against the trade (a down candle for a BUY), as (index, low,
+    high): the order block the displacement left behind. None when every candle closed with the trade."""
+    for k in range(last, first - 1, -1):
+        if (direction == 1 and c[k] < o[k]) or (direction == -1 and c[k] > o[k]):
+            return k, float(l[k]), float(h[k])
+    return None
+
+
+def retracement(entry: float, extreme: float, leg_end: float) -> float:
+    """How far back into the leg the entry sits: 0 at the leg's end, 1 at the sweep extreme it started from.
+    ICT's optimal trade entry is 0.62-0.79. NaN for a leg with no length."""
+    span = abs(leg_end - extreme)
+    return abs(leg_end - entry) / span if span else math.nan
+
+
+class SessionRange:
+    """High and low of one New York session window while it forms. `update` returns (high, low) once, on the
+    first bar after the window; the caller publishes those as liquidity pools. A session that began on an
+    earlier trading day (a data gap, a holiday) is dropped instead of being published late."""
+
+    def __init__(self, window: tuple[int, int]):
+        self.start, self.end = window
+        self.high = self.low = math.nan
+        self.day = None
+        self.open = False
+
+    def update(self, minute: int, day: int, high: float, low: float) -> tuple[float, float] | None:
+        inside = self.start <= minute < self.end
+        done = None
+        if self.open and (not inside or day != self.day):
+            if day == self.day:
+                done = (self.high, self.low)
+            self.open = False
+        if inside:
+            if not self.open:
+                self.open, self.day, self.high, self.low = True, day, high, low
+            else:
+                self.high, self.low = max(self.high, high), min(self.low, low)
+        return done
+
+
 def _context(bars: Bars) -> dict:
     """Trailing indicator arrays (each value at i uses bars <= i)."""
     h, l, c = bars.h, bars.l, bars.c
@@ -120,10 +224,8 @@ def _context(bars: Bars) -> dict:
     atr = s.ewm(alpha=1 / 14, adjust=False).mean().to_numpy()   # the ict_engine recursion
     a = pd.Series(atr)
     close = pd.Series(c)
-    local = pd.to_datetime(bars.t, unit='s', utc=True).tz_convert('America/New_York')
-    minute = (local.hour * 60 + local.minute).to_numpy()
-    trading_day = (local + pd.Timedelta(hours=7)).normalize()
-    ph2, pl2 = _pivots(h, l, 2)
+    minute, weekday, day_id = trading_days(bars.t)
+    ph2, pl2 = pivots(h, l, 2)
     return {
         'atr': atr,
         'atr_day': a.rolling(288, min_periods=50).mean().to_numpy(),
@@ -134,8 +236,8 @@ def _context(bars: Bars) -> dict:
         'week_hi': pd.Series(h).rolling(1440, min_periods=200).max().to_numpy(),
         'week_lo': pd.Series(l).rolling(1440, min_periods=200).min().to_numpy(),
         'minute': minute,
-        'weekday': local.weekday.to_numpy(),
-        'day_id': trading_day.asi8 // 86_400_000_000_000,
+        'weekday': weekday,
+        'day_id': day_id,
         'ph2': ph2, 'pl2': pl2,
     }
 
@@ -148,7 +250,7 @@ def detect(symbol: str, bars: Bars, cfg: CandidateConfig | None = None, start_in
     if n < 10:
         return []
     ctx = _context(bars)
-    ph6, pl6 = _pivots(bars.h, bars.l, cfg.swing_window)
+    ph6, pl6 = pivots(bars.h, bars.l, cfg.swing_window)
     t, o, h, l, c, spread = bars.t, bars.o, bars.h, bars.l, bars.c, bars.spread
     atr, minute, weekday, day_id = ctx['atr'], ctx['minute'], ctx['weekday'], ctx['day_id']
     asset = ASSETS.index(asset_class(symbol))
@@ -157,9 +259,8 @@ def detect(symbol: str, bars: Bars, cfg: CandidateConfig | None = None, start_in
     day = None
     day_open = day_high = day_low = math.nan
     prev_day_high = prev_day_low = math.nan
-    asia = london = nyam = None       # [high, low] while the session forms
+    sessions = (('Asia', 2, SessionRange(ASIA)), ('London', 1, SessionRange(LONDON)), ('NYAM', 3, SessionRange(NY_AM)))
     asia_range = math.nan
-    prev_minute = None
     piv_hi_idx: list[int] = []
     piv_hi_lvl: list[float] = []
     piv_lo_idx: list[int] = []
@@ -179,17 +280,13 @@ def detect(symbol: str, bars: Bars, cfg: CandidateConfig | None = None, start_in
                 pools.pop(name, None)
             day, day_open, day_high, day_low = day_id[i], o[i], h[i], l[i]
             asia_range = math.nan
-        asia = _session(pools, asia, m, prev_minute, ASIA, h[i], l[i], 'Asia', 2, i)
-        if asia is not None and asia[2]:
-            asia_range = asia[0] - asia[1]
-            asia = None
-        london = _session(pools, london, m, prev_minute, LONDON, h[i], l[i], 'London', 1, i)
-        if london is not None and london[2]:
-            london = None
-        nyam = _session(pools, nyam, m, prev_minute, NY_AM, h[i], l[i], 'NYAM', 3, i)
-        if nyam is not None and nyam[2]:
-            nyam = None
-        prev_minute = m
+        for label, kind, tracker in sessions:
+            finished = tracker.update(m, day, h[i], l[i])
+            if finished:
+                pools[f'{label} high'] = [finished[0], 1, kind, i]
+                pools[f'{label} low'] = [finished[1], -1, kind, i]
+                if label == 'Asia':
+                    asia_range = finished[0] - finished[1]
 
         j = i - 2
         if j >= 2:
@@ -232,9 +329,15 @@ def detect(symbol: str, bars: Bars, cfg: CandidateConfig | None = None, start_in
             current = armed[direction]
             if current is None or (direction == 1 and extreme < current['extreme']) or \
                     (direction == -1 and extreme > current['extreme']):
-                armed[direction] = {'extreme': extreme, 'extreme_i': i, 'sweep_i': i, 'name': name, 'level': level,
-                                    'kind': kind, 'created': created, 'count': count, 'mss': None, 'mss_i': None,
-                                    'pivot_i': None, 'session': session_of(m)}
+                state = {'extreme': extreme, 'extreme_i': i, 'sweep_i': i, 'name': name, 'level': level,
+                         'kind': kind, 'created': created, 'count': count, 'mss': None, 'mss_i': None,
+                         'pivot_i': None, 'session': session_of(m)}
+                if current is not None and current['kind'] < kind:
+                    # One run can take several pools on its way: a minor pool taken deeper moves the extreme,
+                    # but the most significant pool taken so far still names the sweep.
+                    for key in ('sweep_i', 'name', 'level', 'kind', 'created', 'count', 'session'):
+                        state[key] = current[key]
+                armed[direction] = state
 
         if i >= start_index and i >= cfg.warmup_bars and tradable:
             for direction in (1, -1):
@@ -249,22 +352,6 @@ def detect(symbol: str, bars: Bars, cfg: CandidateConfig | None = None, start_in
                 _advance(armed, direction, i, bars, atr, piv_hi_idx, piv_hi_lvl, piv_lo_idx, piv_lo_lvl, cfg)
         day_high, day_low = max(day_high, h[i]), min(day_low, l[i])
     return out
-
-
-def _session(pools, state, m, prev_minute, window, hi, lo, label, kind, i):
-    """Track a forming session range; on its first bar after the window, publish its high/low as pools.
-    Returns the state, with a third element True on the bar the session completed."""
-    start, end = window
-    inside = start <= m < end
-    if inside:
-        if state is None or (prev_minute is not None and not (start <= prev_minute < end)):
-            return [hi, lo, False]
-        return [max(state[0], hi), min(state[1], lo), False]
-    if state is not None:
-        pools[f'{label} high'] = [state[0], 1, kind, i]
-        pools[f'{label} low'] = [state[1], -1, kind, i]
-        return [state[0], state[1], True]
-    return None
 
 
 def _advance(armed, direction, i, bars, atr, phi, phl, pli, pll, cfg) -> dict | None:
@@ -292,14 +379,11 @@ def _advance(armed, direction, i, bars, atr, phi, phl, pli, pll, cfg) -> dict | 
     if i > state['mss_i'] + 1:          # the FVG must exist by the candle after the shift
         armed[direction] = None
         return None
-    for k in range(i, state['extreme_i'] + 1, -1):
-        if direction == 1 and l[k] > h[k - 2] and l[k] - h[k - 2] >= cfg.min_fvg_atr * atr[k]:
-            armed[direction] = None
-            return {**state, 'direction': 1, 'fvg_high': l[k], 'fvg_low': h[k - 2], 'fvg_i': k}
-        if direction == -1 and h[k] < l[k - 2] and l[k - 2] - h[k] >= cfg.min_fvg_atr * atr[k]:
-            armed[direction] = None
-            return {**state, 'direction': -1, 'fvg_high': l[k - 2], 'fvg_low': h[k], 'fvg_i': k}
-    return None
+    gap = find_fvg(h, l, atr, direction, state['extreme_i'], i, cfg.min_fvg_atr)
+    if gap is None:
+        return None
+    armed[direction] = None
+    return {**state, 'direction': direction, 'fvg_i': gap[0], 'fvg_low': gap[1], 'fvg_high': gap[2]}
 
 
 def _ratio(a: float, b: float) -> float:
@@ -325,23 +409,15 @@ def _candidate(symbol, s, i, bars, ctx, pools, cfg, asset, day_open, day_high, d
     mbody, mrange = abs(c[mi] - o[mi]), h[mi] - l[mi]
     leg = slice(ei, i + 1)
     bodies = np.abs(c[leg] - o[leg])
-    fvg_count = 0
-    for k in range(ei + 2, i + 1):
-        if (buy and l[k] > h[k - 2]) or (not buy and h[k] < l[k - 2]):
-            fvg_count += 1
-    leg_ext = float(np.max(h[leg]) if buy else np.min(l[leg]))
-    span = abs(leg_ext - s['extreme'])
-    ote = abs(leg_ext - entry) / span if span else math.nan
+    fvg_count = count_fvgs(h, l, d, ei, i)
+    ote = retracement(entry, s['extreme'], float(np.max(h[leg]) if buy else np.min(l[leg])))
 
     # Order block: the last opposite candle from the extreme to the shift.
-    ob = None
-    for k in range(mi, ei - 1, -1):
-        if (buy and c[k] < o[k]) or (not buy and c[k] > o[k]):
-            ob = (l[k], h[k])
-            break
+    ob = order_block(o, h, l, c, d, ei, mi)
     fl, fh = s['fvg_low'], s['fvg_high']
-    ob_overlap = float(ob is not None and fl <= ob[1] and fh >= ob[0])
-    ob_dist = (d * (entry - (ob[1] if buy else ob[0])) / A) if ob else math.nan
+    ob_overlap = float(ob is not None and fl <= ob[2] and fh >= ob[1])
+    ob_dist = (d * (entry - (ob[2] if buy else ob[1])) / A) if ob else math.nan
+    # Breaker (unicorn): the gap overlaps the candle of the swing that the shift broke.
     p = s['pivot_i']
     breaker = float(fl <= h[p] and fh >= l[p]) if p is not None else math.nan
 
@@ -364,7 +440,7 @@ def _candidate(symbol, s, i, bars, ctx, pools, cfg, asset, day_open, day_high, d
         return d * (c[i] - c[i - k]) / A if i >= k else math.nan
 
     m = int(ctx['minute'][i])
-    zone = any(a <= m < b for a, b in KILLZONES) and ctx['weekday'][i] < 5
+    zone = in_killzone(m, int(ctx['weekday'][i]))
     close_time = int(t[i]) + M5
     feats = {
         'direction': d, 'pool_kind': s['kind'], 'n_pools_swept': s['count'], 'pool_age_bars': si - s['created'],

@@ -1,0 +1,4 @@
+# The ML layer (ml/ and the tests that import it). The analyzer container does not need these; without them
+# those tests are skipped. Tested on pandas 2.3 and 3.1.
+numpy>=1.26
+pandas>=2.2

@@ -29,7 +29,7 @@ table below is the translation, with where each phase stands on disk today (2026
 | Roadmap phase | This plan | State now |
 |---|---|---|
 | 1. Data collection — XAUUSD OHLCV, timestamp checks, multi-timeframe sets | §3 (Phase 0) | **In progress 2026-11-21:** `pull_dukascopy.py` rewritten (`--from/--to/--out`, yearly files, m5+h1), `ml/check_history.py` + tests written, both smoke-tested; full gold pull from 2003 running |
-| 2. ICT detection engine — concepts as testable modules | §4 (Phase 1) | Draft `ml/ict_features.py` committed in `d7fbae8`, **no tests yet**; `scripts/ict_engine.py` + `tests/test_ict_engine.py` cover the killzone-only variant |
+| 2. ICT detection engine — concepts as testable modules | §4 (Phase 1) | **Built 2026-11-21:** `ml/ict_features.py` split into concept functions, 22 tests in `tests/test_ict_features.py`, `ml/check_candidates.py` + tests for the per-year check. Run on one cached year of Dukascopy gold (Nov 2025 – Nov 2026): 1,362 candidates, no rejects. **Still to do: run `check_candidates.py` on the full history once the pull finishes** |
 | 3. Dataset generation — labeled samples, validated | §5 (Phase 2) | Draft `ml/labels.py`, `ml/dataset.py`; `ml/data/ict_dataset.csv.gz` (20 MB) built from the 3-year file and **committed and pushed in `d7fbae8`**, which §5 says datasets should not be; not yet validated against `scripts/backtest.py` |
 | 4. ML training — setup classification, outcome prediction | §6 (Phase 3) | `ml/train.py` drafted, never run |
 | 5. Backtesting — unseen periods, spread and slippage | §6 walk-forward, §7 report, §8 gates | Not started. Spread is already in the grader; **slippage is not modelled anywhere yet** (added to §6 below) |
@@ -118,17 +118,45 @@ bars per frame, check summary), `XAUUSD_check.json` and `ml/reports/xauusd_histo
 
 ## 4. Phase 1 — ICT detection engine (`ml/ict_features.py`)
 
+**Status 2026-11-21: built and tested; the full-history run waits for the Phase 0 pull.**
+
+- Each concept is its own function with its own tests: `session_of` / `in_killzone` (session clock),
+  `trading_days` (17:00 New York roll), `pivots` (swings), `SessionRange` (session pools), `find_fvg` /
+  `count_fvgs`, `order_block`, `retracement` (OTE), and `detect`, the sweep → MSS → FVG state machine.
+- Tests (`tests/test_ict_features.py`): the hand-built London session from `tests/test_ict_engine.py` must give
+  the same plan in both engines; the SELL mirror must give the same features; no candidate may change when the
+  future is cut off or rewritten; every setup `scripts/ict_engine.py` finds on long random data must be a
+  candidate with the same entry, stop and target. On the cached gold year all 65 of 65 killzone-engine setups
+  matched.
+- Three changes to the draft, found while testing:
+  1. **Day roll on pandas 3.** The draft divided the timestamp by a fixed number of nanoseconds; pandas 3 stores
+     seconds, so every bar got the same trading day and previous-day high/low pools never existed (no error,
+     just missing pools). Fixed. The committed draft dataset was built on pandas 2 and has its PDH/PDL rows.
+  2. **Pool naming across a sweep.** When a sweep took a session or day pool and then a minor swing pool
+     deeper, the draft named it after the swing. 19 of the 65 killzone-engine setups on the cached year were
+     labelled "swing" for that reason, which breaks the "killzone + session/day pools" baseline in §6. Now the
+     most significant pool taken in the run keeps the name. Entry, stop and target are unchanged; the pool
+     features of the draft dataset are stale and it gets rebuilt in Phase 2 anyway.
+  3. **Stale session pools.** A session that began on one trading day and (after a data gap) ended on another
+     is dropped instead of being published as today's pool.
+- `python ml/check_candidates.py --symbol XAUUSD --folder .local/history_dukascopy_full` writes
+  `ml/reports/xauusd_ict_candidates.md`: candidates per year, per trading day, BUY share, killzone share, pool
+  mix, missing optional features. It rejects impossible plans and flags years far from the median rate.
+- `pip install -r requirements-ml.txt` (numpy, pandas) for everything in `ml/`; CI installs it, the analyzer
+  container does not and skips those tests.
+
 Same geometry as `scripts/ict_engine.py`, so results are comparable, but broader so the model has thousands of
 examples:
 
 - **Liquidity pools:** previous day high/low (NY 17:00 roll), Asia (20:00–24:00 NY), London (02:00–05:00),
   NY AM (08:30–11:00), M5 swing highs/lows (6/6 fractal, fresh for one day). A pool is spent once traded through.
+  The most significant pool taken (day, London, Asia, NY AM, swing) names the sweep.
 - **Sweep → MSS → FVG:** price trades beyond a fresh pool; within 3 hours a close breaks the last 2/2 pivot formed
   before the extreme; the latest FVG of at least 0.1 ATR in that leg appears by the candle after the shift.
 - **Plan:** limit at the FVG's near edge, stop beyond the sweep + 0.1 ATR, one target at 2R, at least 0.3 ATR risk.
 - **Any session.** The killzone becomes a feature instead of a hard filter.
 
-**Features (about 50), all computed from bars up to the signal bar only:**
+**Features (50), all computed from bars up to the signal bar only:**
 
 | Group | Features |
 |---|---|
@@ -246,7 +274,7 @@ instead of edge, market entry, session pools only), never tuning on the test fol
 | Step | Deliverable | Done when |
 |---|---|---|
 | 0 | `pull_dukascopy.py` `--out`/`--from`/yearly files; `ml/check_history.py` | Full XAUUSD M1 downloaded, all checks pass (code done; pull running) |
-| 1 | `ml/ict_features.py` + tests (no-lookahead, FVG/MSS cases) | Tests pass; candidate counts look sane per year |
+| 1 | `ml/ict_features.py` + tests (no-lookahead, FVG/MSS cases); `ml/check_candidates.py` | Tests pass (done); candidate counts look sane per year (one cached year done; full history after the pull) |
 | 2 | `ml/labels.py`, `ml/dataset.py` | Dataset built; labels match `scripts/backtest.py` on the ICT subset |
 | 3 | `ml/train.py` | Walk-forward + control + baselines run end to end |
 | 4 | Report | `ml/reports/xauusd_walkforward.md` reviewed together |

@@ -1,8 +1,10 @@
 """ml/check_history.py on small synthetic histories: each reject class is counted, holidays are gaps not rejects."""
-import numpy as np
-import pandas as pd
+import pytest
 
-from ml import check_history as ch
+np = pytest.importorskip('numpy')          # the ML layer is optional: requirements-ml.txt
+pd = pytest.importorskip('pandas')
+
+from ml import check_history as ch  # noqa: E402
 
 MONDAY = 1735516800        # 2024-12-30 00:00 UTC
 
