@@ -82,10 +82,13 @@ services:
       timeout: 3s
       retries: 20
   api:
-    # Public record JSON for the website: read-only, unauthenticated, reachable only from the frontend container.
+    # Public record JSON for the website: read-only, unauthenticated. Published on loopback only, for `npm run dev`;
+    # never tunnel it. (8090 is often taken on Windows, hence 8091.)
     build: .
     restart: unless-stopped
     command: [uvicorn, web.api:app, --host, '0.0.0.0', --port, '8000', --no-access-log]
+    ports:
+      - '127.0.0.1:${API_PORT:-8091}:8000'
     env_file: .env
     environment:
       DB_HOST: postgres
@@ -100,7 +103,10 @@ services:
       timeout: 3s
       retries: 20
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_TELEGRAM_URL: ${NEXT_PUBLIC_TELEGRAM_URL:-}
     restart: unless-stopped
     environment:
       API_URL: http://api:8000
@@ -111,7 +117,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: [CMD, wget, -q, -O, /dev/null, 'http://localhost:3000/']
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:3000/']
       interval: 10s
       timeout: 5s
       retries: 20

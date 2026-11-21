@@ -2,7 +2,7 @@
 // internal `api` container, which is never published. Reads are uncached here (Cache Components keep
 // them out of the static shell) because the API itself caches every answer for 60 seconds.
 
-const API_URL = process.env.API_URL ?? "http://127.0.0.1:8090";
+const API_URL = process.env.API_URL ?? "http://127.0.0.1:8091";
 
 export type Summary = {
   closed: number;

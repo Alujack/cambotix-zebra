@@ -363,7 +363,7 @@ A Next.js site shows the record the way a visitor needs to see it: home with liv
 ```bash
 bash scripts/start.sh                     # builds and starts both with the rest of the stack
 open http://localhost:3000
-cd frontend && npm install && npm run dev # local development against the Docker api on port 8090 (set API_URL)
+cd frontend && npm install && npm run dev -- -p 3001 # local development on :3001 against the Docker api on 127.0.0.1:8091 (API_PORT)
 ```
 
 English is served at the clean URLs and Khmer under `/km/...` (a `proxy.ts` rewrite; the toggle in the header keeps the current page). All strings live in `frontend/src/lib/i18n.ts`; the brand, markets, Telegram link and team cards in `frontend/src/lib/site.ts`; the logo is `frontend/public/logo.jpg` (also the favicon). The Method page renders `frontend/content/method.km.md` — a copy of `docs/ICT_Trading_Khmer_Beginner_Book.md` without its diagram images, which are not in the repository — and a short English summary, `method.en.md`; edit the book in `docs/` and re-copy. Set `NEXT_PUBLIC_TELEGRAM_URL` in the frontend environment to point the Telegram buttons at your channel. Publish the site through a tunnel (a named Cloudflare Tunnel to `http://localhost:3000`); never the analyzer, the api or n8n. The Pro tier stays "not for sale" until the forward test reads GO.

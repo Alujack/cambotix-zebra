@@ -1,6 +1,7 @@
 import { Bell, Settings2, Zap } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
+import AutoRefresh from "@/components/AutoRefresh";
 import SignalChart from "@/components/SignalChart";
 import TopBar from "@/components/shell/TopBar";
 import TerminalPanel from "@/components/TerminalPanel";
@@ -85,7 +86,7 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
       <div className="card relative p-3">
         {!marketOpen && quote && <span className="pill absolute top-12 left-1/2 z-[1] -translate-x-1/2">{d.terminal.opensIn} · {d.terminal.lastCandle} {utc(quote.time)}</span>}
         {chart.candles.length > 0 ? (
-          <SignalChart candles={chart.candles} levels={[]} markers={markers} direction="BUY" decimals={dec} watermark={d.terminal.watermark} height={520} labels={{ ema20: "EMA20", ema50: "EMA50", ema200: "EMA200", rsi: "RSI" }} />
+          <SignalChart key={`${symbol}-${tf}`} candles={chart.candles} levels={[]} markers={markers} direction="BUY" decimals={dec} watermark={d.terminal.watermark} height={520} labels={{ ema20: "EMA20", ema50: "EMA50", ema200: "EMA200", rsi: "RSI" }} />
         ) : (
           <p className="p-8 text-center text-sm text-muted">{d.terminal.noCandles}</p>
         )}
@@ -103,15 +104,25 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
   );
 }
 
-export default async function TerminalPage({ params, searchParams }: PageProps<"/[lang]/app/terminal">) {
+// URL data (params, searchParams) is read only inside the Suspense boundary, so the route keeps an instant static shell.
+async function Terminal({ params, searchParams }: PageProps<"/[lang]/app/terminal">) {
   const { lang } = await params;
   if (!isLang(lang)) return null;
   const d = t(lang);
   return (
     <>
       <TopBar lang={lang} title={d.nav.terminal} help={d.terminal.help} />
-      <Suspense fallback={<div className="space-y-3"><Skeleton className="h-14" /><Skeleton className="h-12" /><Skeleton className="h-[520px]" /></div>}>
-        <Workspace lang={lang} searchParams={searchParams as Promise<{ symbol?: string; tf?: string }>} />
+      <Workspace lang={lang} searchParams={searchParams as Promise<{ symbol?: string; tf?: string }>} />
+    </>
+  );
+}
+
+export default function TerminalPage(props: PageProps<"/[lang]/app/terminal">) {
+  return (
+    <>
+      <AutoRefresh seconds={60} />
+      <Suspense fallback={<div className="space-y-3"><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-12" /><Skeleton className="h-[520px]" /></div>}>
+        <Terminal {...props} />
       </Suspense>
     </>
   );

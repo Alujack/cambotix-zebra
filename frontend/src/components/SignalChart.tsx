@@ -27,6 +27,8 @@ const colour = (tone: Level["tone"]) => ({ red: "#ff6b7a", green: "#34f08d", whi
 export default function SignalChart({ candles, levels, markerTime, markers = [], direction, decimals, watermark, height = 340, labels }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [overlays, setOverlays] = useState({ ema20: true, ema50: true, ema200: false, rsi: true });
+  // Visible window measured in bars from the right edge, so a refresh with a new candle keeps the user's zoom and scroll.
+  const view = useRef<{ fromEnd: number; toEnd: number } | null>(null);
 
   useEffect(() => {
     if (!box.current || candles.length === 0) return;
@@ -69,11 +71,18 @@ export default function SignalChart({ candles, levels, markerTime, markers = [],
       pane.createPriceLine({ price: 30, color: "rgba(52,240,141,0.6)", lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" });
       chart.panes()[1]?.setHeight(100);
     }
-    chart.timeScale().fitContent();
     const resize = () => chart.applyOptions({ width: box.current?.clientWidth ?? 600 });
     resize();
+    const last = candles.length - 1;
+    if (view.current) chart.timeScale().setVisibleLogicalRange({ from: last - view.current.fromEnd, to: last - view.current.toEnd });
+    else chart.timeScale().fitContent();
     window.addEventListener("resize", resize);
-    return () => { window.removeEventListener("resize", resize); chart.remove(); };
+    return () => {
+      const range = chart.timeScale().getVisibleLogicalRange();
+      if (range) view.current = { fromEnd: last - range.from, toEnd: last - range.to };
+      window.removeEventListener("resize", resize);
+      chart.remove();
+    };
   }, [candles, levels, markerTime, markers, direction, decimals, overlays, watermark, height]);
 
   const toggle = (key: keyof typeof overlays) => setOverlays((value) => ({ ...value, [key]: !value[key] }));

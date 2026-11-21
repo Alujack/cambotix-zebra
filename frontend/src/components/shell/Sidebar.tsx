@@ -64,7 +64,7 @@ export default function Sidebar({ lang, labels }: { lang: Lang; labels: Dict["na
       </div>
       <div className="mt-auto flex w-full flex-col items-center gap-1">
         {item("/pricing", "upgrade", Crown, "gold")}
-        {item("/settings", "settings", Settings)}
+        {item("/app/settings", "settings", Settings)}
         <a href={site.telegram} className="flex min-h-[52px] w-full flex-col items-center justify-center gap-1 rounded-lg py-2 text-[10px] text-muted hover:bg-surface-2 hover:text-text">
           <LifeBuoy size={18} strokeWidth={1.6} />
           <span>{labels.support}</span>

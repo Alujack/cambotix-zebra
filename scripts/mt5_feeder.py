@@ -326,7 +326,7 @@ def push_candles(cfg: dict, state: dict) -> None:
         print(f'  candles: unknown MT5 symbol {cfg["mt5_symbol"]}')
         return
     end = int(time.time()) // 60 * 60
-    start = state.get('need_from') or end - FIRST_CANDLES
+    start = state.get('need_from') or end - cfg.get('first_candles', FIRST_CANDLES)
     for _ in range(20):
         start = min(start, end - 60)
         stop = min(end, start + CANDLE_CHUNK)
@@ -404,10 +404,12 @@ def main() -> None:
     parser.add_argument('--once', action='store_true', help='scan the last closed bar and exit')
     parser.add_argument('--dry-run', action='store_true', help='print the payload instead of sending')
     parser.add_argument('--no-candles', action='store_true', help='do not send M1 candles for outcome grading')
+    parser.add_argument('--history-hours', type=float, default=FIRST_CANDLES / 3600,
+                        help='M1 history sent on the first push, e.g. 168 to backfill a week for a new chart (default 3)')
     parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDm'),
                         help='broker symbol as named in MT5 (default XAUUSDm)')
     parser.add_argument('--models', default='crt',
-                        help='comma list of detection models: classic, crt, ict, ema, mss (default crt)')
+                        help='comma list of detection models: classic, crt, ict, ema, mss, or none to send candles only (default crt)')
     args = parser.parse_args()
 
     settings = env()
@@ -415,6 +417,8 @@ def main() -> None:
     analyzer = os.getenv('ZEBRA_ANALYZER_URL', f'http://127.0.0.1:{settings.get("ANALYZER_PORT", "8010")}').rstrip('/')
     broker_symbol = args.symbol
     models = {m.strip().lower() for m in args.models.split(',') if m.strip()}
+    # 'none' feeds M1 candles only (charts on the website); nothing is scanned or published.
+    models.discard('none')
     if not models <= {'classic', 'crt', 'ict', 'ema', 'mss'}:
         raise SystemExit('--models accepts a comma list of classic, crt, ict, ema and mss')
     cfg = {
@@ -430,6 +434,7 @@ def main() -> None:
         'max_atr': float(settings.get('MAX_ATR_PERCENT', 0.5)),
         'max_age': int(settings.get('MAX_SIGNAL_AGE_SECONDS', 300)),
         'swing_bars': 10,
+        'first_candles': int(args.history_hours * 3600),
     }
     if not cfg['token']:
         raise SystemExit('ANALYZER_TOKEN missing from .env')
@@ -479,7 +484,7 @@ def main() -> None:
             return
         cadence = ', '.join((['15m scan'] if m15_models else []) + (['5m ICT scan'] if 'ict' in models else [])
                             + (['1m EMA scan'] if 'ema' in models else []) + (['hourly MSS scan'] if 'mss' in models else []))
-        print(f'watching; candles every minute, {cadence} 10s after each bar close. Ctrl+C to stop.')
+        print(f'watching; candles every minute, {cadence or "no scans (candles only)"} 10s after each bar close. Ctrl+C to stop.')
         scanned = scanned_m5 = scanned_h1 = None
         while True:
             time.sleep(max(1.0, 60 - time.time() % 60 + 10))

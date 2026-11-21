@@ -5,6 +5,6 @@ through `API_URL` (the internal `api` compose service). See the "Public website"
 
 ```bash
 npm install
-API_URL=http://127.0.0.1:8090 npm run dev   # against a locally exposed api
+npm run dev -- -p 3001                       # api on 127.0.0.1:8091 (API_PORT); 3000 is the Docker site
 npm run lint && npm run build
 ```
