@@ -5,7 +5,7 @@ import { chromium } from "playwright";
 
 const base = process.argv[2] ?? "http://127.0.0.1:3000";
 const out = process.argv[3] ?? "shots";
-const pages = ["/", "/signals", "/signals/1", "/track-record", "/pricing", "/method", "/terminal", "/trades", "/alerts", "/km", "/km/signals"];
+const pages = ["/", "/track-record", "/pricing", "/method", "/app", "/app/signals", "/app/signals/1", "/app/terminal", "/app/trades", "/km", "/km/app", "/km/app/signals"];
 mkdirSync(out, { recursive: true });
 const browser = await chromium.launch();
 for (const [name, width] of [["desktop", 1280], ["mobile", 390]]) {

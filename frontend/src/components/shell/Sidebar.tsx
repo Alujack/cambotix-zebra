@@ -4,7 +4,7 @@ import { Crown, LifeBuoy, Menu, MoreHorizontal, Settings, X } from "lucide-react
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { guest } from "@/lib/guest";
 import { href, type Dict, type Lang } from "@/lib/i18n";
 import { moreNav, primaryNav } from "@/lib/nav";
@@ -16,23 +16,23 @@ export default function Sidebar({ lang, labels }: { lang: Lang; labels: Dict["na
   const bare = pathname.replace(/^\/(en|km)(?=\/|$)/, "") || "/";
   const [open, setOpen] = useState(false);
   const [more, setMore] = useState(false);
-  useEffect(() => setOpen(false), [pathname]);
 
   const active = (to: string) => {
     const path = to.split("?")[0];
-    return path === "/" ? bare === "/" : bare.startsWith(path);
+    return path === "/app" || path === "/" ? bare === path : bare.startsWith(path);
   };
   const item = (to: string, key: keyof Dict["nav"], Icon: React.ComponentType<{ size?: number; strokeWidth?: number }>, tone?: "gold") => (
     <Link
       key={to + key}
       href={href(lang, to)}
       aria-current={active(to) ? "page" : undefined}
-      className={`relative flex min-h-[52px] w-full flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-[10px] leading-none transition-colors
+      onClick={() => { setOpen(false); setMore(false); }}
+      className={`relative flex min-h-[54px] w-full flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-2 transition-colors
         ${active(to) ? "bg-surface-2 text-text" : tone === "gold" ? "text-gold hover:bg-surface-2" : "text-muted hover:bg-surface-2 hover:text-text"}`}
     >
       {active(to) && <span className="absolute top-2 bottom-2 left-0 w-0.5 rounded-full bg-gold" aria-hidden />}
       <Icon size={18} strokeWidth={1.6} />
-      <span className="max-w-full truncate">{labels[key]}</span>
+      <span className="w-full text-center text-[9.5px] leading-[1.1] break-words">{labels[key]}</span>
     </Link>
   );
 

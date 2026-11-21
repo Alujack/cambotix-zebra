@@ -10,13 +10,24 @@ export const href = (lang: Lang, path: string) => (lang === "en" ? path : `/km${
 const en = {
   nav: { home: "Home", signals: "Signals", record: "Track record", pricing: "Pricing", method: "Method", telegram: "Daily record on Telegram", other: "ខ្មែរ",
     overview: "Overview", terminal: "Terminal", chart: "Chart", indicators: "Indicators", trades: "My Trades", alerts: "Alerts", more: "More",
-    aiChat: "AI Chat", backtest: "Backtest", refer: "Refer", upgrade: "Upgrade", settings: "Settings", support: "Support", soon: "soon" },
+    aiChat: "AI Chat", backtest: "Backtest", refer: "Refer", upgrade: "Upgrade", settings: "Settings", support: "Support", soon: "soon", dashboard: "Open dashboard", site: "Website" },
   shell: {
     help: "How this page works", close: "Close", scan: "Scan now", scanTodo: "On-demand scans are not available yet; setups are detected on each 15-minute close.",
     disclaimer: "Signals are for educational purposes only. Not financial advice. Trading involves risk.",
     comingSoon: "Not built yet", comingSoonText: "This screen needs an account. It will open once Telegram sign-in exists.", guestNote: "Guest mode — nothing here is saved.",
   },
   ticker: { empty: "Broker prices appear here once the feeder is sending candles.", source: "broker feed · ~1 min delay" },
+  overview: {
+    help: "Your desk at a glance: what is open, how the record stands, the economic calendar that can block setups, and the latest plans. Numbers come from the graded ledger; nothing here is estimated.",
+    engineLive: "Rules engine live", activeNow: "plans open and being graded", noActive: "No open plan — the rules scan every 15-minute close", evaluatedTotal: "setups evaluated so far",
+    ctaSignals: "Latest signals", active: "Active signals", activeCaption: "open, graded minute by minute", activeNone: "waiting for the next qualifying close",
+    signalsLeft: "Signals left today", resets: "resets", tradesToday: "Plans today", publishedToday: "published since 00:00 UTC", nothingToday: "nothing published yet today",
+    bestSymbol: "Best symbol", plan: "Current plan", noHistory: "Not enough history yet",
+    news: "Calendar", newsCalendar: "High-impact events", newsEmpty: "No events in the window, or the calendar is unavailable.", newsBlocks: "blocks setups around this time",
+    recentLabel: "Latest", recent: "Recent signals", viewAll: "View all",
+    ctaTitle: "Get every plan the moment it publishes", ctaText: "Entry, stop, targets and the result message — on Telegram.",
+    usage: "Plan usage", signalsLeftText: "free signals left today",
+  },
   hero: {
     kicker: "Rule-based desk · broker-graded · nothing deleted",
     title: "Trade gold with a plan you can verify.",
@@ -73,6 +84,10 @@ const en = {
     hidden: "Entry, stop and targets are delivered live on Telegram. They appear here once the plan closes, with its result.",
     entry: "Entry", stop: "Stop", tp1: "TP1", target: "Target", published: "Published", ledger: "Ledger",
     limit: "Resting order", market: "Market entry", intraday: "Intraday", view: "View details", graded: "Graded", more: "more",
+    crypto: "Crypto", metals: "Metals", forex: "Forex", auto: "Auto", openWaiting: "Entry not reached yet", openFilled: "In the trade",
+    limitNotice: "Limit entry — the plan waits for a pullback to its level. Don't enter at market now; set a limit order or a price alert.",
+    validUntil: "Valid until", cancelledIf: "cancelled if price reaches TP1 before the entry fills.", livePrice: "Live price",
+    expires: "Expires", holdsUntil: "Closes by", expired: "expired", opened: "Opened", closed: "Closed",
   },
   detail: {
     back: "All signals", summary: "Summary", direction: "Direction", model: "Model", session: "Session", order: "Order type",
@@ -118,13 +133,24 @@ export type Dict = typeof en;
 const km: Dict = {
   nav: { home: "ទំព័រដើម", signals: "សញ្ញា", record: "កំណត់ត្រាលទ្ធផល", pricing: "តម្លៃ", method: "វិធីសាស្ត្រ", telegram: "របាយការណ៍ប្រចាំថ្ងៃលើ Telegram", other: "English",
     overview: "ទិដ្ឋភាពរួម", terminal: "Terminal", chart: "ក្រាហ្វ", indicators: "សូចនាករ", trades: "Trade របស់ខ្ញុំ", alerts: "ការជូនដំណឹង", more: "ផ្សេងទៀត",
-    aiChat: "AI Chat", backtest: "Backtest", refer: "ណែនាំមិត្ត", upgrade: "ដំឡើង", settings: "ការកំណត់", support: "ជំនួយ", soon: "ឆាប់ៗ" },
+    aiChat: "AI Chat", backtest: "Backtest", refer: "ណែនាំមិត្ត", upgrade: "ដំឡើង", settings: "ការកំណត់", support: "ជំនួយ", soon: "ឆាប់ៗ", dashboard: "បើកផ្ទាំងគ្រប់គ្រង", site: "គេហទំព័រ" },
   shell: {
     help: "ទំព័រនេះដំណើរការយ៉ាងណា", close: "បិទ", scan: "ស្កេនឥឡូវ", scanTodo: "ការស្កេនតាមតម្រូវការមិនទាន់មានទេ; setup ត្រូវរកឃើញរាល់ពេលបិទ candle 15 នាទី។",
     disclaimer: "សញ្ញាគឺសម្រាប់ការសិក្សាតែប៉ុណ្ណោះ។ មិនមែនជាការណែនាំហិរញ្ញវត្ថុទេ។ ការជួញដូរមានហានិភ័យ។",
     comingSoon: "មិនទាន់បានបង្កើត", comingSoonText: "អេក្រង់នេះត្រូវការគណនី។ វានឹងបើកនៅពេលមានការចូលតាម Telegram។", guestNote: "របៀបភ្ញៀវ — គ្មានអ្វីត្រូវរក្សាទុកទេ។",
   },
   ticker: { empty: "តម្លៃពី broker នឹងបង្ហាញនៅទីនេះ នៅពេល feeder ផ្ញើ candle មក។", source: "ទិន្នន័យ broker · យឺត ~1 នាទី" },
+  overview: {
+    help: "តុរបស់អ្នកក្នុងមួយភ្លែត៖ អ្វីកំពុងបើក ស្ថានភាពកំណត់ត្រា ប្រតិទិនសេដ្ឋកិច្ចដែលអាចរារាំង setup និងផែនការចុងក្រោយ។ លេខទាំងអស់មកពី ledger ដែលបានដាក់ពិន្ទុ; គ្មានអ្វីប៉ាន់ស្មានទេ។",
+    engineLive: "ម៉ាស៊ីនច្បាប់ដំណើរការ", activeNow: "ផែនការកំពុងបើក និងកំពុងដាក់ពិន្ទុ", noActive: "គ្មានផែនការបើក — ច្បាប់ស្កេនរាល់ពេលបិទ candle 15 នាទី", evaluatedTotal: "setup បានពិនិត្យសរុប",
+    ctaSignals: "សញ្ញាចុងក្រោយ", active: "សញ្ញាសកម្ម", activeCaption: "កំពុងបើក ដាក់ពិន្ទុរាល់នាទី", activeNone: "រង់ចាំការបិទ candle បន្ទាប់ដែលឆ្លងច្បាប់",
+    signalsLeft: "សញ្ញានៅសល់ថ្ងៃនេះ", resets: "កំណត់ឡើងវិញ", tradesToday: "ផែនការថ្ងៃនេះ", publishedToday: "បានផ្សាយចាប់ពី 00:00 UTC", nothingToday: "មិនទាន់មានអ្វីផ្សាយថ្ងៃនេះ",
+    bestSymbol: "ទីផ្សារល្អបំផុត", plan: "គម្រោងបច្ចុប្បន្ន", noHistory: "ប្រវត្តិមិនទាន់គ្រប់",
+    news: "ប្រតិទិន", newsCalendar: "ព្រឹត្តិការណ៍ផលប៉ះពាល់ខ្ពស់", newsEmpty: "គ្មានព្រឹត្តិការណ៍ក្នុងរយៈពេលនេះ ឬប្រតិទិនមិនអាចប្រើបាន។", newsBlocks: "រារាំង setup នៅជុំវិញពេលនេះ",
+    recentLabel: "ចុងក្រោយ", recent: "សញ្ញាថ្មីៗ", viewAll: "មើលទាំងអស់",
+    ctaTitle: "ទទួលគ្រប់ផែនការភ្លាមៗពេលផ្សាយ", ctaText: "Entry, stop, target និងសារលទ្ធផល — លើ Telegram។",
+    usage: "ការប្រើប្រាស់គម្រោង", signalsLeftText: "សញ្ញាឥតគិតថ្លៃនៅសល់ថ្ងៃនេះ",
+  },
   hero: {
     kicker: "ផ្អែកលើច្បាប់ · ដាក់ពិន្ទុតាម candle របស់ broker · មិនលុបអ្វីទាំងអស់",
     title: "Trade មាស ដោយមានផែនការដែលអ្នកអាចផ្ទៀងផ្ទាត់បាន។",
@@ -181,6 +207,10 @@ const km: Dict = {
     hidden: "Entry, stop និង target ត្រូវផ្ញើផ្ទាល់តាម Telegram។ វានឹងបង្ហាញនៅទីនេះនៅពេលផែនការបិទ ជាមួយលទ្ធផល។",
     entry: "Entry", stop: "Stop", tp1: "TP1", target: "Target", published: "ផ្សាយ", ledger: "Ledger",
     limit: "Order រង់ចាំ", market: "ចូលតាមទីផ្សារ", intraday: "Intraday", view: "មើលលម្អិត", graded: "បានដាក់ពិន្ទុ", more: "ទៀត",
+    crypto: "Crypto", metals: "លោហៈ", forex: "Forex", auto: "ស្វ័យប្រវត្តិ", openWaiting: "មិនទាន់ដល់ entry", openFilled: "កំពុងក្នុង trade",
+    limitNotice: "Limit entry — ផែនការរង់ចាំតម្លៃត្រឡប់មកកម្រិតរបស់វា។ កុំចូលតាមទីផ្សារឥឡូវ; ដាក់ limit order ឬការជូនដំណឹងតម្លៃ។",
+    validUntil: "មានសុពលភាពដល់", cancelledIf: "បោះបង់បើតម្លៃដល់ TP1 មុន entry ចូល។", livePrice: "តម្លៃបច្ចុប្បន្ន",
+    expires: "ផុតកំណត់", holdsUntil: "បិទត្រឹម", expired: "ផុតកំណត់ហើយ", opened: "បើក", closed: "បិទ",
   },
   detail: {
     back: "សញ្ញាទាំងអស់", summary: "សង្ខេប", direction: "ទិស", model: "ម៉ូដែល", session: "Session", order: "ប្រភេទ order",

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
+import TopBar from "@/components/shell/TopBar";
 import PositionSizer from "@/components/PositionSizer";
 import { Direction, Outcome } from "@/components/SignalCard";
 import { getPlan, type Plan } from "@/lib/api";
@@ -57,8 +58,9 @@ async function Detail({ params }: { params: Promise<{ lang: string; seq: string 
   const sizerLabels = { calc: d.detail.calc, account: d.detail.account, riskPct: d.detail.riskPct, riskMoney: d.detail.riskMoney, units: d.detail.units, lots: d.detail.lots, rewardTp1: d.detail.rewardTp1, notional: d.detail.notional, calcNote: d.detail.calcNote };
   return (
     <>
-      <section className="py-8">
-        <Link href={href(lang, "/signals")} className="text-sm text-muted hover:text-fg">← {d.detail.back}</Link>
+      <TopBar lang={lang} title={`${plan.symbol} · ${plan.direction}`} help={d.signals.intro} />
+      <section className="py-6">
+        <Link href={href(lang, "/app/signals")} className="text-sm text-muted hover:text-fg">← {d.detail.back}</Link>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold">{plan.symbol}</h1>
           <Direction direction={plan.direction} />
@@ -124,7 +126,7 @@ async function Detail({ params }: { params: Promise<{ lang: string; seq: string 
       )}
 
       <div className="mt-8 flex flex-wrap gap-3">
-        <Link href={href(lang, "/signals")} className="btn-secondary">{d.detail.back}</Link>
+        <Link href={href(lang, "/app/signals")} className="btn-secondary">{d.detail.back}</Link>
         <a href={site.telegram} className="btn-primary">{d.nav.telegram}</a>
       </div>
     </>
@@ -134,6 +136,6 @@ async function Detail({ params }: { params: Promise<{ lang: string; seq: string 
 // Blocking on purpose: the plan lookup is a cached 1 ms call, and a missing plan must answer with a real 404.
 export const instant = false;
 
-export default function SignalDetailPage({ params }: PageProps<"/[lang]/signals/[seq]">) {
+export default function SignalDetailPage({ params }: PageProps<"/[lang]/app/signals/[seq]">) {
   return <Detail params={params} />;
 }

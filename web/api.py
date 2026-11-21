@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
 
-from app import ledger
+from app import ledger, news
 from app.db import readonly
 from app.domain import SYNTHETIC_PREFIXES
 
@@ -66,6 +66,10 @@ def plan_view(seq: int, plan: dict, events: list[dict]) -> dict:
             'timeframe': plan['timeframe'], 'direction': plan['direction'], 'session': plan.get('session'),
             'cautions': plan.get('cautions', []), 'published_at': plan['published_at'], 'status': status,
             'entry_type': plan.get('entry_type'), 'levels_public': status != 'open',
+            'entry_expiry_minutes': plan.get('entry_expiry_minutes', 0), 'max_hold_minutes': plan.get('max_hold_minutes', 0),
+            # A limit plan is cancelled at expires_at if unfilled; any plan is closed at market by hold_until at the latest.
+            'expires_at': plan['published_at'] + 60 * plan.get('entry_expiry_minutes', 0),
+            'hold_until': plan['published_at'] + 60 * (plan.get('entry_expiry_minutes', 0) + plan.get('max_hold_minutes', 0)),
             'events': [{k: v for k, v in event.items() if k not in ('seq', 'event_id', 'prev')} for event in events]}
     if status != 'open':
         view['levels'] = {'entry': plan['entry'], 'stop': plan['stop'], 'targets': plan['targets']}
@@ -144,7 +148,7 @@ def signal(seq: int):
 
 def build_news() -> list[dict]:
     """The economic calendar the rules already use, as a feed: severity from impact, no invented trade ideas."""
-    events = news.load_events() or []
+    events = news._load() or []
     currencies = {c.strip().upper() for c in os.getenv('NEWS_CURRENCIES', 'USD').split(',') if c.strip()}
     now = time.time()
     items = []

@@ -7,7 +7,7 @@ export default function PlanNotFound() {
       <div className="label">404</div>
       <h1 className="mt-2 text-2xl font-bold">No published plan with that ledger number</h1>
       <p className="mt-2 text-sm text-muted">មិនមានផែនការដែលបានផ្សាយនៅលេខ ledger នេះទេ។ Only rows of kind &quot;published&quot; have a page; fills, targets and stops belong to their plan.</p>
-      <Link href="/signals" className="btn-secondary mt-6">All signals · សញ្ញាទាំងអស់</Link>
+      <Link href="/app/signals" className="btn-secondary mt-6">All signals · សញ្ញាទាំងអស់</Link>
     </section>
   );
 }

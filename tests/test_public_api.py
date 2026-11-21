@@ -66,6 +66,8 @@ def test_open_plans_hide_levels_and_closed_plans_show_them(client):
     open_plan = items[1]
     assert open_plan['status'] == 'open' and open_plan['levels_public'] is False and 'levels' not in open_plan
     assert open_plan['cautions'] == ['Weak trend: ADX 21'] and open_plan['events'] == []
+    assert open_plan['expires_at'] == open_plan['published_at'] + 60 * open_plan['entry_expiry_minutes']
+    assert open_plan['hold_until'] > open_plan['expires_at'] and open_plan['max_hold_minutes'] > 0
     assert not any(key in open_plan for key in ('levels', 'entry', 'stop', 'targets'))
     assert '3510.25' not in json.dumps(open_plan) and '3503.95' not in json.dumps(open_plan)   # no level leaks anywhere
     closed = items[3]
@@ -131,3 +133,16 @@ def test_single_plan_by_ledger_number(client):
     assert open_plan['event_id'] == 'open' and open_plan['levels_public'] is False and 'levels' not in open_plan
     assert client.get('/signals/2').status_code == 404        # row 2 is a fill event, not a plan
     assert client.get('/signals/999').status_code == 404
+
+
+def test_news_feed_comes_from_the_calendar(client, monkeypatch):
+    from app import news
+    now = time.time()
+    monkeypatch.setattr(news, '_load', lambda: [
+        {'time': now + 3600, 'title': 'CPI m/m', 'country': 'USD', 'impact': 'High'},
+        {'time': now + 7200, 'title': 'Retail Sales', 'country': 'GBP', 'impact': 'Medium'},
+        {'time': now - 2 * 86400, 'title': 'Old', 'country': 'USD', 'impact': 'High'}])
+    items = client.get('/news').json()
+    assert [item['title'] for item in items] == ['CPI m/m', 'Retail Sales']
+    assert items[0]['severity'] == 'HIGH' and items[0]['blocks_setups'] is True and items[0]['affects'] == ['XAUUSD', 'EURUSD']
+    assert items[1]['severity'] == 'MEDIUM' and items[1]['blocks_setups'] is False

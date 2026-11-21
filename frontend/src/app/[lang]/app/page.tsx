@@ -14,22 +14,24 @@ async function Hero({ lang }: { lang: Lang }) {
   const d = t(lang);
   const [record, plans] = await Promise.all([getRecord(), getSignals(20)]);
   const open = plans.filter((plan) => plan.status === "open").length;
-  const now = new Date();
+  // "Now" is the API's stamp, so this component stays pure and agrees with the numbers it shows.
+  const now = record.generated_at ? new Date(record.generated_at) : new Date(0);
+  const phnomPenhHour = (now.getUTCHours() + 7) % 24;
   return (
     <section className="card-lg relative overflow-hidden p-5 md:p-6" style={{ backgroundImage: "linear-gradient(135deg, var(--surface) 55%, color-mix(in srgb, var(--gold) 9%, var(--surface)))" }}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <span className="label">{utc(Math.floor(now.getTime() / 1000), false)}</span>
+            {record.generated_at && <span className="label">{utc(Math.floor(now.getTime() / 1000), false)}</span>}
             <Badge tone="green" dot>{d.overview.engineLive}</Badge>
           </div>
-          <h2 className="hero-text mt-3">{greeting(now.getUTCHours() + 7 >= 24 ? now.getUTCHours() - 17 : now.getUTCHours() + 7)}, {guest.name}</h2>
+          <h2 className="hero-text mt-3">{greeting(phnomPenhHour)}, {guest.name}</h2>
           <p className="mt-2 text-sm text-muted">
             {open > 0 ? `${open} ${d.overview.activeNow}` : d.overview.noActive} · {record.journal.evaluated} {d.overview.evaluatedTotal}
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
-            <Link href={href(lang, "/signals")} className="btn-primary"><Zap size={16} /> {d.overview.ctaSignals}</Link>
-            <Link href={href(lang, "/trades")} className="btn-secondary">{d.nav.trades}</Link>
+            <Link href={href(lang, "/app/signals")} className="btn-primary"><Zap size={16} /> {d.overview.ctaSignals}</Link>
+            <Link href={href(lang, "/app/trades")} className="btn-secondary">{d.nav.trades}</Link>
           </div>
         </div>
         <div className="grid h-14 w-14 place-items-center rounded-xl border-2 border-gold/70 bg-surface-2 text-xl font-bold text-gold">{guest.initials}</div>
@@ -43,7 +45,8 @@ async function Stats({ lang }: { lang: Lang }) {
   const [record, plans] = await Promise.all([getRecord(), getSignals(60)]);
   const h = record.headline;
   const open = plans.filter((plan) => plan.status === "open").length;
-  const dayStart = Math.floor(Date.now() / 1000 / 86400) * 86400;
+  const stamp = record.generated_at ? Date.parse(record.generated_at) / 1000 : 0;
+  const dayStart = Math.floor(stamp / 86400) * 86400;
   const today = plans.filter((plan) => plan.published_at >= dayStart).length;
   const best = Object.entries(record.by_symbol).sort((a, b) => b[1].total_r_tp1 - a[1].total_r_tp1)[0];
   const none = d.overview.noHistory;
@@ -105,7 +108,7 @@ async function Recent({ lang }: { lang: Lang }) {
 
 const grid = (n: number, h: string) => <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: n }).map((_, i) => <Skeleton key={i} className={h} />)}</div>;
 
-export default async function Overview({ params }: PageProps<"/[lang]">) {
+export default async function Overview({ params }: PageProps<"/[lang]/app">) {
   const { lang } = await params;
   if (!isLang(lang)) return null;
   const d = t(lang);
@@ -119,7 +122,7 @@ export default async function Overview({ params }: PageProps<"/[lang]">) {
         <section>
           <div className="mb-3 flex items-end justify-between">
             <div><div className="label">{d.overview.recentLabel}</div><h2 className="text-lg font-semibold">{d.overview.recent}</h2></div>
-            <Link href={href(lang, "/signals")} className="flex items-center gap-1 text-sm text-gold">{d.overview.viewAll} <ArrowRight size={14} /></Link>
+            <Link href={href(lang, "/app/signals")} className="flex items-center gap-1 text-sm text-gold">{d.overview.viewAll} <ArrowRight size={14} /></Link>
           </div>
           <Suspense fallback={<div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-72" /><Skeleton className="h-72" /></div>}><Recent lang={lang} /></Suspense>
         </section>

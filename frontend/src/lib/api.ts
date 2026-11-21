@@ -62,6 +62,10 @@ export type Plan = {
   status: "open" | "closed" | "not_filled";
   entry_type: string | null;
   levels_public: boolean;
+  entry_expiry_minutes: number;
+  max_hold_minutes: number;
+  expires_at: number;
+  hold_until: number;
   levels?: { entry: number; stop: number; targets: [number, number, string][] };
   result?: { exit?: string; targets_hit?: number; ambiguous?: boolean; r_tp1?: number; r_scaled?: number; reason?: string };
   events: LedgerEvent[];
@@ -74,6 +78,8 @@ export type Ticker = {
   change_24h_pct: number | null;
   source: string;
 };
+
+export type NewsItem = { time: number; title: string; country: string; severity: "HIGH" | "MEDIUM" | "LOW"; affects: string[]; blocks_setups: boolean };
 
 export type LedgerRow = { seq: number; event_id: string; kind: string; body: string; hash: string };
 
@@ -108,4 +114,5 @@ export const getRecord = () => get<Record>("/record", emptyRecord);
 export const getSignals = (limit = 60) => get<Plan[]>(`/signals?limit=${limit}`, []);
 export const getPlan = (seq: number) => get<Plan | null>(`/signals/${seq}`, null);
 export const getTickers = () => get<Ticker[]>("/tickers", []);
+export const getNews = () => get<NewsItem[]>("/news", []);
 export const getLedger = (after = 0) => get<LedgerRow[]>(`/ledger?after=${after}`, []);
