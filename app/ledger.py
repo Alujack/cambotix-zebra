@@ -118,20 +118,22 @@ def plan_record(signal: Signal, published_at: int, warnings: list[str] | None = 
     # CRT holds for CRT_MAX_HOLD_CANDLES range candles (the backtested exit); classic keeps MAX_HOLD_MINUTES.
     # ICT waits for its limit (ICT_ENTRY_EXPIRY_MINUTES) and holds ICT_MAX_HOLD_MINUTES, as backtested.
     # The EMA scalp fills at market on the next 1m candle and holds EMA_MAX_HOLD_MINUTES; its expiry is only the
-    # grace the grader allows for that first candle to arrive.
+    # grace the grader allows for that first candle to arrive. MSS fills the same way and holds MSS_MAX_HOLD_HOURS.
     if signal.model == 'crt':
         hold = int(os.getenv('CRT_MAX_HOLD_CANDLES', '3')) * signal.bar_seconds // 60
     elif signal.model == 'ict':
         hold = int(os.getenv('ICT_MAX_HOLD_MINUTES', '360'))
     elif signal.model == 'ema':
         hold = int(os.getenv('EMA_MAX_HOLD_MINUTES', '45'))
+    elif signal.model == 'mss':
+        hold = int(os.getenv('MSS_MAX_HOLD_HOURS', '120')) * 60
     else:
         hold = int(os.getenv('MAX_HOLD_MINUTES', '1440'))
     limit = signal.model == 'ict'
     if limit:
         expiry = os.getenv('ICT_ENTRY_EXPIRY_MINUTES', '120')
     else:
-        expiry = '5' if signal.model == 'ema' else os.getenv('ENTRY_EXPIRY_MINUTES', '120')
+        expiry = '5' if signal.model in ('ema', 'mss') else os.getenv('ENTRY_EXPIRY_MINUTES', '120')
     return {'symbol': signal.symbol, 'model': signal.model, 'timeframe': signal.timeframe,
             'session': session_label(signal.symbol, signal.model, signal.bar_time, signal.bar_seconds), 'cautions': warnings or [],
             'direction': 'BUY' if signal.signal == 'BUY_SETUP' else 'SELL', 'bar_time': signal.bar_time,

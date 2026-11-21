@@ -119,7 +119,7 @@ Pine emits on confirmed bar close when a setup first becomes valid. It uses EMA2
 
 ## Strategy models
 
-Four detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
+Five detection models share the same pipeline, journal, AI gate, and message format. The payload's `model` field selects which fields are mandatory and which rules run.
 
 **classic** (`tradingview/gold_setups.pine`): complete price/EMA20/50/200 alignment, RSI band, MACD histogram sign, ADX minimum, ATR band, and the London/New York session filter evaluated on the bar open. Levels come from ATR and the prior swing.
 
@@ -145,6 +145,14 @@ Four detection models share the same pipeline, journal, AI gate, and message for
 3. **Trigger and plan**: a bullish close above EMA20 that also breaks the previous candle's high. **Market** entry at that close (`timeframe` = `1m`, `entry` = `price`, `swing_low`/`swing_high` = the pullback extremes), stop beyond the pullback extreme plus 0.2 x 1m ATR, one target at `EMA_MIN_RR` (1.5R). The stop must be 1-4 ATR wide: tighter is spread noise, wider is not a scalp. London or New York hours only, and no second setup in the same direction for 10 candles. The grader closes at market after `EMA_MAX_HOLD_MINUTES` (45).
 4. **Analyzer checks** (`ema_rules`): enabled symbol, London/New York hours, the EMA stack in the trade's direction, entry at the close, stop beyond the pullback extreme, stop 0.5-5 ATR, and the minimum reward:risk. No 15m volatility band, as for ICT.
 
+**mss** (`scripts/mss_engine.py`, liquidity sweep + market structure shift): ICT's canonical reversal on **H1**, ported from the sibling `ai-trading-platform` project's `ict_sweep_mss` strategy, whose walk-forward found a gold-only, regime-local edge on this timeframe. It can be added to the gold feeder (`--models crt,mss`). The analyzer accepts it only for `MSS_SYMBOLS` (default `XAUUSD`) and tags every message *Sweep+MSS · forward test*:
+
+1. **Candles and swings**: H1 built from M15 on the hour of the broker's clock (a forming hour never signals). A 2/2 fractal (a high above the two bars on each side, or a low below them) is a swing, known two bars after its pivot. Every decision sees only the last 80 H1 bars, so the feeder and the backtest find the same swings.
+2. **Sweep**: within the last 5 H1 bars, a bar traded below the last known swing low but **closed back above it** (a buy; the mirror above a swing high is a sell). The wick is the sweep extreme (`sweep_level`), the raided swing is `swing_low`/`swing_high`.
+3. **Shift**: the decision bar is a displacement candle (body at least `MSS_BODY_ATR` x H1 ATR and at least half its range) that closes through the last known opposing swing (`mss_level`). No session or killzone filter: the sweep and the shift set the bias; weekend candles are skipped.
+4. **Plan**: **market** entry at that close (`timeframe` = `1h`, `entry` = `price`), stop beyond the sweep wick plus `MSS_STOP_BUFFER_ATR` (0.5) x ATR, one target at the nearest known swing beyond the entry when it is at least `MSS_MIN_RR` (2R) away, else a 2R projection. The grader closes at market after `MSS_MAX_HOLD_HOURS` (120).
+5. **Analyzer checks** (`mss_rules`): enabled symbol, weekday candle, sweep wick beyond the swept swing, close through the broken swing, entry at the close, stop beyond the sweep wick, stop at least 0.3 ATR, and the minimum reward:risk. No 15m volatility band, as for ICT and EMA.
+
 The open-plan limit (`MAX_OPEN_SAME_DIRECTION`) counts plans **per model**: a 1m scalp and an H4 CRT plan on the same symbol are different bets with different horizons, so neither blocks the other.
 
 All models also pass the **news** check: the analyzer reads the free ForexFactory weekly calendar and rejects any setup inside `NEWS_WINDOW_BEFORE_MIN` before or `NEWS_WINDOW_AFTER_MIN` after a high-impact event for `NEWS_CURRENCIES` (`high_impact_news_window`). If the feed is unreachable nothing is blocked and the message says news was not checked. Every message states 1R, its percent of price, and the reward-to-risk to TP1; with `ACCOUNT_SIZE` set it also converts `RISK_PERCENT` into units and lots using `CONTRACT_SIZES`. Neither model has established live performance; both remain manual-review tools.
@@ -157,6 +165,7 @@ All models also pass the **news** check: the analyzer reads the free ForexFactor
 py -3.13 scripts\pull_history.py --symbol XAUUSDm --days 1100
 docker compose run --rm --no-deps -v "${PWD}:/work" -w /work analyzer python scripts/backtest.py --symbol XAUUSD --models crt
 docker compose run --rm --no-deps -v "${PWD}:/work" -w /work analyzer python scripts/backtest.py --symbol XAUUSD --models crt --sweep "CRT_MIN_RR=1.0|2.0"
+docker compose run --rm --no-deps -v "${PWD}:/work" -w /work analyzer python scripts/backtest.py --symbol XAUUSD --models mss
 ```
 
 `--set KEY=VALUE` overrides a setting for one run; `--sweep` ranks settings on the first two thirds of the history and shows the unseen last third beside each. Evidence so far (Exness MT5, H4 defaults above):
@@ -174,6 +183,10 @@ ICT evidence: the rules were written down before any result was seen and never t
 | EURUSD Nov 2023 - Nov 2026 (Dukascopy M1) | 197 | +23.8R, PF 1.22, max drawdown 12.5R | +14.7R, -2.5R, +11.5R by year; London killzone +29R, NY AM -5R |
 | XAUUSD Nov 2023 - Nov 2026 | 79-140 | -5R to -25R | negative in every variant and every year, so ICT stays off gold |
 | GBPUSD, USDJPY, USTEC, US30, XAGUSD, BTCUSD, 1 year | 16-43 each | -8R to +10R | mixed; only GBPUSD was clearly positive |
+
+EMA scalp evidence (`--models ema`, rules fixed before the first run): no edge on gold. Default settings (1.5R, 45-minute hold, 1-4 ATR stop) over Nov 2023 - Nov 2026 gave 14,065 scalps, **-1253R, PF 0.85, 39% wins**, losing in 33 of 37 months and in every session; the last year alone (`--from 2025-11-13`) was 4,675 scalps, -249R, PF 0.91. A sweep of the target (1R, 2R, 3R), the hold (45, 120 minutes) and the minimum stop (1, 2 ATR) lost in all 12 combinations, both on the first two thirds (PF 0.79-0.87) and on the unseen last third (PF 0.87-0.92). The win rate tracked the target exactly as a coin flip would (48% at 1R, 33-37% at 2R, 25-30% at 3R), which is the signature of a random entry paying the spread. The model stays in the code as a forward-test tool and is not run live.
+
+MSS evidence (`--models mss`, the sibling project's `ict_sweep_mss` rules ported unchanged, fixed before the first run): no edge. Gold over Nov 2023 - Nov 2026 gave 103 trades, **+3.85R, PF 1.07, 39% wins**; by Nov-Oct year -4.3R / +6.0R / -0.8R, so only one year was positive and the latest year lost, with all the profit on the buy side (+11.6R) while sells lost 7.7R. The same rules on the other thirteen symbols (three years of EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, USDCHF, NZDUSD, EURJPY, GBPJPY; one year of XAGUSD, BTCUSD, US30, USTEC) summed to **-133R**: only USDCHF (+6.8R, PF 1.14) and BTCUSD (+3.6R, PF 1.16) were positive, and seven pairs lost 10-21R each. The sibling project's own walk-forward found the same thing (+0.07R per trade over 5.5 years, positive only since mid-2024 on gold), and that era has now ended. Pushing the same geometry to smaller candles to reach one trade a day (the engine's `bar_minutes` research setting) made it worse: on gold, M15 gave 0.44 trades per trading day and -9R (PF 0.96), M5 gave 0.97 per day and -24R (PF 0.95), and a looser displacement (1.0 ATR) on M5 gave 2.2 per day and -116R; EURUSD and GBPUSD lost 10-334R on the same variants. The model stays in the code as a forward-test tool and is not run live.
 
 Stricter versions did not help. Requiring H4+H1 trend alignment, or a D1+H4+H1 bias with premium/discount and a reclaim, left 1-21 trades in three years, and a silver SMT filter made gold worse. Without killzones the model gave about 1.2 setups a day with no edge (PF 1.0). With CRT on gold and ICT on EURUSD, expect roughly 0.7 setups per trading day.
 

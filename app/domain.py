@@ -23,7 +23,8 @@ CLASSIC_FIELDS = ('ema20', 'ema50', 'ema200', 'rsi', 'macd_hist', 'adx')
 CRT_FIELDS = ('range_high', 'range_low', 'sweep_level', 'entry', 'stop', 'target_liquidity')
 ICT_FIELDS = ('sweep_level', 'mss_level', 'fvg_high', 'fvg_low', 'entry', 'stop', 'target_liquidity')
 EMA_FIELDS = ('ema20', 'ema50', 'ema200', 'swing_high', 'swing_low', 'entry', 'stop', 'target_liquidity')
-MODEL_FIELDS = {'classic': CLASSIC_FIELDS, 'crt': CRT_FIELDS, 'ict': ICT_FIELDS, 'ema': EMA_FIELDS}
+MSS_FIELDS = ('sweep_level', 'mss_level', 'entry', 'stop', 'target_liquidity')
+MODEL_FIELDS = {'classic': CLASSIC_FIELDS, 'crt': CRT_FIELDS, 'ict': ICT_FIELDS, 'ema': EMA_FIELDS, 'mss': MSS_FIELDS}
 NUMERIC_FIELDS = ('price', 'atr', 'ema20', 'ema50', 'ema200', 'rsi', 'macd_hist', 'adx', 'swing_high', 'swing_low',
                   'sweep_level', 'range_high', 'range_low', 'entry', 'stop', 'target_liquidity', 'mss_level',
                   'fvg_high', 'fvg_low')
@@ -31,7 +32,7 @@ NAME_PATTERN = r'^[A-Za-z0-9 _\-/.]*$'
 NY = ZoneInfo('America/New_York')
 
 # Bar length of each timeframe: classic runs on 15m bars, CRT on the higher-timeframe candle whose close is the signal,
-# ICT on the 5m candle that completed the setup, the EMA scalper on the 1m trigger candle.
+# ICT on the 5m candle that completed the setup, the EMA scalper on the 1m trigger candle, MSS on the H1 shift candle.
 TIMEFRAME_SECONDS = {'1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400}
 # ICT killzones in New York minutes of the day (scripts/ict_engine.py KILLZONES).
 ICT_KILLZONES = {'London': (2 * 60, 5 * 60), 'NY AM': (8 * 60 + 30, 11 * 60)}
@@ -45,14 +46,17 @@ class Signal(BaseModel):
     ict     = ICT 2022 model on 5m: a killzone sweep of a liquidity pool (sweep_level), a close through the last swing
               (mss_level) and a fair value gap (fvg_low-fvg_high) whose near edge is the limit `entry`;
     ema     = EMA pullback scalp on 1m: the EMA20/50/200 stack, a pullback into EMA20 whose extreme is swing_low
-              (buy) or swing_high (sell), market `entry` at the trigger close, `stop` beyond the pullback."""
+              (buy) or swing_high (sell), market `entry` at the trigger close, `stop` beyond the pullback;
+    mss     = liquidity sweep + market structure shift on 1h: a wick through the last swing (swing_low for a buy,
+              swing_high for a sell; the wick is sweep_level) that closed back, then a displacement close through
+              the opposing swing (mss_level); market `entry` at that close, `stop` beyond the sweep wick."""
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     event_id: str = Field(min_length=1, max_length=180, pattern=r'^[A-Za-z0-9_.:\-]+$')
     symbol: str = Field(min_length=3, max_length=20, pattern=r'^[A-Z0-9]+$')
     timeframe: Literal['1m', '5m', '15m', '1h', '4h', '1d']
     bar_time: int = Field(gt=0, strict=True)
     signal: Literal['BUY_SETUP', 'SELL_SETUP']
-    model: Literal['classic', 'crt', 'ict', 'ema'] = 'classic'
+    model: Literal['classic', 'crt', 'ict', 'ema', 'mss'] = 'classic'
     price: float = Field(gt=0)
     atr: float = Field(gt=0)
     # classic indicator model
@@ -121,6 +125,10 @@ class Signal(BaseModel):
             raise ValueError('ict setups are 5m only')
         if self.model == 'ema' and self.timeframe != '1m':
             raise ValueError('ema setups are 1m only')
+        if self.model == 'mss' and self.timeframe != '1h':
+            raise ValueError('mss setups are 1h only')
+        if self.model == 'mss' and (self.swing_low if self.signal == 'BUY_SETUP' else self.swing_high) is None:
+            raise ValueError('mss setup is missing the swept swing (swing_low for a buy, swing_high for a sell)')
         return self
 
 
@@ -295,7 +303,42 @@ def ema_rules(signal: Signal) -> list[str]:
     return reasons
 
 
-MODEL_RULES = {'classic': classic_rules, 'crt': crt_rules, 'ict': ict_rules, 'ema': ema_rules}
+def mss_symbols() -> set[str]:
+    """Symbols the sweep + MSS model may signal on (MSS_SYMBOLS). A forward test: keep it to what was backtested."""
+    return {item.strip().upper() for item in os.getenv('MSS_SYMBOLS', 'XAUUSD').split(',') if item.strip()}
+
+
+def mss_rules(signal: Signal) -> list[str]:
+    """Sweep + MSS geometry on H1: an enabled symbol on a weekday candle, the sweep wick beyond the swept swing, the
+    shift close through the broken swing, a market entry at that close, the stop beyond the sweep wick (at least
+    0.3 ATR away) and a target at least MSS_MIN_RR away."""
+    reasons = []
+    buy = signal.signal == 'BUY_SETUP'
+    if signal.symbol not in mss_symbols():
+        reasons.append('mss_not_enabled_for_symbol')
+    if signal.symbol not in session_exempt_symbols() and \
+            datetime.fromtimestamp(signal.bar_time - signal.bar_seconds, timezone.utc).weekday() >= 5:
+        reasons.append('weekend_candle')
+    swept = signal.swing_low if buy else signal.swing_high
+    if not ((signal.sweep_level < swept < signal.price) if buy else (signal.sweep_level > swept > signal.price)):
+        reasons.append('sweep_not_beyond_swing')
+    if not ((signal.price > signal.mss_level) if buy else (signal.price < signal.mss_level)):
+        reasons.append('no_structure_shift')
+    if not math.isclose(signal.entry, signal.price, rel_tol=1e-9):
+        reasons.append('entry_not_at_close')
+    if not ((signal.stop < signal.sweep_level) if buy else (signal.stop > signal.sweep_level)):
+        reasons.append('stop_not_beyond_sweep')
+    risk = abs(signal.entry - signal.stop)
+    if risk < 0.3 * signal.atr:
+        reasons.append('stop_too_tight')
+    reward = (signal.target_liquidity - signal.entry) if buy else (signal.entry - signal.target_liquidity)
+    # A projected target sits exactly at MSS_MIN_RR; payload prices are rounded to 8 decimals, so allow 0.001R.
+    if risk <= 0 or reward / risk < float(os.getenv('MSS_MIN_RR', '2.0')) - 1e-3:
+        reasons.append('target_too_close')
+    return reasons
+
+
+MODEL_RULES = {'classic': classic_rules, 'crt': crt_rules, 'ict': ict_rules, 'ema': ema_rules, 'mss': mss_rules}
 
 
 def technical_rules(signal: Signal, now: float | None = None) -> list[str]:
@@ -363,6 +406,11 @@ MODEL_INPUTS = {
             'pullback extreme (swing_low for a buy, swing_high for a sell) the price resumed from, the market entry at '
             'the trigger close, the stop beyond the pullback, the target in R, and ATR (1m). Judge whether these '
             'elements are coherent for the fixed direction.'),
+    'mss': ('Evaluate only the supplied sweep + market structure shift elements on 1h candles: the swing that was '
+            'swept (swing_low for a buy, swing_high for a sell) and the sweep wick (sweep_level), the displacement '
+            'close through the opposing swing (mss_level) that is the market entry, the stop beyond the sweep wick, '
+            'the target (the next swing or a fixed R), and ATR (1h). Judge whether these elements are coherent for '
+            'the fixed direction.'),
 }
 
 
@@ -378,7 +426,9 @@ def trade_plan(signal: Signal) -> dict:
     crt:     market entry at the sweep candle's close, stop beyond its wick, a single target at the opposite extreme
              of the swept range (the backtested plan; no further R multiples).
     ict:     limit at the FVG's near edge, stop beyond the sweep, one target at ICT_MIN_RR (the backtested plan).
-    ema:     market entry at the trigger close, stop beyond the pullback extreme, one target at EMA_MIN_RR."""
+    ema:     market entry at the trigger close, stop beyond the pullback extreme, one target at EMA_MIN_RR.
+    mss:     market entry at the shift candle's close, stop beyond the sweep wick, one target at the next swing or
+             MSS_MIN_RR (the backtested plan)."""
     buy = signal.signal == 'BUY_SETUP'
     sign = 1 if buy else -1
     multiples = [float(m) for m in os.getenv('TP_R_MULTIPLES', '1,2,3,4').split(',') if m.strip()]
@@ -406,6 +456,12 @@ def trade_plan(signal: Signal) -> dict:
         extreme = signal.swing_low if buy else signal.swing_high
         return {'entry': entry, 'entry_note': 'market at the trigger candle close', 'stop': signal.stop, 'risk': distance,
                 'risk_atr': distance / signal.atr, 'basis': f'beyond the pullback {"low" if buy else "high"} {extreme:g}',
+                'targets': [(round(reward_r, 2), signal.target_liquidity, signal.target_name or '')]}
+    if signal.model == 'mss':
+        entry, distance = signal.price, abs(signal.price - signal.stop)
+        reward_r = abs(signal.target_liquidity - entry) / distance if distance else 0.0
+        return {'entry': entry, 'entry_note': 'market at the shift candle close', 'stop': signal.stop, 'risk': distance,
+                'risk_atr': distance / signal.atr, 'basis': f'beyond the sweep wick {signal.sweep_level:g}',
                 'targets': [(round(reward_r, 2), signal.target_liquidity, signal.target_name or '')]}
     entry, atr = signal.price, signal.atr
     multiple = float(os.getenv('STOP_ATR_MULTIPLE', '1.5'))
@@ -452,6 +508,13 @@ def rule_support(signal: Signal) -> list[str]:
                 f'{signal.price:g} through the previous candle',
                 f'Target: {signal.target_name or "TP1"} at {signal.target_liquidity:g}',
                 f'Session: {", ".join(active) if active else "outside London/New York hours"}', news_line(signal)]
+    if signal.model == 'mss':
+        swept = signal.swing_low if buy else signal.swing_high
+        return [f'Sweep: an H1 wick took the last swing {"low" if buy else "high"} {swept:g} to {signal.sweep_level:g} '
+                f'and closed back {"above" if buy else "below"} it',
+                f'Shift: a displacement H1 close at {signal.price:g} {"above" if buy else "below"} the last swing '
+                f'{"high" if buy else "low"} {signal.mss_level:g}',
+                f'Target: {signal.target_name or "TP1"} at {signal.target_liquidity:g}', volatility, news_line(signal)]
     active = sessions(signal.bar_time - signal.bar_seconds)
     session = ', '.join(active) if active else ('24/7 market' if signal.symbol in session_exempt_symbols()
                                                  else 'outside London/New York hours')
@@ -491,8 +554,8 @@ def cautions(signal: Signal, events: list | None = None) -> list[str]:
     plan = trade_plan(signal)
     low, high = float(os.getenv('MIN_ATR_PERCENT', '0.02')), float(os.getenv('MAX_ATR_PERCENT', '0.5'))
     atr_percent = signal.atr / signal.price * 100
-    if signal.model in ('ict', 'ema'):
-        pass                      # 5m/1m ATR sits far below the 15m percent band; those backtests used no volatility filter
+    if signal.model in ('ict', 'ema', 'mss'):
+        pass                      # 5m/1m/1h ATR is not on the 15m percent band's scale; those backtests used no volatility filter
     elif atr_percent >= 0.85 * high:
         found.append(f'High volatility: ATR {atr_percent:.2f}% is near the {high:g}% limit; expect wide swings')
     elif atr_percent <= 1.25 * low:
@@ -560,6 +623,11 @@ def plain_reason(signal: Signal) -> str:
         extreme = signal.swing_low if buy else signal.swing_high
         return (f'1m {"uptrend" if buy else "downtrend"} (EMA20/50/200 stacked): price pulled back into EMA20 '
                 f'({extreme:g}) and resumed. Quick {"buy" if buy else "sell"} for {signal.target_name or "the target"}.')
+    if signal.model == 'mss':
+        swept = signal.swing_low if buy else signal.swing_high
+        return (f'an H1 wick swept the last swing {"low" if buy else "high"} ({swept:g}) and closed back, then a strong '
+                f'candle closed {"above" if buy else "below"} the last swing {"high" if buy else "low"} ({signal.mss_level:g}): '
+                f'structure shifted. {"Buy" if buy else "Sell"} for {signal.target_name or "the target"}.')
     trend = 'Uptrend' if buy else 'Downtrend'
     return (f'{trend}: price {"above" if buy else "below"} EMA20, EMA50 and EMA200, '
             f'RSI {signal.rsi:.0f}, ADX {signal.adx:.0f} (trend strength).')
@@ -582,7 +650,8 @@ def compact_text(signal: Signal, status: str, reasons: list[str], ledger_seq: in
                  warnings: list[str] | None, audience: str = 'private') -> str:
     buy = signal.signal == 'BUY_SETUP'
     decimals = 2 if signal.price >= 100 else 5
-    tag = {'crt': 'CRT', 'ict': 'ICT · forward test', 'ema': 'EMA scalp · forward test'}.get(signal.model, 'Classic')
+    tag = {'crt': 'CRT', 'ict': 'ICT · forward test', 'ema': 'EMA scalp · forward test',
+           'mss': 'Sweep+MSS · forward test'}.get(signal.model, 'Classic')
     structural = not [code for code in reasons if code not in AI_STAGE_CODES]
     lines = ['🧪 TEST SIGNAL (made-up prices)'] if synthetic(signal.event_id) else []
     head = f'{"🟢 BUY" if buy else "🔴 SELL"} {signal.symbol} · {tag} {signal.timeframe}'
@@ -635,7 +704,8 @@ def notification_text(signal: Signal, status: str, analysis: dict | None, reason
     direction = 'BUY' if buy else 'SELL'
     decimals = 2 if signal.price >= 100 else 5
     icon = {'approved': '✅', 'rejected': '❌', 'error': '⚠️'}.get(status, '•')
-    tag = {'crt': 'CRT', 'ict': 'ICT forward test', 'ema': 'EMA scalp forward test'}.get(signal.model, 'classic')
+    tag = {'crt': 'CRT', 'ict': 'ICT forward test', 'ema': 'EMA scalp forward test',
+           'mss': 'Sweep+MSS forward test'}.get(signal.model, 'classic')
     lines = [f'{"🟢" if buy else "🔴"} {direction} {signal.symbol} {signal.timeframe} [{tag}] | {icon} {status.upper()}'
              + (' (manual review)' if status == 'approved' else ''),
              f'Event: {signal.event_id}',

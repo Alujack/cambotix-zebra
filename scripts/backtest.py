@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Replay the classic, CRT, ICT and EMA models over saved broker history and grade every plan the analyzer would publish.
+"""Replay the classic, CRT, ICT, EMA and MSS models over saved broker history and grade every plan the analyzer would publish.
 
 Same code path as live wherever it matters: detection is the feeder's (classic indicators re-implemented
 without pandas, CRT via scripts/crt_engine.detect, ICT via scripts/ict_engine.detect on M5, the EMA scalp via
-scripts/ema_engine.detect on M1); every payload goes through app.domain's rule checks;
+scripts/ema_engine.detect on M1, sweep + MSS via scripts/mss_engine.detect on H1 built from M15); every payload goes
+through app.domain's rule checks;
 plans are frozen with app.ledger.plan_record; grading is app.grader.simulate on M1 candles including spread;
 statistics are app.grader.summarize. Settings come from the environment (.env), and --set overrides them.
 
@@ -33,6 +34,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / 'scripts')]
 import crt_engine  # noqa: E402
 import ema_engine  # noqa: E402
 import ict_engine  # noqa: E402
+import mss_engine  # noqa: E402
 from app.domain import MODEL_RULES, Signal  # noqa: E402
 from app.grader import simulate, summarize  # noqa: E402
 from app import ledger  # noqa: E402
@@ -188,6 +190,15 @@ def ema_payloads(symbol: str, data: dict) -> list[dict]:
     return ema_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in data['m1']], cfg)
 
 
+# -- sweep + MSS -------------------------------------------------------------------------------------
+def mss_payloads(symbol: str, data: dict) -> list[dict]:
+    exempt = {x.strip().upper() for x in os.getenv('SESSION_EXEMPT_SYMBOLS', 'BTCUSD,BTCUSDT').split(',') if x.strip()}
+    cfg = mss_engine.MssConfig(min_rr=float(os.getenv('MSS_MIN_RR', '2.0')),
+                               stop_buffer_atr=float(os.getenv('MSS_STOP_BUFFER_ATR', '0.5')),
+                               body_atr=float(os.getenv('MSS_BODY_ATR', '1.5')), crypto=symbol in exempt)
+    return mss_engine.detect(symbol, [{k: b[k] for k in 'tohlc'} for b in data['m15']], cfg)
+
+
 # -- publish + grade ---------------------------------------------------------------------------------
 def grade(payloads: list[dict], m1: list[dict]) -> tuple[list[dict], dict]:
     """Apply the analyzer's rules and open-plan limit in time order; grade each published plan."""
@@ -258,6 +269,8 @@ def run(data: dict, symbol: str, models: set[str]) -> tuple[list[dict], dict]:
         payloads += ict_payloads(symbol, data)
     if 'ema' in models:
         payloads += ema_payloads(symbol, data)
+    if 'mss' in models:
+        payloads += mss_payloads(symbol, data)
     return grade(payloads, data['m1'])
 
 
@@ -281,6 +294,8 @@ def main() -> None:
     parser.add_argument('--data', default=str(ROOT / '.local' / 'history'))
     parser.add_argument('--symbol', default='XAUUSD')
     parser.add_argument('--models', default='classic,crt')
+    parser.add_argument('--from', dest='start', metavar='YYYY-MM-DD', help='replay from this UTC date (default: all history)')
+    parser.add_argument('--to', dest='end', metavar='YYYY-MM-DD', help='replay up to this UTC date, exclusive')
     parser.add_argument('--set', action='append', default=[], metavar='KEY=VALUE', help='override a .env setting')
     parser.add_argument('--sweep', action='append', default=[], metavar='KEY=V1|V2',
                         help='grid-search a setting; repeat for more keys. Ranked on the first 2/3, checked on the last 1/3')
@@ -295,11 +310,17 @@ def main() -> None:
     os.environ['SYMBOLS'] = ','.join(sorted(enabled | {args.symbol.upper()}))
     folder = Path(args.data)
     models = {m.strip() for m in args.models.split(',') if m.strip()}
-    if not models <= {'classic', 'crt', 'ict', 'ema'}:
-        raise SystemExit('--models accepts a comma list of classic, crt, ict and ema')
+    if not models <= {'classic', 'crt', 'ict', 'ema', 'mss'}:
+        raise SystemExit('--models accepts a comma list of classic, crt, ict, ema and mss')
     data = {frame: load(folder, args.symbol, frame) for frame in ('m1', 'm15')}
     if 'ict' in models and (folder / f'{args.symbol}_m5.csv').exists():
         data['m5'] = load(folder, args.symbol, 'm5')
+    if args.start or args.end:
+        epoch = lambda day: int(datetime.strptime(day, '%Y-%m-%d').replace(tzinfo=timezone.utc).timestamp())
+        lo, hi = epoch(args.start) if args.start else 0, epoch(args.end) if args.end else float('inf')
+        data = {frame: [b for b in bars if lo <= b['t'] < hi] for frame, bars in data.items()}
+        if not data['m1']:
+            raise SystemExit(f'no {args.symbol} M1 candles between {args.start or "the start"} and {args.end or "the end"}')
     first, last = data['m1'][0]['t'], data['m1'][-1]['t']
     split = first + (last - first) * 2 // 3
     stamp = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime('%Y-%m-%d')
@@ -310,7 +331,8 @@ def main() -> None:
                                                                          'CRT_HTF_HOURS', 'CRT_KEY_TIMES', 'CRT_MIN_RR',
                                                                          'CRT_MAX_HOLD_CANDLES', 'ICT_SYMBOLS',
                                                                          'ICT_ENTRY_EXPIRY_MINUTES', 'ICT_MAX_HOLD_MINUTES',
-                                                                         'EMA_SYMBOLS', 'EMA_MIN_RR', 'EMA_MAX_HOLD_MINUTES')))
+                                                                         'EMA_SYMBOLS', 'EMA_MIN_RR', 'EMA_MAX_HOLD_MINUTES',
+                                                                         'MSS_SYMBOLS', 'MSS_MIN_RR', 'MSS_MAX_HOLD_HOURS')))
         trades, rejected = run(data, args.symbol, models)
         report(trades, rejected, split)
         if args.trades:
