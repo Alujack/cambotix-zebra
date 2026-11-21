@@ -141,8 +141,33 @@ def test_news_feed_comes_from_the_calendar(client, monkeypatch):
     monkeypatch.setattr(news, '_load', lambda: [
         {'time': now + 3600, 'title': 'CPI m/m', 'country': 'USD', 'impact': 'High'},
         {'time': now + 7200, 'title': 'Retail Sales', 'country': 'GBP', 'impact': 'Medium'},
+        {'time': now + 7300, 'title': 'Minor speech', 'country': 'USD', 'impact': 'Low'},
         {'time': now - 2 * 86400, 'title': 'Old', 'country': 'USD', 'impact': 'High'}])
     items = client.get('/news').json()
     assert [item['title'] for item in items] == ['CPI m/m', 'Retail Sales']
     assert items[0]['severity'] == 'HIGH' and items[0]['blocks_setups'] is True and items[0]['affects'] == ['XAUUSD', 'EURUSD']
     assert items[1]['severity'] == 'MEDIUM' and items[1]['blocks_setups'] is False
+
+
+def test_candles_and_indicators_come_from_stored_m1(client, monkeypatch):
+    import math
+    monkeypatch.setenv('SYMBOLS', 'XAUUSD')
+    now = int(time.time()) // 900 * 900
+    rows, price = [], 3500.0
+    for i in range(260 * 15):
+        t = now - 260 * 900 + i * 60
+        o = price
+        price += 0.02 + 0.3 * math.sin(i / 40)
+        rows.append(('XAUUSD', t, o, max(o, price) + 0.1, min(o, price) - 0.1, price, 0.1))
+    with main.database() as conn:
+        with conn.cursor() as cursor:
+            cursor.executemany('INSERT INTO candles(symbol,t,o,h,l,c,spread) VALUES (%s,%s,%s,%s,%s,%s,%s)', rows)
+    api.clear_cache()
+    body = client.get('/candles/XAUUSD?tf=15m&bars=50').json()
+    assert body['tf'] == '15m' and len(body['candles']) == 50 and body['candles'][-1]['n'] <= 15
+    assert all(b['t'] % 900 == 0 for b in body['candles'])
+    reading = client.get('/indicators/XAUUSD?tf=15m').json()
+    assert reading['ema']['verdict'] in ('UPTREND', 'MIXED') and 0 <= reading['rsi']['value'] <= 100
+    assert reading['bollinger_b']['verdict'] in ('inside bands', 'above upper band', 'below lower band')
+    assert client.get('/candles/EURUSD').status_code == 404 and client.get('/candles/XAUUSD?tf=2h').status_code == 404
+    assert client.get('/indicators/XAUUSD?tf=1d').status_code == 404      # not enough daily bars yet

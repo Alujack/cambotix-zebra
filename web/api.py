@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Query
 from app import ledger, news
 from app.db import readonly
 from app.domain import SYNTHETIC_PREFIXES
+from web.indicators import aggregate, snapshot
 
 app = FastAPI(title='Cambotix Zebra — public record', docs_url=None, redoc_url=None)
 TERMINAL = ('closed', 'not_filled')
@@ -153,9 +154,11 @@ def build_news() -> list[dict]:
     now = time.time()
     items = []
     for event in sorted(events, key=lambda item: item['time']):
-        if event['time'] < now - 86400 or event['time'] > now + 7 * 86400:
+        if event['time'] < now - 6 * 3600 or event['time'] > now + 7 * 86400:
             continue
         severity = {'High': 'HIGH', 'Medium': 'MEDIUM'}.get(event['impact'], 'LOW')
+        if severity == 'LOW':
+            continue   # the feed is for events that can move price; low-impact noise stays out
         items.append({'time': int(event['time']), 'title': event['title'], 'country': event['country'], 'severity': severity,
                       'affects': ['XAUUSD', 'EURUSD'] if event['country'] in ('USD', 'EUR') else [],
                       'blocks_setups': severity == 'HIGH' and event['country'] in currencies})
@@ -165,6 +168,51 @@ def build_news() -> list[dict]:
 @app.get('/news')
 def news_feed():
     return cached('news', build_news)
+
+
+TIMEFRAMES = {'1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400}
+
+
+def load_m1(symbol: str, start: int, end: int) -> list[dict]:
+    with readonly() as conn:
+        return conn.execute('SELECT t, o, h, l, c FROM candles WHERE symbol=%s AND t>=%s AND t<%s ORDER BY t',
+                            (symbol, start, end)).fetchall()
+
+
+@app.get('/candles/{symbol}')
+def candles(symbol: str, tf: str = Query('15m'), to: int | None = None, bars: int = Query(300, ge=20, le=1500)):
+    """Broker candles aggregated from stored M1, ending at `to` (default: latest). Same data the grader uses."""
+    if tf not in TIMEFRAMES or symbol not in allowed():
+        raise HTTPException(404, 'Unknown symbol or timeframe')
+    seconds = TIMEFRAMES[tf]
+    end = (to or int(time.time())) // 60 * 60
+    start = end - bars * seconds
+
+    def build():
+        out = aggregate(load_m1(symbol.upper(), start, end), seconds)
+        return {'symbol': symbol.upper(), 'tf': tf, 'candles': out[-bars:]}
+    return cached(f'candles:{symbol}:{tf}:{end}:{bars}', build)
+
+
+@app.get('/indicators/{symbol}')
+def indicators(symbol: str, tf: str = Query('15m'), at: int | None = None):
+    """Indicator readings with code-derived verdicts on the bar containing `at` (default: now)."""
+    if tf not in TIMEFRAMES or symbol not in allowed():
+        raise HTTPException(404, 'Unknown symbol or timeframe')
+    seconds = TIMEFRAMES[tf]
+    end = ((at or int(time.time())) // seconds + 1) * seconds
+
+    def build():
+        bars = aggregate(load_m1(symbol.upper(), end - 260 * seconds, end), seconds)
+        reading = snapshot(bars)
+        if reading is None:
+            raise HTTPException(404, 'Not enough broker candles for this symbol yet')
+        return {'symbol': symbol.upper(), 'tf': tf, **reading}
+    return cached(f'indicators:{symbol}:{tf}:{end}', build)
+
+
+def allowed() -> set[str]:
+    return {s.strip().upper() for s in os.getenv('SYMBOLS', 'XAUUSD').split(',') if s.strip()}
 
 
 @app.get('/tickers')

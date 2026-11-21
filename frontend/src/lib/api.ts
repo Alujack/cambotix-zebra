@@ -81,6 +81,10 @@ export type Ticker = {
 
 export type NewsItem = { time: number; title: string; country: string; severity: "HIGH" | "MEDIUM" | "LOW"; affects: string[]; blocks_setups: boolean };
 
+export type Candle = { t: number; o: number; h: number; l: number; c: number; n: number };
+export type Reading = { value?: number; verdict: string; tone: "green" | "red" | "gold" | "neutral"; percent: number; k?: number; d?: number; plus_di?: number; minus_di?: number; percent_of_price?: number; ema20?: number; ema50?: number; ema200?: number };
+export type Indicators = { symbol: string; tf: string; close: number; bars: number; at: number; rsi: Reading; stoch: Reading; macd_hist: Reading; adx: Reading; bollinger_b: Reading; atr: Reading; ema: Reading };
+
 export type LedgerRow = { seq: number; event_id: string; kind: string; body: string; hash: string };
 
 async function get<T>(path: string, fallback: T): Promise<T> {
@@ -114,5 +118,9 @@ export const getRecord = () => get<Record>("/record", emptyRecord);
 export const getSignals = (limit = 60) => get<Plan[]>(`/signals?limit=${limit}`, []);
 export const getPlan = (seq: number) => get<Plan | null>(`/signals/${seq}`, null);
 export const getTickers = () => get<Ticker[]>("/tickers", []);
+export const getCandles = (symbol: string, tf = "15m", to?: number, bars = 200) =>
+  get<{ symbol: string; tf: string; candles: Candle[] }>(`/candles/${symbol}?tf=${tf}&bars=${bars}${to ? `&to=${to}` : ""}`, { symbol, tf, candles: [] });
+export const getIndicators = (symbol: string, tf = "15m", at?: number) =>
+  get<Indicators | null>(`/indicators/${symbol}?tf=${tf}${at ? `&at=${at}` : ""}`, null);
 export const getNews = () => get<NewsItem[]>("/news", []);
 export const getLedger = (after = 0) => get<LedgerRow[]>(`/ledger?after=${after}`, []);

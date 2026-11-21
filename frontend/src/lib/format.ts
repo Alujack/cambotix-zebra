@@ -4,9 +4,11 @@ export const utc = (epoch: number, withTime = true) => {
   return withTime ? `${day} ${date.toISOString().slice(11, 16)} UTC` : day;
 };
 
-export const price = (value: number) => value.toLocaleString("en-US", {
-  minimumFractionDigits: value >= 100 ? 2 : 5,
-  maximumFractionDigits: value >= 100 ? 2 : 5,
+// Decimals follow the asset: gold/indices/BTC 2, forex 5. `ref` lets a small distance (6.30 on gold) borrow its level's decimals.
+export const decimals = (ref: number) => (ref >= 100 ? 2 : 5);
+export const price = (value: number, ref: number = value) => value.toLocaleString("en-US", {
+  minimumFractionDigits: decimals(ref),
+  maximumFractionDigits: decimals(ref),
 });
 
 export const percent = (value: number | null | undefined) =>

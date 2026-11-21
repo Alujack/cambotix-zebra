@@ -6,7 +6,9 @@ export function proxy(request: NextRequest) {
   if (pathname === "/en" || pathname.startsWith("/en/") || pathname === "/km" || pathname.startsWith("/km/")) {
     return NextResponse.next();
   }
-  return NextResponse.rewrite(new URL(`/en${pathname === "/" ? "" : pathname}`, request.url));
+  const url = request.nextUrl.clone();           // keep ?symbol=, ?tab= and friends
+  url.pathname = `/en${pathname === "/" ? "" : pathname}`;
+  return NextResponse.rewrite(url);
 }
 
 export const config = {

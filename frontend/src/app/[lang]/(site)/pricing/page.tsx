@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import PlanCards from "@/components/PlanCards";
+import { site } from "@/lib/site";
 import { getRecord } from "@/lib/api";
 import { isLang, t, type Lang } from "@/lib/i18n";
 
@@ -30,16 +32,7 @@ export default async function PricingPage({ params }: PageProps<"/[lang]/pricing
           <Gate lang={lang} />
         </Suspense>
       </section>
-      <div className="grid gap-4 md:grid-cols-2">
-        {tiers.map((tier) => (
-          <div key={tier.name} className="rounded-2xl border border-line bg-card p-6">
-            <div className="text-sm uppercase tracking-wide text-muted">{tier.name}</div>
-            <div className="mt-1 text-3xl font-semibold">{tier.price}</div>
-            <ul className="mt-4 space-y-2 text-sm">{tier.items.map((item) => <li key={item}>✓ {item}</li>)}</ul>
-            <div className="mt-6 rounded-md border border-line px-3 py-2 text-center text-sm text-muted">{tier.cta}</div>
-          </div>
-        ))}
-      </div>
+      <PlanCards tiers={tiers} labels={d.pricing2} markets={site.markets.join(", ")} />
     </>
   );
 }
