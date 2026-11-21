@@ -76,7 +76,17 @@ FEATURES = (
     'pd_prev_day', 'pd_week', 'day_move_atr', 'day_range_atr', 'asia_range_atr',
     # momentum into the setup
     'ret_1h_atr', 'ret_4h_atr', 'ret_1d_atr',
+    # real H1 / H4 structure from closed higher-timeframe bars (plan v2, V2.4)
+    'h1_trend', 'h4_trend', 'h1_swing_ahead_atr', 'h1_swing_behind_atr', 'h4_swing_ahead_atr',
+    'h4_swing_behind_atr', 'h4_fvg',
+    # previous trading week, the day's open, and how expensive the spread is for this hour
+    'pw_ahead_atr', 'pw_behind_atr', 'day_open_entry_atr', 'spread_hour_norm',
 )
+V1_FEATURES = 50                     # FEATURES[:V1_FEATURES] are the version 1 inputs
+HTF = (('h1', 3600), ('h4', 14400))
+HTF_SWINGS = 20                      # nearest of the last 20 confirmed swings on each side
+H4_FVG_LIFE = 2880                   # an H4 fair value gap is looked at for 2,880 M5 bars (ten trading days)
+SPREAD_NORM_DAYS = 30                # calendar days (about 20 trading days) behind the spread norm
 CATEGORICAL = ('pool_kind', 'session_sweep', 'session_now', 'weekday', 'asset')
 # Features that are NaN when what they measure does not exist: no candle against the trade in the leg, no pool
 # ahead of the entry, no finished Asia session yet today, a zero-range candle, or (only inside the warm-up) not
@@ -85,6 +95,9 @@ MAY_BE_MISSING = frozenset({
     'ob_dist_atr', 'opp_pool_r', 'target_before_pool', 'asia_range_atr', 'sweep_wick_ratio', 'mss_body_ratio',
     'pd_prev_day', 'pd_week', 'atr_ratio_day', 'atr_ratio_week', 'ema_h1_50_slope_atr', 'ret_1h_atr', 'ret_4h_atr',
     'ret_1d_atr',
+    # no confirmed swing on that side of the entry yet, no earlier week, or no spread history for this hour
+    'h1_swing_ahead_atr', 'h1_swing_behind_atr', 'h4_swing_ahead_atr', 'h4_swing_behind_atr', 'pw_ahead_atr',
+    'pw_behind_atr', 'spread_hour_norm',
 })
 
 
@@ -216,6 +229,122 @@ class SessionRange:
         return done
 
 
+def htf_bars(t: np.ndarray, h: np.ndarray, l: np.ndarray, c: np.ndarray, seconds: int):
+    """M5 bars aggregated on UTC boundaries: (open time, high, low, close, available) per higher-timeframe bar.
+    `available` is the index of the first M5 bar at whose close the period has ended, so a bar may be used by a
+    candidate on M5 bar i only when available <= i. A period still running at the end of the data is never
+    available (its index is len(t))."""
+    key = t - t % seconds
+    starts = np.flatnonzero(np.r_[True, key[1:] != key[:-1]])
+    ends = np.r_[starts[1:], len(t)]
+    available = np.searchsorted(t + M5, key[starts] + seconds, side='left')
+    return key[starts], np.maximum.reduceat(h, starts), np.minimum.reduceat(l, starts), c[ends - 1], available
+
+
+def htf_structure(t: np.ndarray, h: np.ndarray, l: np.ndarray, c: np.ndarray, seconds: int,
+                  with_fvg: bool = False) -> dict:
+    """Swing structure of one higher timeframe, each item stamped with the M5 index from which it is known.
+
+    swings   confirmed 2/2 fractal highs and lows (known when the second bar after them has closed)
+    trend    +1 when a bar closed above the most recent confirmed swing high, -1 below the most recent swing low
+    fvgs     three-bar fair value gaps with the M5 index at which price traded through them (or their life ended)
+    """
+    _, hh, ll, cc, avail = htf_bars(t, h, l, c, seconds)
+    ph, pl = pivots(hh, ll, 2)
+    out = {'hi_idx': [], 'hi_lvl': [], 'lo_idx': [], 'lo_lvl': [], 'ev_idx': [], 'ev_val': [],
+           'fvg_idx': [], 'fvg_lo': [], 'fvg_hi': [], 'fvg_dir': [], 'fvg_dead': []}
+    last_hi = last_lo = None
+    n = len(t)
+    for m in range(len(hh)):
+        a = int(avail[m])
+        k = m - 2
+        if k >= 2:
+            if ph[k]:
+                last_hi = hh[k]
+                out['hi_idx'].append(a)
+                out['hi_lvl'].append(float(hh[k]))
+            if pl[k]:
+                last_lo = ll[k]
+                out['lo_idx'].append(a)
+                out['lo_lvl'].append(float(ll[k]))
+        if last_hi is not None and cc[m] > last_hi:
+            out['ev_idx'].append(a)
+            out['ev_val'].append(1)
+            last_hi = None
+        elif last_lo is not None and cc[m] < last_lo:
+            out['ev_idx'].append(a)
+            out['ev_val'].append(-1)
+            last_lo = None
+        if with_fvg and m >= 2 and a < n:
+            if ll[m] > hh[m - 2]:
+                direction, lo, hi = 1, float(hh[m - 2]), float(ll[m])
+            elif hh[m] < ll[m - 2]:
+                direction, lo, hi = -1, float(hh[m]), float(ll[m - 2])
+            else:
+                continue
+            end = min(n, a + 1 + H4_FVG_LIFE)
+            through = np.flatnonzero(l[a + 1:end] <= lo) if direction == 1 else np.flatnonzero(h[a + 1:end] >= hi)
+            out['fvg_idx'].append(a)
+            out['fvg_lo'].append(lo)
+            out['fvg_hi'].append(hi)
+            out['fvg_dir'].append(direction)
+            out['fvg_dead'].append(a + 1 + int(through[0]) if len(through) else end)
+    return out
+
+
+def htf_features(H: dict, i: int, entry: float, d: int, A: float) -> tuple[float, float, float]:
+    """(trend with the trade, distance to the nearest swing in front, distance to the nearest swing behind) at M5
+    bar i, in ATR. In front of a BUY is a swing high above the entry; behind it is a swing low below the entry."""
+    j = bisect.bisect_right(H['ev_idx'], i) - 1
+    trend = float(d * H['ev_val'][j]) if j >= 0 else 0.0
+    nh, nl = bisect.bisect_right(H['hi_idx'], i), bisect.bisect_right(H['lo_idx'], i)
+    highs = [x - entry for x in H['hi_lvl'][max(0, nh - HTF_SWINGS):nh] if x > entry]
+    lows = [entry - x for x in H['lo_lvl'][max(0, nl - HTF_SWINGS):nl] if x < entry]
+    ahead, behind = (highs, lows) if d == 1 else (lows, highs)
+    return trend, (min(ahead) / A if ahead else math.nan), (min(behind) / A if behind else math.nan)
+
+
+def h4_fvg_state(H: dict, i: int, entry: float, d: int) -> float:
+    """+1 when the entry sits inside an open H4 fair value gap in the trade's direction, -1 when inside one
+    against it, 0 otherwise. A gap is open from the M5 bar that closes its third H4 candle until price trades
+    through it or H4_FVG_LIFE bars pass."""
+    lo_n = bisect.bisect_left(H['fvg_idx'], i - H4_FVG_LIFE)
+    hi_n = bisect.bisect_right(H['fvg_idx'], i)
+    state = 0.0
+    for k in range(lo_n, hi_n):
+        if H['fvg_dead'][k] > i and H['fvg_lo'][k] <= entry <= H['fvg_hi'][k]:
+            if H['fvg_dir'][k] == d:
+                return 1.0
+            state = -1.0
+    return state
+
+
+def previous_week(day_id: np.ndarray, h: np.ndarray, l: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """High and low of the previous trading week for every bar (NaN in the first week). Weeks start with
+    Monday's trading day, which opens Sunday 17:00 New York."""
+    weeks, inverse = np.unique((day_id + 3) // 7, return_inverse=True)      # 1970-01-01 was a Thursday
+    frame = pd.DataFrame({'w': inverse, 'h': h, 'l': l}).groupby('w')
+    return frame['h'].max().shift(1).to_numpy()[inverse], frame['l'].min().shift(1).to_numpy()[inverse]
+
+
+def spread_hour_norm(t: np.ndarray, spread: np.ndarray, days: int = SPREAD_NORM_DAYS) -> np.ndarray:
+    """For every bar, the mean spread of the same UTC hour over the previous `days` calendar days (today
+    excluded). NaN unless that hour traded on at least five of them.
+
+    The window is in calendar days on purpose: an hour that only trades in summer time (22:00 UTC for gold) would
+    otherwise reach back to the previous summer, further than live scoring's lookback can see."""
+    hour, day = (t // 3600) % 24, t // 86400
+    mean = pd.DataFrame({'hour': hour, 'day': day, 's': spread}).groupby(['hour', 'day'], sort=True)['s'].mean()
+
+    def trailing(x: pd.Series) -> np.ndarray:
+        d = x.index.get_level_values('day')
+        daily = pd.Series(x.to_numpy(), index=d).reindex(range(int(d.min()), int(d.max()) + 1))
+        return daily.rolling(days, min_periods=5).mean().shift(1).reindex(d).to_numpy()
+
+    norm = mean.groupby(level='hour').transform(trailing)
+    return norm.reindex(pd.MultiIndex.from_arrays([hour, day])).to_numpy()
+
+
 def _context(bars: Bars) -> dict:
     """Trailing indicator arrays (each value at i uses bars <= i)."""
     h, l, c = bars.h, bars.l, bars.c
@@ -228,7 +357,12 @@ def _context(bars: Bars) -> dict:
     close = pd.Series(c)
     minute, weekday, day_id = trading_days(bars.t)
     ph2, pl2 = pivots(h, l, 2)
+    pwh, pwl = previous_week(day_id, h, l)
     return {
+        'h1': htf_structure(bars.t, h, l, c, 3600),
+        'h4': htf_structure(bars.t, h, l, c, 14400, with_fvg=True),
+        'pwh': pwh, 'pwl': pwl,
+        'spread_norm': spread_hour_norm(bars.t, bars.spread),
         'atr': atr,
         'atr_day': a.rolling(288, min_periods=50).mean().to_numpy(),
         'atr_week': a.rolling(1440, min_periods=200).mean().to_numpy(),
@@ -446,10 +580,22 @@ def _candidate(symbol, s, i, bars, ctx, pools, cfg, asset, day_open, day_high, d
     def ret(k):
         return d * (c[i] - c[i - k]) / A if i >= k else math.nan
 
+    # Higher-timeframe structure, previous week and spread norm (all known at the close of bar i).
+    h1_trend, h1_ahead, h1_behind = htf_features(ctx['h1'], i, entry, d, A)
+    h4_trend, h4_ahead, h4_behind = htf_features(ctx['h4'], i, entry, d, A)
+    pwh, pwl = float(ctx['pwh'][i]), float(ctx['pwl'][i])
+    pw_ahead = ((pwh - entry) if buy else (entry - pwl)) / A
+    pw_behind = ((entry - pwl) if buy else (pwh - entry)) / A
+
     m = int(ctx['minute'][i])
     zone = in_killzone(m, int(ctx['weekday'][i]))
     close_time = int(t[i]) + M5
     feats = {
+        'h1_trend': h1_trend, 'h4_trend': h4_trend, 'h1_swing_ahead_atr': h1_ahead,
+        'h1_swing_behind_atr': h1_behind, 'h4_swing_ahead_atr': h4_ahead, 'h4_swing_behind_atr': h4_behind,
+        'h4_fvg': h4_fvg_state(ctx['h4'], i, entry, d),
+        'pw_ahead_atr': pw_ahead, 'pw_behind_atr': pw_behind, 'day_open_entry_atr': d * (entry - day_open) / A,
+        'spread_hour_norm': _ratio(spread[i], ctx['spread_norm'][i]),
         'direction': d, 'pool_kind': s['kind'], 'n_pools_swept': s['count'], 'pool_age_bars': si - s['created'],
         'in_killzone': float(zone), 'session_sweep': s['session'], 'session_now': session_of(m),
         'ny_hour': m / 60, 'weekday': int(ctx['weekday'][i]), 'asset': asset,

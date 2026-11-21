@@ -37,7 +37,7 @@ from ml.data import CRYPTO, load_m1, resample  # noqa: E402
 from ml.ict_features import CATEGORICAL, FEATURES, CandidateConfig, detect  # noqa: E402
 
 MODELS = ROOT / 'ml' / 'models'
-DATA = ROOT / 'ml' / 'data' / 'xauusd_ict.parquet'
+DATA = ROOT / 'ml' / 'data' / 'xauusd_ict_dev.parquet'     # the development file the v2 model was trained on
 PSI_WARN, PSI_ALERT = 0.10, 0.25
 TOP_FEATURES = 10
 
@@ -168,7 +168,12 @@ def main() -> None:
 
     symbol = args.symbol.upper()
     started = time.time()
-    meta = json.loads((args.models / f'{symbol.lower()}_ict_lgbm.json').read_text())
+    final_test = args.models / f'{symbol.lower()}_final_test.json'
+    if not final_test.exists():
+        # Until the final test has run, the most recent months are the lockbox: even their features stay unread.
+        raise SystemExit(f'monitoring starts after the final test (python -m ml.final_test): {final_test.name} '
+                         'does not exist, so the recent period is still the unopened lockbox')
+    meta = json.loads((args.models / f'{symbol.lower()}_ict_v2.json').read_text())
     importance = meta.get('importance') or []
     top = importance[:TOP_FEATURES] if importance else list(FEATURES[:TOP_FEATURES])
     data = pd.read_parquet(args.data)

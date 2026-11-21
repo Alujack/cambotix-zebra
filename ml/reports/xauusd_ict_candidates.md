@@ -1,6 +1,6 @@
 # XAUUSD ICT candidates by year
 
-28493 candidates from 1679641 M5 bars, 2003-05-05 to 2026-11-20 (detected in 10.7 s). Result: **pass**.
+28493 candidates from 1679641 M5 bars, 2003-05-05 to 2026-11-20 (detected in 12.8 s). Result: **pass**.
 
 | Year | M5 bars | Trading days | Candidates | Per day | BUY | In killzone | day | london | asia | nyam | swing |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -53,3 +53,8 @@
 - opp_pool_r: 4.32%
 - target_before_pool: 4.32%
 - asia_range_atr: 22.88%
+- h1_swing_ahead_atr: 1.25%
+- h1_swing_behind_atr: 4.22%
+- h4_swing_ahead_atr: 3.69%
+- h4_swing_behind_atr: 4.76%
+- spread_hour_norm: 0.07%

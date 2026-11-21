@@ -1,6 +1,6 @@
 # Zebra ML: ICT model for XAUUSD — plan
 
-Status: **all phases built and run (2026-11-21). Verdict: the gates failed, so nothing goes live; see the verdict below the roadmap table.**
+Status: **all phases built and run (2026-11-21). Version 1 failed the gates; version 2 (Plan v2 at the end of this file) failed its development gates the same day and its lockbox was never opened. Nothing goes live.**
 
 ## 1. Goal
 
@@ -57,6 +57,20 @@ The whole roadmap ran end to end. The model learns something real but not enough
 - **Drift worth watching.** In the last 90 days gold's ATR is about 1.7x its training average and spread/risk is
   less than half (PSI 1.8–2.0): setups are cheaper to trade than ever, and 2026 is the least bad year (−0.083R
   unfiltered). That is a reason to re-run `python -m ml.retrain` in a few months, not a reason to trade now.
+
+**One-year out-of-sample backtest, 2025-11-20 .. 2026-11-20** (`python -m ml.backtest`, report
+`ml/reports/xauusd_backtest_20251120_20261120.md`): the model, trained only on trades that ended before the year,
+found no profitable threshold on validation and took **no trades**. The research-only policy "model's top 20%"
+lost 22.3R (−0.067R per trade, 334 trades); every candidate lost 82.2R, the rule engine's killzone subset 26.5R. On
+Exness prices: top 20% −23.9R, every candidate −53.5R. Staying out was the right call.
+
+**Why the model never finds a profitable cut (found in the one-year backtest):** the label. `win` means the
+trade ended above 0R, so the model learns to pick setups that drift up and close at the 6-hour limit with a small
+gain. In validation before the test year, its top 10% hit the 2R target 8.2% of the time against 20.4% for all
+trades, and 78% of its wins were time-limit wins (35% for all trades). Its win rate rises but its average winner
+falls from +1.52R to +0.82R, so no cut pays. A model that targets profit would be trained on reaching the target
+(`exit == 'final_target'`) or on R itself. That is a correction of the label, not a tuned setting, but it would
+still be one more trial on the same data and has to pass the same gates.
 
 As the plan says: report it plainly, no forward test, no more variants on this data. `ml/predict.py` refuses the
 saved model; `ml/retrain.py` will promote a future model only if it passes all five gates.
@@ -374,3 +388,235 @@ versioned by training end date and the pointer moves only to a model that passes
 | 3 | `ml/train.py` | **Done 2026-11-21**: walk-forward, control, four baselines, gates, Exness re-score |
 | 4 | Report | **Done 2026-11-21**: `ml/reports/xauusd_walkforward.md`, `xauusd_variants.md`: gates FAILED |
 | 5 | `ml/predict.py`, feeder flag, `ict_ml` rules | `ml/predict.py` + `ml/monitor.py` + `ml/retrain.py` built and locked; feeder/analyzer wiring waits for a passing model |
+
+## Plan v2 — a more accurate model (audited, built and run 2026-11-21: failed the development gates, see V2.9)
+
+Version 1 failed for two proven reasons: the label rewarded small time-limit wins instead of reaching the target,
+and trades were chosen by win probability instead of expected profit. Version 2 fixes those two causes and nothing
+else that cannot be verified. Everything below is frozen now, before any v2 result exists. One configuration, one
+development run, one final run.
+
+### Audit of the first draft (what changed and why)
+
+| Draft item | Audit finding | Amendment |
+|---|---|---|
+| Label costs with an Exness/Dukascopy spread ratio | The spread recorded in the Exness file is a floor, not the real spread: in 2025 its median and 99th percentile are both 0.16 (42 distinct values all year). Minute-by-minute correlation with Dukascopy is 0.15 and the yearly ratio swings 1.6–3.6. Two thirds of the overlap lies inside the lockbox. Passing gates on assumed cheaper costs would loosen the gates | **Dropped.** Gates stay on Dukascopy costs. A "spread halved" line is reported as sensitivity only and decides nothing |
+| Lockbox enforced by a command-line flag | A flag can be forgotten; the lockbox must be unreadable by development code | **Physical split** into two files at build time; one script may read the lockbox, once |
+| Demo forward test of 100 trades | The net R of one trade has a standard deviation of 1.28R. A model with no edge shows more than +0.10R by luck 22% of the time over 100 trades, 13% over 200, 6% over 400, 1% over 800 | **Forward test decision at 400 trades.** A lockbox pass is stated as weak evidence |
+| No account-size rule | Gold stops have grown with price: median stop $11.90 in 2026, and 62% of 2026 stops risk more than $10 at the 0.01-lot minimum | **Account filter** applied before any scoring |
+| "Average timeout R for similar setups"; two yes/no models | Undefined, and two separate models give probabilities that need not add up | **One three-outcome model plus a timeout-result model** |
+| Silver and EURUSD divergence features | No silver history on disk; EURUSD starts 2020-11. Two more downloads the size of the gold pull for unproven features | **Cut from v2** |
+| Settings tuned per fold | On a signal this weak (v1 AUC 0.57) tuning mostly fits noise and adds trials | **Fixed settings**, the v1 ones |
+
+Known weakness that no amendment removes: the lockbox years were partly seen in v1 (the 2023–2025 validation
+slice behind the label diagnosis, and the one-year backtest). They are the least-seen data available, not unseen
+data. Only the forward test is truly new.
+
+Side finding for v1: its gate 5 ("holds on Exness") and the "−0.056R on Exness" figure used that same floor
+spread, so both were optimistic. v1 failed anyway; the verdict does not change.
+
+### V2.0 Split the data before anything else
+
+- `ml/dataset.py` writes two files: `xauusd_ict_dev.parquet` (candidates whose trade window ends before
+  2024-11-20) and `xauusd_ict_lockbox.parquet` (2024-11-20 .. 2026-11-20).
+- `ml/train.py`, `ml/backtest.py` and every test read the development file only.
+- `ml/final_test.py` is the only code that opens the lockbox. It requires the frozen configuration recorded in
+  this file, writes a dated result, and refuses to run a second time.
+- Development walk-forward: test folds of 6 months from 2014-01-01 to 2024-11-20, training from 2011.
+
+### V2.1 Account filter (applied first, to development and lockbox alike)
+
+- Account $1,000, at most $10 risk per trade (1%), minimum position 0.01 lot = 1 oz.
+- A candidate is tradable only if its stop distance is at most $10. Untradable candidates are removed before
+  training, scoring and every statistic. Gate 4 (100 trades a year) is counted after this filter.
+
+### V2.2 Label and model
+
+- Each filled trade has one of three outcomes: **target** (`final_target`), **stop** (`sl`), **timeout**
+  (`timeout`, and the rare `be`). Shares 2011 on: 20% / 61% / 18%.
+- Model 1: one LightGBM three-class model giving P(target), P(stop), P(timeout), which sum to 1.
+- Model 2: LightGBM regression of net R on timeout trades only (their mean is +0.23R, spread 0.80R).
+- Expected net R of a setup = P(target) × mean net R of target exits in the training window
+  + P(stop) × mean net R of stop exits in the training window + P(timeout) × the Model 2 prediction.
+- Cross-check: a direct regression of net R (Huber loss). Reported only: if its rank correlation with the
+  expected-R score on validation is under 0.5, the report says so. It is not a gate and selects nothing.
+
+### V2.3 Selection
+
+- Take a setup when its expected net R is at or above a cut chosen on the validation slice (last 20% of each
+  training window): best mean net R × √trades, at least 150 trades, mean above zero; otherwise no trades.
+- The report shows predicted against realised R by tenth, and how often each tenth reaches the target.
+
+### V2.4 Inputs (one fixed batch)
+
+Added to the 50 v1 features, all from bars closed at or before the signal bar:
+
+- H1 and H4 structure from the resampled files: direction of the last confirmed swing break, distance to the
+  nearest H1/H4 swing high and low, whether the entry sits inside an open H4 fair value gap. A higher-timeframe
+  bar counts only once it has closed (the largest look-ahead risk in v2; each feature gets a truncation test).
+- The high and low of the previous week, and the open of the day, as distances.
+- Spread against its own trailing norm for that hour of day (trailing 20 days).
+
+Not in v2: silver/EURUSD divergence, news proximity, any feature added after the first v2 result.
+
+### V2.5 Training
+
+- LightGBM with the v1 settings, unchanged. No tuning.
+- Sample weights with a 4-year half-life; five seeds averaged; spread/risk constrained so a higher value can never
+  raise the expected R; one-day embargo as in v1.
+
+### V2.6 Gates and the path to a decision
+
+Gates 1–4 as in section 8, on Dukascopy costs with slippage, counted after the account filter. Gate 5 becomes:
+the same fold models on Exness **prices** with the Dukascopy spread for the same minute (the spread field of the
+Exness file is not trusted), expectancy above zero.
+
+1. Development walk-forward. Any gate fails: stop, report, no further v2 variants.
+2. All pass: freeze, run `ml/final_test.py` once on the lockbox. Expect 200–400 trades there, so a pass is weak
+   evidence (a no-edge model passes by luck roughly 6–13% of the time).
+3. Lockbox pass: demo forward test. `ml/monitor.py` watches from 50 trades for alarm only; the go/no-go decision
+   is at 400 graded trades. At 100–200 trades a year that is two to four years on demo, which is the real cost of
+   a claim this small.
+
+### Build order
+
+| Step | Work | Done when |
+|---|---|---|
+| 1 | Dev/lockbox split in `ml/dataset.py`; `ml/final_test.py` with its run-once lock | Tests prove no development code path can open the lockbox |
+| 2 | Account filter; three-outcome label columns | Labels still match `scripts/backtest.py`; filter counts reported by year |
+| 3 | H1/H4, week/day and spread-norm features in `ml/ict_features.py` | A truncation (no-lookahead) test passes for every new feature |
+| 4 | Three-class model, timeout model, expected-R selection, weights, seeds in `ml/train.py` | Development walk-forward report with gates |
+| 5 | Decision on development folds | Fail: stop and report. Pass: freeze and run the lockbox once |
+| 6 | Only on a lockbox pass: feeder wiring, demo forward test, monitor | 400 graded demo trades compared with expectation |
+
+Honest expectation: on Dukascopy costs the unfiltered setups lose about 0.15R per trade (0.20R with slippage), and
+gate 1 needs +0.10R, so v2 must find about +0.30R of real selection skill. v1 found about +0.11R. The label fix
+makes a pass possible, not likely.
+
+### V2.7 Implementation details fixed before the first v2 run (2026-11-21)
+
+Details the sections above left open, written down before any v2 number existed:
+
+1. **Split rule.** Development file: candidates whose trade window ends before 2024-11-20 00:00 UTC. Lockbox file:
+   candidates from that moment on. Candidates that straddle it go in neither. `ml.train.load` also refuses any
+   frame that contains a row from the lockbox period, so a wrong file cannot be trained on by accident.
+2. **New features (11, total 61), each direction-relative and from closed bars only.** H1 and H4 bars are built
+   from M5 on UTC boundaries and count once their period has ended. `h1_trend`, `h4_trend`: side of the last close
+   beyond the most recent confirmed 2/2 swing (with the trade +1, against −1, none yet 0). `h1_swing_ahead_atr`,
+   `h1_swing_behind_atr`, `h4_swing_ahead_atr`, `h4_swing_behind_atr`: distance from the entry to the nearest of the
+   last 20 confirmed swing highs/lows in front of and behind the trade. `h4_fvg`: the entry sits inside an H4 fair
+   value gap formed in the last 2,880 M5 bars and not yet traded through (with the trade +1, against −1, none 0).
+   `pw_ahead_atr`, `pw_behind_atr`: signed distance to the previous trading week's extreme in front of and behind
+   the trade. `day_open_entry_atr`: entry against the trading day's open. `spread_hour_norm`: spread divided by
+   its mean for the same UTC hour over the previous 30 calendar days (corrected in V2.8 from "the previous 20
+   days that hour traded").
+3. **Models per fold.** Rounds come from early stopping on the validation slice (one seed); then five seeds are
+   fitted on the fit part to score validation and choose the cut, and five on the whole window to score the test
+   fold. Class means and the timeout model come from the same window. Weight of a training trade:
+   0.5 ^ (age in years / 4), age measured from the end of the window.
+4. **Monotone constraint.** LightGBM cannot give the classes of one three-class model opposite directions, so the
+   spread/risk constraint is enforced where it can be exact: decreasing in the timeout-result model and in the
+   cross-check regression. The three-class model is unconstrained in spread/risk.
+5. **Shuffled control.** Same procedure with the outcome and net R of the training trades permuted together; the
+   cut is still chosen on true validation results. AUC for gate 2 is P(target) against "reached the target" on
+   filled test trades.
+6. **Gate 3's recent period** is the last two years of the development test folds (2022-11-20 .. 2024-11-20).
+7. **Gate 5 on development data** has one year of Exness prices (2023-11-24 .. 2024-11-20).
+8. **Spread-halved line.** The development candidates are graded a second time with half the spread; the report
+   shows what the model's chosen setups made there. It decides nothing.
+9. **Final model and lockbox pass.** If the development gates pass, the model fitted on all development trades
+   from 2011, with its validation cut, is frozen. `ml/final_test.py` trades the lockbox with it once. Lockbox pass
+   = expectancy above +0.10R and profit factor above 1.2, max drawdown at most 15R, at least 100 trades a year,
+   and at least +0.05R per trade better than taking every tradable setup. `ml/predict.py` refuses a model without
+   a passed lockbox record.
+
+### V2.8 Correction after the development run (2026-11-21), written before any rebuild
+
+The development walk-forward ran once and **failed all five gates** (results in V2.9). That run is the decision.
+
+A check made afterwards (replaying live scoring on 40 development setups) found one input that live scoring could
+not always reproduce: `spread_hour_norm` was "the previous 20 days on which that hour traded". For the UTC hour
+that only trades in summer time (22:00), that reaches back to the previous autumn, further than the 15,000-bar
+lookback of `ml/predict.py`; 1 of 40 setups differed by 1.2%. The definition is corrected to "the previous 30
+calendar days (about 20 trading days), at least five of them traded", which is bounded.
+
+Rule for the rebuild that follows: the datasets and the development model are rebuilt so that files and code
+agree, and the walk-forward is run again for that reason only. **The first run decides.** If the rebuilt run
+differed in verdict, the difference would be reported as instability and the verdict would stay "failed"; a pass
+appearing only after a correction is not a pass.
+
+### V2.9 Result (2026-11-21): version 2 failed the development gates; the lockbox was never opened
+
+Everything in the build order up to the decision was built and tested (steps 1–5). Step 6 does not happen.
+
+| # | Gate | Required | Measured (deciding run) | Pass |
+|---|---|---|---|---|
+| 1 | Expectancy and profit factor | > +0.10R and PF > 1.2 | −0.034R, PF 0.94, on 29 trades in 11 years | no |
+| 2 | Beats every baseline and the control | +0.05R over each; AUC +0.02 over control | best baseline −0.043R; AUC 0.596 vs 0.494 | no |
+| 3 | Consistent and recent | 60% of folds positive; last 2 years positive | 0 of 1 traded folds; 21 of 22 folds had no cut | no |
+| 4 | Drawdown and enough trades | ≤ 15R; ≥ 100 trades a year | 5.5R; 3 trades a year | no |
+| 5 | Broker prices, Dukascopy spread | expectancy above zero | 0 trades | no |
+
+The rebuild after the V2.8 correction gave the same verdict (all five failed, the same 21 of 22 folds without a
+cut, AUC 0.597 vs 0.495). The one fold that traded moved from 29 trades at −0.034R to 54 trades at −0.229R, which
+is what a cut sitting on noise looks like.
+
+**What version 2 established, now that the label is right:**
+
+- **Nothing in the 61 inputs predicts reaching the 2R target.** In the last development year's validation, 21.4%
+  of all setups reached the target, and at every cut from the top 95% to the top 10% the rate stays between 18.8%
+  and 21.7%. In the walk-forward the model's best tenth reached the target 19.8% of the time against 20.9% for
+  its worst tenth.
+- **What the model can sort is stop against timeout.** Its worst tenth is stopped out 74% of the time and its
+  best tenth 50%, with timeouts rising from 5% to 30%. Timeouts average about +0.2R, which does not pay for the
+  half that still stops out.
+- **Its confidence is optimism.** Its top tenth expected +0.10R and made −0.07R; on validation its top 10%
+  expected +0.14R and made −0.12R.
+- **The new inputs did not help.** The best of the eleven (distance to the H4 swing behind the entry) carries 2%
+  of the model's gain; stop size, session and spread/risk still carry most of it.
+- **Cost is not the whole story.** With the spread halved the deciding run's 30 trades made +0.04R each, and
+  every tradable setup still loses.
+
+**Conclusion.** Two models, six variants and one corrected label agree: on M5 gold, the sweep → structure shift →
+fair value gap setup does not carry information about which trades reach their target, at least none that these
+inputs capture. The strategy family is the limit, not the model. By the plan there is no further v2 variant, no
+lockbox run and no forward test. The lockbox (2,915 candidates, 2024-11-20 on) remains unread and can serve a
+genuinely different idea later.
+
+What exists and works: `ml/lockbox.py`, `ml/dataset.py` (split, account filter, three outcomes),
+`ml/ict_features.py` (61 inputs), `ml/train.py` (v2 model, gates), `ml/backtest.py`, `ml/final_test.py` (refuses:
+gates failed), `ml/predict.py` (refuses: gates failed), `ml/monitor.py` (waits for a final test), `ml/retrain.py`.
+Reports: `ml/reports/xauusd_v2_walkforward.md`, `ml/reports/xauusd_v2_backtest_20231120_20241119.md`.
+
+### V2.10 Why it loses (review of 2026-11-21): the setup has no edge before costs
+
+The same candidates were graded a third time with the spread set to zero
+(`python -m ml.dataset --name xauusd_ict_zerospread --spread-scale 0`, development data only, sensitivity only).
+Filled trades 2011 to 2024-11-19, the setups that pass the account filter:
+
+| Spread | Filled | Target | Stop | Timeout | Mean R per trade | Total R |
+|---|---|---|---|---|---|---|
+| Dukascopy (real) | 12,110 | 20.4% | 62.3% | 17.2% | -0.164 | -1,982 |
+| halved | 12,434 | 22.7% | 58.9% | 18.2% | -0.078 | -973 |
+| zero | 12,774 | 24.9% | 55.8% | 19.1% | +0.006 (standard error 0.012) | +71 |
+
+- **Before costs the setup is a coin flip.** +0.006R on 12,774 trades is zero; no year is beyond +/-0.07R, no
+  session beyond +/-0.04R, buys and sells are the same. Sweep, structure shift and fair value gap do not tilt
+  the odds on M5 gold; they only choose where the entry and stop sit.
+- **The whole loss is the cost.** The median stop is $2.28 and the median spread $0.32, so each trade pays about
+  14% of its risk to get in and out. That is the -0.164R.
+- **Why the model looked skilful and was not.** With nothing to predict about direction, it learned geometry:
+  wide stops are hit less often (44% against 75%) but reach the target less often (12% against 21%) and pay a
+  smaller share in spread. That sorts stop against timeout (AUC 0.60) and cannot produce profit.
+- **A cheaper broker shrinks the loss, it does not create a profit.** The best the cost side can do is the zero
+  line above.
+
+Lessons for the next idea, in the order they would have saved time:
+
+1. Grade the raw setup at zero cost first. If it is near zero there, stop: a filter model cannot create an edge
+   that the setup does not have. This one check takes a minute and would have replaced both model versions.
+2. Check cost against stop size before anything else. A setup whose stop is only 7 times the spread needs a large
+   edge just to break even.
+3. A model that separates outcomes (AUC above 0.5) is not a model that makes money. Judge by net R only.
+4. What worked and stays: gates written before the run, the shuffled control, the lockbox, and "the first run
+   decides". They are why this result can be trusted and why two years of data are still clean.

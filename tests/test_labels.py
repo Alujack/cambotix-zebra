@@ -113,5 +113,28 @@ def test_build_keeps_warmup_out_and_marks_coarse_years(tmp_path):
     assert meta['history_check'] == {'passed': True} and meta['spread_repair']['2011']['coarse_floor'] > 0
     df.to_parquet(tmp_path / 'd.parquet', index=False)
     assert pd.read_parquet(tmp_path / 'd.parquet').shape == df.shape
+    assert set(df['outcome_class'].dropna()) <= {0.0, 1.0, 2.0} and df['tradable'].all()
+    assert df.loc[df['outcome'] == 'closed', 'outcome_class'].notna().all()
+    assert df.loc[df['outcome'] != 'closed', 'outcome_class'].isna().all()
     text = dataset.summary(df, meta)
-    assert '| 2011 |' in text and 'baseline a model has to beat' in text
+    assert '| 2011 |' in text and 'Every tradable setup, no model' in text
+
+
+def test_borrowed_spread_keeps_prices_and_takes_the_other_feeds_spread():
+    mine = bars([60, 120, 180, 240], [9.0, 9.0, 9.0, 9.0])
+    other = bars([0, 120, 180], [0.3, 0.5, 0.7])
+    out = dataset.borrow_spread(mine, other)
+    assert list(out.spread) == [0.3, 0.5, 0.7, 0.7]                          # no bar there: its latest earlier one
+    assert list(out.h) == list(mine.h) and list(out.t) == list(mine.t)
+
+
+def test_account_filter_and_half_spread_build(tmp_path):
+    rows = m1_walk(60 * 24 * 30, seed=3, start=1293919200)
+    pd.DataFrame(rows).to_csv(tmp_path / 'XAUUSD_m1.csv', index=False)
+    full, _ = dataset.build('XAUUSD', tmp_path, start='2011-01-10', coarse_until=None)
+    half, meta = dataset.build('XAUUSD', tmp_path, start='2011-01-10', coarse_until=None, spread_scale=0.5)
+    assert meta['spread_scale'] == 0.5 and list(half['bar_time']) == list(full['bar_time'])     # same setups
+    assert half['spread_risk'].to_numpy() == pytest.approx(full['spread_risk'].to_numpy() / 2)
+    stopped = (full['exit'] == 'sl') & (half['exit'] == 'sl')
+    assert stopped.sum() > 5 and (half.loc[stopped, 'r'] >= full.loc[stopped, 'r'] - 1e-9).all()   # cheaper stop-outs
+    assert (full['tradable'] == (full['risk'] <= dataset.ACCOUNT_RISK_USD)).all()
