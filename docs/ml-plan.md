@@ -620,3 +620,107 @@ Lessons for the next idea, in the order they would have saved time:
 3. A model that separates outcomes (AUC above 0.5) is not a model that makes money. Judge by net R only.
 4. What worked and stays: gates written before the run, the shuffled control, the lockbox, and "the first run
    decides". They are why this result can be trusted and why two years of data are still clean.
+
+## Idea screen (2026-11-21): 57 scalping and intraday ideas, none passed
+
+Built from lesson 1 of V2.10: `ml/screen.py` walks any list of entries through M1 at zero, half and the recorded
+spread, with a discovery period (2011 to 2018) and a confirmation period (2019 to 2024-11-19), one position at a
+time, and one pass rule written before the run. `python -m ml.ideas` runs every idea in about 30 seconds.
+Development data only; the lockbox period is not loaded. Full table: `ml/reports/xauusd_idea_screen.md`.
+
+| Family | Ideas | Result |
+|---|---|---|
+| Move of 5, 15, 60 or 240 minutes, then follow or fade | 16 | zero before costs at every horizon (within +/-0.03R) |
+| Channel break on M15 (5 hour, 24 hour), follow or fade | 4 | 24 hour follow +0.06R / +0.02R before costs, loses after |
+| Squeeze then band break | 2 | does not repeat in confirmation |
+| Round numbers ($10, $50): breakout or rejection | 4 | breakouts +0.06R to +0.16R before costs in both periods; lose after |
+| Previous day high/low: follow or fade | 2 | follow +0.05R / +0.04R before costs; loses after |
+| News clock (08:30, 10:00 range break) | 2 | zero |
+| One session predicts the next | 8 | zero |
+| Daily trend pullback (RSI) | 1 | zero |
+| Hour of the day | 6 | does not repeat; the 16:00 to 18:00 "drift" is the bid moving as the spread widens |
+| EURUSD leads gold | 4 | flips sign between periods |
+| Round 2: level breaks with stops 2x and 4x wider (exploratory) | 8 | edge shrinks as fast as the cost share |
+
+Findings:
+
+- **Gold is a coin flip at 5 minutes to 4 hours.** Following a move and fading it both make zero before costs.
+- **The one repeatable effect is that a break of a level tends to continue a little** ($50 and $10 round numbers,
+  previous day's high/low, 24 hour channel), and fading a break loses. This is the opposite of the sweep-and-
+  reverse idea behind the ICT setup. It is worth about $0.10 to $0.20 per oz against a spread of $0.34.
+- **A model does no better** (`python -m ml.forecast_check`, `ml/reports/xauusd_forecast_check.md`): LightGBM on
+  39 generic inputs, trained 2011 to 2017, judged 2019 to 2024. Rank correlation +0.04 (30 minutes) and +0.03
+  (60 minutes). Its best tenth of forecasts moves $0.08 and $0.14 per oz before costs: 25% and 41% of the spread.
+- **Cost decides.** With a 1.5 ATR stop on M5 the recorded spread is about 0.3R per trade. At half the spread
+  the $50 breakout makes +0.07R on about 90 trades a year in confirmation: too little to matter and not a pass.
+
+Nothing here goes to the lockbox, and no model is built on these ideas.
+
+### The v2 model at zero spread (2026-11-21, sensitivity only)
+
+The v2 walk-forward was repeated on the zero-spread dataset (`xauusd_ict_zerospread_dev.parquet`, same folds and
+settings, nothing saved over the real model or reports). It found a cut in 19 of 22 folds and took 3,739 trades
+in ten years: +0.038R per trade (t = 1.8), profit factor 1.07, +143R in total, 7 of 10 years positive, maximum
+drawdown 37R. Every tradable setup taken blindly made -0.007R. The share reaching the target is the same as for
+all setups (24.9% against 24.4%); the gain comes from fewer stops and more timeouts. So even with no cost at all
+the model stays under the +0.10R gate, and its edge is not clearly different from zero.
+
+## smart-money-concepts library test (2026-11-21): 48 live tests, none passed
+
+`ml/smc_test.py` tests github.com/joshyattridge/smart-money-concepts v0.0.27 (its own code, unchanged) on
+development gold through `ml/screen.py`. The library is an indicator set with no strategy and no backtest of
+its own. Its swings need `swing_length` later candles and its liquidity range uses the whole chart, so the
+library was replayed bar by bar seeing only candles up to "now" (M5 with swing 5 and 20, M15 with swing 20 and
+the default 50; about 105 minutes on 12 processes). Report: `ml/reports/xauusd_smc_library_test.md`.
+
+- Signals traded: break of structure, change of character, order block retest, liquidity sweep then reverse,
+  fair value gap forming, fair value gap retest, and the two retests filtered by the last structure break. Each
+  as the concept says and the opposite way. Stop 2 ATR, target 2R, hold 48 bars.
+- 41 of 48 have no edge before costs, 3 have too few trades, 1 has an edge smaller than the spread, 3 failed
+  confirmation. Nothing on M5 has an edge even at zero spread.
+- Closest: break of structure on M15 with the default swing 50. +0.19R / +0.14R before costs, +0.09R / +0.05R at
+  the recorded spread, profit factor 1.08, 3 of 6 confirmation years positive, 39 trades a year. That is the same
+  "a break continues" effect the idea screen found, and it is about +2R a year.
+- Liquidity sweep then reverse loses in every setting, like the ICT setup.
+- Trading the signals at the bar where a finished chart draws them (hindsight) gives about the same result as
+  live, so the break signals are honest; they just carry almost no edge.
+
+## Intraday screen (2026-11-22): 47 ideas held for hours, none passed
+
+`ml/intraday.py` puts intraday (not scalping) ideas through `ml/screen.py` with the same pass rule. Signals come
+from closed M15 or H1 bars, stops are 2 to 3 ATR of H1 or half a session's range (median $5 to $24 per oz), and a
+trade is held for hours: up to 12 or 24 hours, or from 19:00 until flat at 16:00 New York. `python -m ml.intraday`
+runs in about 20 seconds; `--check` proves that no idea reads a later candle (signals from history cut at a random
+minute equal the signals from the full history). Development data only. Full table:
+`ml/reports/xauusd_intraday_screen.md`.
+
+| Family | Ideas | Result |
+|---|---|---|
+| Session range break on M15 (Asia, London, Asia + London, New York first 90 minutes) | 8 | follow or fade: zero to slightly negative after the spread |
+| Volatility breakout: open +/- 0.5 or 1 x yesterday's range, follow or fade | 4 | follow +0.07R / +0.01R and +0.12R / +0.03R at the recorded spread; failed confirmation |
+| Narrow day (inside day, NR7), then the break | 4 | follow +0.14R / +0.04R and +0.11R / +0.03R, but about 33 trades a year and t under 2 |
+| Channel break on H1 (24 hours, 3 days, 5 days) | 6 | follow about zero after the spread, fade loses |
+| Moving averages on H1 (EMA 20/50 cross, pullback in the 50/200 trend) | 3 | zero; the pullback flips sign in confirmation |
+| Stretched on H1 (RSI 30/70, Bollinger band), follow or fade | 4 | zero |
+| Round numbers on H1 ($50, $100) | 4 | follow about zero after the spread, fade loses |
+| Last 24 hours at the London or New York open | 4 | zero |
+| Day trade from a daily rule (yesterday's direction, 20/50 day average, always buy) | 9 | zero in discovery; confirmation follows gold's own rise |
+| Session or weekday drift | 1 | London sell worked in discovery only |
+
+Findings:
+
+- **The spread is no longer the problem.** It costs 0.02R to 0.08R per trade here, against about 0.3R in the
+  scalping screen. The ideas fail because there is almost nothing before costs either.
+- **The same single effect again: a break continues a little, and fading a break loses.** Every "follow the
+  break" row is positive before costs in both periods; every fade of a level or channel is negative.
+- **It has faded.** The best family, the volatility breakout, made +0.12R to +0.15R before costs in 2011 to 2018
+  and +0.04R to +0.05R in 2019 to 2024. After the spread that is +0.01R to +0.03R a trade: about +2R a year on
+  the 1 x range version (61 trades a year, profit factor 1.12, 4 of 6 years positive). Not a pass.
+- **Being long explains the good-looking confirmation rows.** "Always buy at 19:00, flat at 16:00" makes +0.02R a
+  trade in confirmation and loses in discovery; "follow yesterday after a big day" (+0.06R, 5 of 6 years) made
+  zero in discovery.
+- **A model does no better at these horizons** (`python -m ml.forecast_check --horizons 48 96`,
+  `ml/reports/xauusd_forecast_check_intraday.md`): rank correlation +0.002 for the next 4 hours and +0.003 for
+  the next 8 hours, which is no skill at all.
+
+Nothing here goes to the lockbox, and no model is built on these ideas.

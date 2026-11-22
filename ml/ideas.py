@@ -316,6 +316,29 @@ def all_ideas(m1: Bars, m1_eur: Bars | None = None, log=print) -> tuple[list[dic
     return ideas, hours
 
 
+# Round 2, added after round 1 was read (so it is exploratory, see the report): the only ideas with an edge before
+# costs in both periods were breaks of a level, and their stops were about four spreads wide. The same entries are
+# repeated with the stop, the target and the hold all 2x and 4x larger, to see whether the move continues far
+# enough to pay for the spread.
+WIDER = ('$10 level, breakout', '$50 level, breakout', 'first close beyond, follow', '24 hour channel, follow')
+SCALES = (2, 4)
+
+
+def wider(ideas: list[dict]) -> list[dict]:
+    out = []
+    for idea in ideas:
+        if idea['name'] not in WIDER:
+            continue
+        for scale in SCALES:
+            signals = idea['signals'].copy()
+            signals['stop'] *= scale
+            signals['target'] *= scale
+            signals['hold'] = np.minimum(signals['hold'] * scale, 1440)
+            out.append({'family': idea['family'], 'name': f"{idea['name']}, stop x{scale}", 'signals': signals,
+                        'periods': idea['periods'], 'round': 2})
+    return out
+
+
 def fmt(x, spec='+.3f') -> str:
     return '-' if x is None or not np.isfinite(x) else format(x, spec)
 
@@ -336,20 +359,32 @@ def report(results: list[dict], hours: pd.DataFrame, m1: Bars) -> str:
              f'confirmation at the recorded spread mean R >= {rule["confirm_r"]:+.2f}, profit factor >= '
              f'{rule["confirm_pf"]:g}, {rule["confirm_years_positive"]:.0%} of years positive and at least '
              f'{rule["confirm_trades_per_year"]} trades a year.', '',
-             f'**{len(results)} ideas tested, {len(passed)} passed.**', '']
+             f'**{len(results)} ideas tested (round 2 included), {len(passed)} passed.**', '']
     counts = pd.Series([r['result']['verdict'] for r in results]).value_counts()
     lines += ['| Verdict | Ideas |', '|---|---|'] + [f'| {k} | {v} |' for k, v in counts.items()] + ['']
-    lines += ['## Every idea', '',
-              '| Family | Idea | Trades a year | Zero cost: discovery R (t) | Zero cost: confirmation R | '
-              'Half spread: confirmation R | Real spread: discovery R | Real spread: confirmation R | '
-              'Confirmation PF | Years positive | Verdict |', '|---|---|---|---|---|---|---|---|---|---|---|']
-    for r in results:
-        z, h, f = r['result'][0.0], r['result'][0.5], r['result'][1.0]
-        c = f['confirm']
-        lines.append(f"| {r['family']} | {r['name']} | {fmt(c['per_year'], '.0f')} | "
-                     f"{fmt(z['discovery']['mean'])} ({fmt(z['discovery']['t'], '+.1f')}) | {fmt(z['confirm']['mean'])} | "
-                     f"{fmt(h['confirm']['mean'])} | {fmt(f['discovery']['mean'])} | {fmt(c['mean'])} | "
-                     f"{fmt(c['pf'], '.2f')} | {c['years_positive']} of {c['years']} | {r['result']['verdict']} |")
+    head = ['| Family | Idea | Trades a year | Zero cost: discovery R (t) | Zero cost: confirmation R | '
+            'Half spread: confirmation R | Real spread: discovery R | Real spread: confirmation R | '
+            'Confirmation PF | Years positive | Verdict |', '|---|---|---|---|---|---|---|---|---|---|---|']
+
+    def table(rows):
+        out = list(head)
+        for r in rows:
+            z, h, f = r['result'][0.0], r['result'][0.5], r['result'][1.0]
+            c = f['confirm']
+            out.append(f"| {r['family']} | {r['name']} | {fmt(c['per_year'], '.0f')} | "
+                       f"{fmt(z['discovery']['mean'])} ({fmt(z['discovery']['t'], '+.1f')}) | "
+                       f"{fmt(z['confirm']['mean'])} | {fmt(h['confirm']['mean'])} | {fmt(f['discovery']['mean'])} | "
+                       f"{fmt(c['mean'])} | {fmt(c['pf'], '.2f')} | {c['years_positive']} of {c['years']} | "
+                       f"{r['result']['verdict']} |")
+        return out
+
+    lines += ['## Round 1: every idea', ''] + table([r for r in results if r.get('round', 1) == 1])
+    second = [r for r in results if r.get('round', 1) == 2]
+    if second:
+        lines += ['', '## Round 2: level breaks with wider stops (exploratory)', '',
+                  'Added after round 1 was read, so the confirmation years are no longer unseen for these entries. '
+                  'Same entries as the round 1 level breaks; stop, target and hold are 2x and 4x larger. A pass '
+                  'here is a candidate for the one lockbox run, not a result.', ''] + table(second)
     lines += ['', '## Drift by New York hour, zero cost (buy at the start of the hour, hold 60 minutes)', '',
               f'An hour is traded as an idea only if its discovery t is at least {HOUR_T:g} in size.', '',
               '| Hour | Discovery R (t) | Discovery $ per oz | Confirmation R (t) | Confirmation $ per oz |',
@@ -359,7 +394,10 @@ def report(results: list[dict], hours: pd.DataFrame, m1: Bars) -> str:
                      f'{fmt(row.r_c)} ({fmt(row.t_c, "+.1f")}) | {fmt(row.usd_c, "+.3f")} |')
     spread = pd.Series(m1.spread, index=pd.to_datetime(m1.t, unit='s'))
     recent = spread[spread.index >= pd.Timestamp(screen.CONFIRM[0])]
-    lines += ['', f'For scale: the median recorded spread in the confirmation years is ${recent.median():.2f} per oz.', '']
+    lines += ['', f'For scale: the median recorded spread in the confirmation years is ${recent.median():.2f} per oz.', '',
+              'The 16:00 to 18:00 rows are not a real drift. The candles are bid prices: the spread widens into the '
+              '17:00 close, which pushes the bid down, and narrows again after the reopen. At the recorded spread '
+              'those hours lose like the rest.', '']
     return '\n'.join(lines)
 
 
@@ -375,11 +413,13 @@ def main() -> None:
         m1_eur = load_m1('EURUSD', EURUSD_FOLDER, None, lockbox.LOCK_EPOCH)
         print(f'EURUSD M1: {len(m1_eur):,} bars')
     ideas, hours = all_ideas(m1, m1_eur)
+    ideas += wider(ideas)
     results = []
     for idea in ideas:
         periods = idea['periods'] or (screen.DISCOVERY, screen.CONFIRM)
         result = screen.evaluate(m1, idea['signals'], *periods)
-        results.append({'family': idea['family'], 'name': idea['name'], 'result': result})
+        results.append({'family': idea['family'], 'name': idea['name'], 'result': result,
+                        'round': idea.get('round', 1)})
         z, f = result[0.0], result[1.0]
         print(f"{idea['name']:<48} n/yr {f['confirm']['per_year']:6.0f}  zero {fmt(z['discovery']['mean'])} / "
               f"{fmt(z['confirm']['mean'])}  real {fmt(f['discovery']['mean'])} / {fmt(f['confirm']['mean'])}  "

@@ -16,6 +16,14 @@
     ml/predict.py       CLI: score the latest closed M5 bar; refuses a model without passed gates and lockbox
     ml/monitor.py       CLI: live results vs the walk-forward, and feature drift (PSI); after the final test only
     ml/retrain.py       CLI: the rebuild cycle: pull, check, datasets, train
+    ml/screen.py        the idea screen: walk entries through M1 at zero, half and real spread, discovery and
+                        confirmation periods, one fixed pass rule. Run this before building any model
+    ml/ideas.py         CLI: 57 scalping and intraday ideas through the screen (none passed, 2026-11-21)
+    ml/forecast_check.py  CLI: can a model forecast the next 30/60 minutes (or --horizons, e.g. 4 and 8 hours) well
+                        enough to pay the spread
+    ml/smc_test.py      CLI: the smart-money-concepts library replayed bar by bar on gold (none passed)
+    ml/intraday.py      CLI: 47 intraday ideas (M15/H1 signals, held for hours) through the screen (none passed,
+                        2026-11-22); --check proves no idea reads a later candle
 
 Verdicts (docs/ml-plan.md): version 1 and its five pre-listed variants failed the gates (2026-11-21). Version 2
 (label fixed to the three outcomes, selection by expected profit, real H1/H4 structure) also failed the
