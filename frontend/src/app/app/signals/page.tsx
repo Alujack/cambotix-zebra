@@ -3,7 +3,7 @@ import TopBar from "@/components/shell/TopBar";
 import { Suspense } from "react";
 import SignalCard from "@/components/SignalCard";
 import { getSignals, getTickers } from "@/lib/api";
-import { isLang, t, type Lang } from "@/lib/i18n";
+import { t, type Lang } from "@/lib/i18n";
 
 export const metadata: Metadata = { title: "Signals", description: "Every published plan, open and closed, with its graded outcome." };
 
@@ -32,9 +32,8 @@ async function Cards({ lang }: { lang: Lang }) {
   );
 }
 
-export default async function SignalsPage({ params }: PageProps<"/[lang]/app/signals">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function SignalsPage() {
+  const lang: Lang = "en";
   const d = t(lang);
   return (
     <>

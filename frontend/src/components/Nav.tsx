@@ -1,8 +1,6 @@
 import { LayoutDashboard } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { Suspense } from "react";
-import LangToggle from "@/components/LangToggle";
 import { href, t, type Lang } from "@/lib/i18n";
 import { site } from "@/lib/site";
 
@@ -33,9 +31,6 @@ export default function Nav({ lang }: { lang: Lang }) {
           ))}
         </nav>
         <div className="flex flex-none items-center gap-2">
-          <Suspense fallback={<span className="pill">{d.nav.other}</span>}>
-            <LangToggle lang={lang} label={d.nav.other} />
-          </Suspense>
           <Link href={href(lang, "/app")} className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-[15px] font-semibold hover:bg-white/[0.08]">
             <LayoutDashboard size={16} className="text-gold" /> <span className="hidden sm:inline">{d.nav.dashboard}</span>
           </Link>

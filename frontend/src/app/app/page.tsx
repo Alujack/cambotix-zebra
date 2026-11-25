@@ -7,7 +7,7 @@ import { Badge, EmptyState, SectionCard, Skeleton, StatCard } from "@/components
 import { getNews, getRecord, getSignals } from "@/lib/api";
 import { percent, r, utc } from "@/lib/format";
 import { greeting, guest } from "@/lib/guest";
-import { href, isLang, t, type Lang } from "@/lib/i18n";
+import { href, t, type Lang } from "@/lib/i18n";
 import { site } from "@/lib/site";
 
 async function Hero({ lang }: { lang: Lang }) {
@@ -108,9 +108,8 @@ async function Recent({ lang }: { lang: Lang }) {
 
 const grid = (n: number, h: string) => <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: n }).map((_, i) => <Skeleton key={i} className={h} />)}</div>;
 
-export default async function Overview({ params }: PageProps<"/[lang]/app">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function Overview() {
+  const lang: Lang = "en";
   const d = t(lang);
   return (
     <>

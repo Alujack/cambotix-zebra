@@ -6,7 +6,7 @@ import MarketIcon from "@/components/MarketIcon";
 import { StatCard } from "@/components/ui";
 import { getRecord, getSignals } from "@/lib/api";
 import { modelName, percent, r, utc } from "@/lib/format";
-import { href, isLang, t, type Lang } from "@/lib/i18n";
+import { href, t, type Lang } from "@/lib/i18n";
 import { site, team } from "@/lib/site";
 
 // Section heading: gold kicker, title, optional line of text.
@@ -105,9 +105,8 @@ async function Tiles({ lang }: { lang: Lang }) {
 
 const skeleton = (className: string) => <div className={`skeleton ${className}`} />;
 
-export default async function Home({ params }: PageProps<"/[lang]">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function Home() {
+  const lang: Lang = "en";
   const d = t(lang);
   const whyIcons = [ShieldCheck, Link2, Fingerprint];
   return (
@@ -121,7 +120,7 @@ export default async function Home({ params }: PageProps<"/[lang]">) {
               <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green opacity-60" /><span className="relative inline-flex h-2 w-2 rounded-full bg-green" /></span>
               {d.home.live}
             </span>
-            <h1 className={`mt-7 font-extrabold tracking-[-0.035em] ${lang === "km" ? "text-4xl leading-[1.35] md:text-6xl" : "text-5xl leading-[1.02] md:text-7xl"}`}>
+            <h1 className="mt-7 text-5xl leading-[1.02] font-extrabold tracking-[-0.035em] md:text-7xl">
               {d.home.titleA} <span className="text-fade-gold">{d.home.titleB}</span>
             </h1>
             <p className="mt-7 max-w-xl text-lg leading-relaxed text-text/75 md:text-xl">{d.hero.text}</p>

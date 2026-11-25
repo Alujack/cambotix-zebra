@@ -5,7 +5,7 @@ import TopBar from "@/components/shell/TopBar";
 import { Badge, EmptyState, Skeleton, StatCard } from "@/components/ui";
 import { getRecord, getSignals } from "@/lib/api";
 import { modelName, percent, price, r, utc } from "@/lib/format";
-import { href, isLang, t, type Lang } from "@/lib/i18n";
+import { href, t, type Lang } from "@/lib/i18n";
 
 const TABS = ["record", "history", "journal", "performance"] as const;
 type Tab = (typeof TABS)[number];
@@ -101,9 +101,8 @@ async function Trades({ lang, searchParams }: { lang: Lang; searchParams: Promis
   );
 }
 
-export default async function TradesPage({ params, searchParams }: PageProps<"/[lang]/app/trades">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function TradesPage({ searchParams }: PageProps<"/app/trades">) {
+  const lang: Lang = "en";
   const d = t(lang);
   return (
     <>

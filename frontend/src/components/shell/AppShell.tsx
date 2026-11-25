@@ -5,7 +5,7 @@ import { t, type Lang } from "@/lib/i18n";
 export default function AppShell({ lang, children }: { lang: Lang; children: React.ReactNode }) {
   const d = t(lang);
   return (
-    <div className={`min-h-full ${lang === "km" ? "font-khmer" : ""}`}>
+    <div className="min-h-full">
       <Sidebar lang={lang} labels={d.nav} />
       <div className="md:pl-16">
         <div className="mx-auto w-full max-w-[1800px] px-6 pb-10">

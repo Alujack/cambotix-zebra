@@ -4,7 +4,7 @@ import TopBar from "@/components/shell/TopBar";
 import { EmptyState, IndicatorTile, Skeleton } from "@/components/ui";
 import { getIndicators, type Indicators } from "@/lib/api";
 import { decimals, utc } from "@/lib/format";
-import { href, isLang, t, type Lang } from "@/lib/i18n";
+import { href, t, type Lang } from "@/lib/i18n";
 import { site } from "@/lib/site";
 
 const TFS = ["5m", "15m", "1h", "4h"];
@@ -49,9 +49,8 @@ async function Readings({ lang, searchParams }: { lang: Lang; searchParams: Prom
   );
 }
 
-export default async function IndicatorsPage({ params, searchParams }: PageProps<"/[lang]/app/indicators">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function IndicatorsPage({ searchParams }: PageProps<"/app/indicators">) {
+  const lang: Lang = "en";
   const d = t(lang);
   return (
     <>

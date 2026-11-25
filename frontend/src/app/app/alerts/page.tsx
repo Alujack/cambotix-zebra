@@ -4,7 +4,7 @@ import TopBar from "@/components/shell/TopBar";
 import { SectionCard, Skeleton } from "@/components/ui";
 import { getTickers } from "@/lib/api";
 import { price } from "@/lib/format";
-import { href, isLang, t, type Lang } from "@/lib/i18n";
+import { href, t, type Lang } from "@/lib/i18n";
 import { site } from "@/lib/site";
 
 async function Watchlist({ lang }: { lang: Lang }) {
@@ -30,9 +30,8 @@ async function Watchlist({ lang }: { lang: Lang }) {
   );
 }
 
-export default async function AlertsPage({ params }: PageProps<"/[lang]/app/alerts">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function AlertsPage() {
+  const lang: Lang = "en";
   const d = t(lang);
   return (
     <>

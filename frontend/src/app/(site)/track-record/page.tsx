@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import StatTile from "@/components/StatTile";
 import { getRecord, getSignals, type Summary } from "@/lib/api";
 import { modelName, percent, price, r, utc } from "@/lib/format";
-import { href, isLang, t, type Dict, type Lang } from "@/lib/i18n";
+import { href, t, type Dict, type Lang } from "@/lib/i18n";
 
 export const metadata: Metadata = { title: "Track record", description: "The complete graded record: every plan, every outcome, verifiable hash chain." };
 
@@ -112,9 +112,8 @@ async function Record({ lang }: { lang: Lang }) {
   );
 }
 
-export default async function TrackRecordPage({ params }: PageProps<"/[lang]/track-record">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function TrackRecordPage() {
+  const lang: Lang = "en";
   const d = t(lang);
   return (
     <>

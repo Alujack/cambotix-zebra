@@ -4,7 +4,7 @@ import JoinTelegram from "@/components/home/JoinTelegram";
 import Nav from "@/components/Nav";
 import TickerStrip from "@/components/TickerStrip";
 import { getRecord, getTickers } from "@/lib/api";
-import { isLang, t, type Lang } from "@/lib/i18n";
+import { t, type Lang } from "@/lib/i18n";
 import { site } from "@/lib/site";
 
 async function Tickers({ lang }: { lang: Lang }) {
@@ -17,9 +17,8 @@ async function ChainFooter({ lang }: { lang: Lang }) {
 }
 
 // Marketing pages: top navigation, broker ticker strip, footer with the chain head.
-export default async function SiteLayout({ children, params }: LayoutProps<"/[lang]">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function SiteLayout({ children }: LayoutProps<"/">) {
+  const lang: Lang = "en";
   const d = t(lang);
   // overflow-x-clip lets the home hero bleed edge to edge without a horizontal scrollbar.
   return (

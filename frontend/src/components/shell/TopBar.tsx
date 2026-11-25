@@ -1,7 +1,5 @@
 import { Zap } from "lucide-react";
-import { Suspense } from "react";
 import HelpModal from "@/components/shell/HelpModal";
-import LangToggle from "@/components/LangToggle";
 import { t, type Lang } from "@/lib/i18n";
 
 // Sticky 56px bar: page title left; help, language and the primary action right.
@@ -12,9 +10,6 @@ export default function TopBar({ lang, title, help, action }: { lang: Lang; titl
       <h1 className="page-title truncate">{title}</h1>
       <div className="flex items-center gap-2">
         <HelpModal title={title} text={help} label={d.shell.help} close={d.shell.close} />
-        <Suspense fallback={<span className="pill">{d.nav.other}</span>}>
-          <LangToggle lang={lang} label={d.nav.other} />
-        </Suspense>
         {action ?? (
           <button type="button" className="btn-primary !min-h-9 !py-1.5" disabled title={d.shell.scanTodo}>
             <Zap size={16} /> <span className="hidden sm:inline">{d.shell.scan}</span>

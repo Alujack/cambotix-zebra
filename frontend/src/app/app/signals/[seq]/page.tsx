@@ -9,7 +9,7 @@ import { IndicatorTile, KeyValue, SectionCard } from "@/components/ui";
 import { Direction, Outcome } from "@/components/SignalCard";
 import { getCandles, getIndicators, getPlan, getRecord, type Indicators, type Plan } from "@/lib/api";
 import { decimals, modelName, percent, price, r, utc } from "@/lib/format";
-import { href, isLang, t, type Lang } from "@/lib/i18n";
+import { href, t, type Lang } from "@/lib/i18n";
 
 export const metadata: Metadata = { title: "Signal" };
 
@@ -125,10 +125,10 @@ function Context({ plan, lang }: { plan: Plan; lang: Lang }) {
   );
 }
 
-async function Detail({ params }: { params: Promise<{ lang: string; seq: string }> }) {
+async function Detail({ params }: { params: Promise<{ seq: string }> }) {
   await connection();   // no prerendered shell for this route: a missing plan must be a real 404
-  const { lang, seq } = await params;
-  if (!isLang(lang)) notFound();
+  const { seq } = await params;
+  const lang: Lang = "en";
   const number = Number(seq);
   const plan = Number.isInteger(number) && number > 0 ? await getPlan(number) : null;
   if (!plan) notFound();
@@ -224,6 +224,6 @@ async function Detail({ params }: { params: Promise<{ lang: string; seq: string 
 // Blocking on purpose: the plan lookup is a cached 1 ms call, and a missing plan must answer with a real 404.
 export const instant = false;
 
-export default function SignalDetailPage({ params }: PageProps<"/[lang]/app/signals/[seq]">) {
+export default function SignalDetailPage({ params }: PageProps<"/app/signals/[seq]">) {
   return <Detail params={params} />;
 }

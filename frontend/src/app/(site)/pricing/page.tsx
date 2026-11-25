@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import PlanCards from "@/components/PlanCards";
 import { site } from "@/lib/site";
 import { getRecord } from "@/lib/api";
-import { isLang, t, type Lang } from "@/lib/i18n";
+import { t, type Lang } from "@/lib/i18n";
 
 export const metadata: Metadata = { title: "Pricing", description: "Free public record now; live Telegram delivery opens when the forward test reads GO." };
 
@@ -18,9 +18,8 @@ async function Gate({ lang }: { lang: Lang }) {
   );
 }
 
-export default async function PricingPage({ params }: PageProps<"/[lang]/pricing">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+export default async function PricingPage() {
+  const lang: Lang = "en";
   const d = t(lang);
   const tiers = [d.pricing.free, d.pricing.pro];
   return (

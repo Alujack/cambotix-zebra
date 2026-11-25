@@ -2,7 +2,6 @@ import { BarChart3, Bell, CalendarClock, Check, Eye, History, Settings2, Zap } f
 import Link from "next/link";
 import { Suspense } from "react";
 import AutoRefresh from "@/components/AutoRefresh";
-import LangToggle from "@/components/LangToggle";
 import HelpModal from "@/components/shell/HelpModal";
 import TopBar from "@/components/shell/TopBar";
 import SignalChart from "@/components/SignalChart";
@@ -15,7 +14,7 @@ import TradingViewWidget from "@/components/TradingViewWidget";
 import { Skeleton } from "@/components/ui";
 import { getCandles, getIndicators, getNews, getRecord, getSentiment, getSignals, getTickers } from "@/lib/api";
 import { decimals, price } from "@/lib/format";
-import { href, isLang, t, type Lang } from "@/lib/i18n";
+import { href, t, type Lang } from "@/lib/i18n";
 import { market, site, tvSource } from "@/lib/site";
 
 const TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
@@ -83,7 +82,6 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
       <div className="hidden flex-none items-center gap-2 px-3 lg:flex">
         <a href={site.telegram} className="btn-secondary !min-h-10 !rounded-xl !py-1 text-[15px]"><Zap size={16} /> AI</a>
         <Link href={href(lang, "/app/alerts")} className="grid h-10 w-10 place-items-center text-muted hover:text-text" aria-label={d.nav.alerts}><Bell size={18} /></Link>
-        <Suspense fallback={<span className="pill">{d.nav.other}</span>}><LangToggle lang={lang} label={d.nav.other} /></Suspense>
         <Link href={href(lang, "/app/settings")} className="grid h-10 w-10 place-items-center text-muted hover:text-text" aria-label={d.nav.settings}><Settings2 size={18} /></Link>
       </div>
     </div>
@@ -172,9 +170,8 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
 }
 
 // URL data (params, searchParams) is read only inside the Suspense boundary, so the route keeps an instant static shell.
-async function Terminal({ params, searchParams }: PageProps<"/[lang]/app/terminal">) {
-  const { lang } = await params;
-  if (!isLang(lang)) return null;
+async function Terminal({ searchParams }: PageProps<"/app/terminal">) {
+  const lang: Lang = "en";
   const d = t(lang);
   return (
     <>
@@ -184,7 +181,7 @@ async function Terminal({ params, searchParams }: PageProps<"/[lang]/app/termina
   );
 }
 
-export default function TerminalPage(props: PageProps<"/[lang]/app/terminal">) {
+export default function TerminalPage(props: PageProps<"/app/terminal">) {
   return (
     <>
       <AutoRefresh seconds={60} />
