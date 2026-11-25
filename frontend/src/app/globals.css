@@ -136,3 +136,15 @@ table { font-variant-numeric: tabular-nums; }
 .prose-zebra table { border: 1px solid var(--border); border-collapse: collapse; margin: 1rem 0; width: 100%; font-size: 0.9rem; }
 .prose-zebra th, .prose-zebra td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; }
 .prose-zebra hr { border-color: var(--border); margin: 2rem 0; }
+
+/* ---------- Marketing motion: ticker marquee, hero stripes. All of it stops under reduced motion. ---------- */
+.marquee { animation: marquee 60s linear infinite; }
+@keyframes marquee { to { transform: translateX(-50%); } }
+.hero-drift { animation: hero-drift 40s ease-in-out infinite alternate; }
+@keyframes hero-drift { from { transform: translate3d(-2%, -1%, 0) scale(1); } to { transform: translate3d(2%, 1.5%, 0) scale(1.04); } }
+.hero-shimmer { animation: hero-shimmer 14s linear infinite; }
+@keyframes hero-shimmer { to { stroke-dashoffset: -1320; } }
+.scroll-cue { animation: scroll-cue 2s ease-in-out infinite; }
+@keyframes scroll-cue { 50% { transform: translateY(6px); opacity: 0.5; } }
+.text-fade-gold { background: linear-gradient(90deg, #f5f7fa 0%, #e8c964 45%, rgba(232, 201, 100, 0.45) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+@media (prefers-reduced-motion: reduce) { .marquee, .hero-drift, .hero-shimmer, .scroll-cue { animation: none; } }

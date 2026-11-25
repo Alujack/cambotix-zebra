@@ -171,3 +171,19 @@ def test_candles_and_indicators_come_from_stored_m1(client, monkeypatch):
     assert reading['bollinger_b']['verdict'] in ('inside bands', 'above upper band', 'below lower band')
     assert client.get('/candles/EURUSD').status_code == 404 and client.get('/candles/XAUUSD?tf=2h').status_code == 404
     assert client.get('/indicators/XAUUSD?tf=1d').status_code == 404      # not enough daily bars yet
+
+
+def test_sentiment_reads_fear_greed_and_survives_an_outage(client, monkeypatch):
+    class Reply:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def read(self, *args): return json.dumps({'data': [{'value': '13', 'value_classification': 'Extreme Fear', 'timestamp': '1764028800'}]}).encode()
+
+    monkeypatch.setattr(api.urllib.request, 'urlopen', lambda *a, **k: Reply())
+    assert client.get('/sentiment').json() == {'crypto_fear_greed': {'value': 13, 'label': 'Extreme Fear', 'time': 1764028800, 'source': 'alternative.me'}}
+
+    def down(*a, **k):
+        raise OSError('offline')
+    monkeypatch.setattr(api.urllib.request, 'urlopen', down)
+    api.clear_cache()
+    assert client.get('/sentiment').json() == {'crypto_fear_greed': None}

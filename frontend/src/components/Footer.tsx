@@ -4,7 +4,7 @@ export default function Footer({ lang, headHash, headSeq }: { lang: Lang; headHa
   const d = t(lang);
   return (
     <footer className="mt-16 border-t border-line">
-      <div className="mx-auto max-w-6xl space-y-3 px-4 py-8 text-xs text-muted">
+      <div className="mx-auto max-w-7xl space-y-3 px-4 py-8 text-xs text-muted">
         {headHash && (
           <p>
             {d.footer.head} #{headSeq}: <code className="break-all">{headHash}</code>

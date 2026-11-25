@@ -123,4 +123,6 @@ export const getCandles = (symbol: string, tf = "15m", to?: number, bars = 200) 
 export const getIndicators = (symbol: string, tf = "15m", at?: number) =>
   get<Indicators | null>(`/indicators/${symbol}?tf=${tf}${at ? `&at=${at}` : ""}`, null);
 export const getNews = () => get<NewsItem[]>("/news", []);
+export type Sentiment = { crypto_fear_greed: { value: number; label: string; time: number; source: string } | null };
+export const getSentiment = () => get<Sentiment>("/sentiment", { crypto_fear_greed: null });
 export const getLedger = (after = 0) => get<LedgerRow[]>(`/ledger?after=${after}`, []);

@@ -213,7 +213,7 @@ async function Detail({ params }: { params: Promise<{ lang: string; seq: string 
       )}
 
       <div className="mt-8 grid gap-3 sm:grid-cols-3">
-        <Link href={href(lang, `/app/terminal?symbol=${plan.symbol}`)} className="btn-primary">{d.detail.openTerminal}</Link>
+        <Link href={href(lang, `/app/terminal?symbol=${plan.symbol}&view=broker`)} className="btn-primary">{d.detail.openTerminal}</Link>
         <button type="button" className="btn-secondary" disabled title="TODO(accounts): journal needs an account">{d.detail.addJournal}</button>
         <Link href={href(lang, "/app/signals")} className="btn-secondary">{d.detail.backHistory}</Link>
       </div>

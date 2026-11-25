@@ -79,9 +79,12 @@ export default function Sidebar({ lang, labels }: { lang: Lang; labels: Dict["na
   return (
     <>
       <aside className="fixed inset-y-0 left-0 z-20 hidden md:block">{rail}</aside>
-      <button type="button" onClick={() => setOpen(true)} className="btn-icon fixed top-2.5 left-3 z-30 md:hidden" aria-label="Open menu">
-        <Menu size={18} />
-      </button>
+      {/* Phones only. The wrapper carries md:hidden because .btn-icon (unlayered CSS) sets display and would beat a utility on the button itself. */}
+      <div className="md:hidden">
+        <button type="button" onClick={() => setOpen(true)} className="btn-icon fixed top-2.5 left-3 z-30" aria-label="Open menu">
+          <Menu size={18} />
+        </button>
+      </div>
       {open && (
         <div className="fixed inset-0 z-40 md:hidden">
           <div className="absolute inset-0 bg-black/60" onClick={() => setOpen(false)} aria-hidden />

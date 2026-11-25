@@ -4,12 +4,13 @@ import { HelpCircle, X } from "lucide-react";
 import { useRef } from "react";
 
 // "? How this page works": a native dialog with a short explainer.
-export default function HelpModal({ title, text, label, close }: { title: string; text: string; label: string; close: string }) {
+// `compact` shows the icon only (the label becomes the accessible name).
+export default function HelpModal({ title, text, label, close, compact = false, buttonClass = "pill hover:text-text" }: { title: string; text: string; label: string; close: string; compact?: boolean; buttonClass?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
   return (
     <>
-      <button type="button" onClick={() => ref.current?.showModal()} className="pill hover:text-text" aria-haspopup="dialog">
-        <HelpCircle size={13} /> <span className="hidden sm:inline">{label}</span>
+      <button type="button" onClick={() => ref.current?.showModal()} className={buttonClass} aria-haspopup="dialog" aria-label={compact ? label : undefined} title={compact ? label : undefined}>
+        <HelpCircle size={13} /> {!compact && <span className="hidden sm:inline">{label}</span>}
       </button>
       <dialog ref={ref} className="m-auto w-[min(92vw,480px)] rounded-2xl border border-border bg-surface p-6 text-text backdrop:bg-black/70" onClick={(e) => e.target === ref.current && ref.current.close()}>
         <div className="flex items-start justify-between gap-3">

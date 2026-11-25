@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Candle } from "@/lib/api";
 
 type Level = { label: string; price: number; tone: "red" | "green" | "white" | "gold"; dashed?: boolean; dotted?: boolean };
-type Props = { candles: Candle[]; levels: Level[]; markerTime?: number; markers?: { time: number; direction: "BUY" | "SELL" }[]; direction: "BUY" | "SELL"; decimals: number; watermark?: string; height?: number; labels: { ema20: string; ema50: string; ema200: string; rsi: string } };
+type Props = { candles: Candle[]; levels: Level[]; markerTime?: number; markers?: { time: number; direction: "BUY" | "SELL" }[]; direction: "BUY" | "SELL"; decimals: number; watermark?: string; height?: number; fill?: boolean; labels: { ema20: string; ema50: string; ema200: string; rsi: string } };
 
 const ema = (values: number[], length: number) => {
   const k = 2 / (length + 1);
@@ -24,7 +24,8 @@ const rsi = (closes: number[], length = 14) => {
 const colour = (tone: Level["tone"]) => ({ red: "#ff6b7a", green: "#34f08d", white: "#f5f7fa", gold: "#e8c964" })[tone];
 
 // Candles with the plan's levels drawn on the price axis, a BUY/SELL marker on the signal candle, EMA overlays and an RSI pane.
-export default function SignalChart({ candles, levels, markerTime, markers = [], direction, decimals, watermark, height = 340, labels }: Props) {
+// `fill` sizes the chart to its parent (the Terminal workspace) instead of a fixed height.
+export default function SignalChart({ candles, levels, markerTime, markers = [], direction, decimals, watermark, height = 340, fill = false, labels }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const [overlays, setOverlays] = useState({ ema20: true, ema50: true, ema200: false, rsi: true });
   // Visible window measured in bars from the right edge, so a refresh with a new candle keeps the user's zoom and scroll.
@@ -34,7 +35,7 @@ export default function SignalChart({ candles, levels, markerTime, markers = [],
     if (!box.current || candles.length === 0) return;
     const css = getComputedStyle(document.documentElement);
     const chart: IChartApi = createChart(box.current, {
-      height: overlays.rsi ? height + 100 : height,
+      height: fill ? Math.max(200, box.current.clientHeight) : overlays.rsi ? height + 100 : height,
       layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: css.getPropertyValue("--text-muted").trim() || "#8a8f98", fontFamily: "Inter, system-ui, sans-serif", panes: { separatorColor: css.getPropertyValue("--border").trim() } },
       grid: { vertLines: { color: "rgba(255,255,255,0.04)" }, horzLines: { color: "rgba(255,255,255,0.04)" } },
       rightPriceScale: { borderColor: css.getPropertyValue("--border").trim() },
@@ -71,8 +72,10 @@ export default function SignalChart({ candles, levels, markerTime, markers = [],
       pane.createPriceLine({ price: 30, color: "rgba(52,240,141,0.6)", lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" });
       chart.panes()[1]?.setHeight(100);
     }
-    const resize = () => chart.applyOptions({ width: box.current?.clientWidth ?? 600 });
+    const resize = () => chart.applyOptions(fill && box.current ? { width: box.current.clientWidth, height: Math.max(200, box.current.clientHeight) } : { width: box.current?.clientWidth ?? 600 });
     resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(box.current);
     const last = candles.length - 1;
     if (view.current) chart.timeScale().setVisibleLogicalRange({ from: last - view.current.fromEnd, to: last - view.current.toEnd });
     else chart.timeScale().fitContent();
@@ -81,21 +84,22 @@ export default function SignalChart({ candles, levels, markerTime, markers = [],
       const range = chart.timeScale().getVisibleLogicalRange();
       if (range) view.current = { fromEnd: last - range.from, toEnd: last - range.to };
       window.removeEventListener("resize", resize);
+      observer.disconnect();
       chart.remove();
     };
-  }, [candles, levels, markerTime, markers, direction, decimals, overlays, watermark, height]);
+  }, [candles, levels, markerTime, markers, direction, decimals, overlays, watermark, height, fill]);
 
   const toggle = (key: keyof typeof overlays) => setOverlays((value) => ({ ...value, [key]: !value[key] }));
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap gap-1.5">
+    <div className={fill ? "flex h-full flex-col" : ""}>
+      <div className={`flex flex-wrap gap-1.5 ${fill ? "px-3 pt-2 pb-1" : "mb-2"}`}>
         {(["ema20", "ema50", "ema200", "rsi"] as const).map((key) => (
           <button key={key} type="button" onClick={() => toggle(key)} className={`pill ${overlays[key] ? "pill-active" : ""}`} aria-pressed={overlays[key]}>
             {labels[key]}
           </button>
         ))}
       </div>
-      <div ref={box} className="w-full" />
+      <div ref={box} className={fill ? "min-h-0 w-full flex-1 overflow-hidden" : "w-full"} />
     </div>
   );
 }

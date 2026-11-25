@@ -10,6 +10,7 @@ import json
 import os
 import threading
 import time
+import urllib.request
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
@@ -168,6 +169,26 @@ def build_news() -> list[dict]:
 @app.get('/news')
 def news_feed():
     return cached('news', build_news)
+
+
+FEAR_GREED_URL = 'https://api.alternative.me/fng/?limit=1'
+
+
+def build_sentiment() -> dict:
+    """Crypto Fear & Greed index (alternative.me, daily, 0-100). Null when the source is down; nothing is estimated."""
+    try:
+        request = urllib.request.Request(FEAR_GREED_URL, headers={'User-Agent': 'zebra-web/1.0'})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            row = json.load(response)['data'][0]
+        return {'crypto_fear_greed': {'value': int(row['value']), 'label': row['value_classification'],
+                                      'time': int(row['timestamp']), 'source': 'alternative.me'}}
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return {'crypto_fear_greed': None}
+
+
+@app.get('/sentiment')
+def sentiment():
+    return cached('sentiment', build_sentiment)
 
 
 TIMEFRAMES = {'1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400}
