@@ -2,7 +2,7 @@
 
 **Educational use only. Trading can cause substantial financial loss.**
 
-Zebra is a rule-based desk. Every setup it publishes comes from fixed rules on the broker's own candles, never from a language model's opinion. The AI only writes a short note; the rules decide. This page explains the ideas behind those rules in plain words. The Khmer version is a full beginner's book; this is the short English summary.
+Zebra is a rule-based desk. Every setup it publishes comes from fixed rules on the broker's own candles, never from a language model's opinion. The AI only writes a short note; the rules decide. This page explains the ideas behind those rules in plain words.
 
 ## 1. The market moves between pools of orders
 

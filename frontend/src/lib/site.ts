@@ -4,7 +4,8 @@ export const site = {
   name: "Zebra Empire",
   shortName: "Zebra",
   tagline: "by Cambotix Solutions",
-  telegram: process.env.NEXT_PUBLIC_TELEGRAM_URL ?? "#",
+  // Community group. `||` (not `??`) because Docker passes an empty string when the variable is unset.
+  telegram: process.env.NEXT_PUBLIC_TELEGRAM_URL || "https://t.me/+r7G38e8hMiRmZWY9",
   markets: ["XAUUSD", "EURUSD", "BTCUSD"],
 };
 

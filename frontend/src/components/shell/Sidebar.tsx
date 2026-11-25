@@ -13,7 +13,7 @@ import { site } from "@/lib/site";
 // Fixed 64px rail on desktop; a slide-out drawer on mobile. Active item: surface-2, gold left bar, white text.
 export default function Sidebar({ lang, labels }: { lang: Lang; labels: Dict["nav"] }) {
   const pathname = usePathname() ?? "/";
-  const bare = pathname.replace(/^\/(en|km)(?=\/|$)/, "") || "/";
+  const bare = pathname || "/";
   const [open, setOpen] = useState(false);
   const [more, setMore] = useState(false);
 

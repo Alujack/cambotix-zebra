@@ -142,4 +142,20 @@ table { font-variant-numeric: tabular-nums; }
 .scroll-cue { animation: scroll-cue 2s ease-in-out infinite; }
 @keyframes scroll-cue { 50% { transform: translateY(6px); opacity: 0.5; } }
 .text-fade-gold { background: linear-gradient(90deg, #f5f7fa 0%, #e8c964 45%, rgba(232, 201, 100, 0.45) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-@media (prefers-reduced-motion: reduce) { .marquee, .hero-drift, .hero-shimmer, .scroll-cue { animation: none; } }
+.font-display { font-family: var(--font-sora), var(--font-inter), system-ui, sans-serif; letter-spacing: -0.03em; }
+
+/* Mobile nav menu (<details>): swap the menu / close icons. */
+.nav-menu > summary::-webkit-details-marker { display: none; }
+.nav-menu .nav-close, .nav-menu[open] .nav-open { display: none; }
+.nav-menu[open] .nav-close { display: block; }
+
+/* Scroll-driven effects where the browser supports them; elsewhere sections simply show and the bar stays hidden. */
+.scroll-progress { transform: scaleX(0); }
+@supports (animation-timeline: scroll()) {
+  .scroll-progress { animation: grow-x linear both; animation-timeline: scroll(root); }
+  .reveal { animation: reveal linear both; animation-timeline: view(); animation-range: entry 0% entry 40%; }
+}
+@keyframes grow-x { to { transform: scaleX(1); } }
+@keyframes reveal { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) { .marquee, .hero-drift, .hero-shimmer, .scroll-cue, .reveal, .scroll-progress { animation: none; } }

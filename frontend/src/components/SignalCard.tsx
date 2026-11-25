@@ -1,6 +1,7 @@
 import { ChevronDown, Hourglass } from "lucide-react";
 import Link from "next/link";
 import Countdown from "@/components/Countdown";
+import MarketIcon from "@/components/MarketIcon";
 import { Badge, Chip, type Tone } from "@/components/ui";
 import type { Plan, Ticker } from "@/lib/api";
 import { modelName, price, r, utc } from "@/lib/format";
@@ -46,12 +47,12 @@ export default function SignalCard({ plan, lang, ticker }: { plan: Plan; lang: L
   const finished = plan.status !== "open";
   const closedAt = plan.events.find((event) => event.kind === "closed" || event.kind === "not_filled")?.time;
   return (
-    <article className={`card flex flex-col p-4 ${buy ? "border-green/30" : "border-red/30"}`}>
+    <article className={`flex flex-col rounded-2xl border bg-gradient-to-b p-5 ${buy ? "border-green/25 from-green/[0.05]" : "border-red/25 from-red/[0.05]"} to-surface`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-3">
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-surface-2 text-xs font-bold text-gold">{plan.symbol.slice(0, 3)}</span>
+          <MarketIcon symbol={plan.symbol} size={44} />
           <div>
-            <div className="text-base font-bold leading-tight">{plan.symbol}</div>
+            <div className="text-lg font-bold leading-tight">{plan.symbol}</div>
             <div className="text-xs text-muted">{d.card[assetClass(plan.symbol)]} · {plan.timeframe} · {modelName[plan.model] ?? plan.model}</div>
           </div>
         </div>

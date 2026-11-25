@@ -1,14 +1,14 @@
 import type { Ticker } from "@/lib/api";
 import { price } from "@/lib/format";
 import { t, type Lang } from "@/lib/i18n";
+import TickerTape from "./TickerTape";
 
 // Endless marquee of the broker's last prices. The list is rendered twice and slid by half its width, so it loops seamlessly.
 // Pauses on hover; stands still under prefers-reduced-motion (see .marquee in globals.css).
 export default function TickerStrip({ tickers, lang }: { tickers: Ticker[]; lang: Lang }) {
   const d = t(lang);
-  if (tickers.length === 0) {
-    return <div className="border-b border-border bg-black/60 px-4 py-2.5 text-center text-xs text-muted">{d.ticker.empty}</div>;
-  }
+  // No broker candles yet: show TradingView's live vendor prices instead of an empty strip.
+  if (tickers.length === 0) return <TickerTape />;
   // Repeat short lists so one copy is wider than the screen.
   const row = Array.from({ length: Math.max(1, Math.ceil(8 / tickers.length)) }, () => tickers).flat();
   const items = (copy: number) => row.map((item, index) => {
