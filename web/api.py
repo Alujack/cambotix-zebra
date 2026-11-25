@@ -61,7 +61,7 @@ def build_record() -> dict:
     return record
 
 
-def plan_view(seq: int, plan: dict, events: list[dict]) -> dict:
+def plan_view(seq: int, plan: dict, events: list[dict], notes: dict | None = None) -> dict:
     last = events[-1] if events else None
     status = last['kind'] if last and last['kind'] in TERMINAL else 'open'
     view = {'seq': seq, 'event_id': plan['event_id'], 'symbol': plan['symbol'], 'model': plan['model'],
@@ -79,7 +79,23 @@ def plan_view(seq: int, plan: dict, events: list[dict]) -> dict:
         view['result'] = {k: last[k] for k in ('exit', 'targets_hit', 'ambiguous', 'r_tp1', 'r_scaled')}
     elif status == 'not_filled':
         view['result'] = {'reason': last['reason']}
+    # AI explanations (commentary, never part of the record). The plan note is written without prices, so it is
+    # public from the start; the result review only once the plan has closed.
+    notes = notes or {}
+    view['ai'] = {'plan': notes.get('plan'), 'result': notes.get('result') if status == 'closed' else None,
+                  'model': notes.get('model')}
     return view
+
+
+def ai_notes(conn, event_ids: list[str]) -> dict[str, dict]:
+    """{event_id: {'plan': text, 'result': text, 'model': name}}; empty when the analyzer has not created the table yet."""
+    if not event_ids or conn.execute("SELECT to_regclass('ai_notes') AS t").fetchone()['t'] is None:
+        return {}
+    found: dict[str, dict] = {}
+    for row in conn.execute('SELECT event_id, kind, note, model FROM ai_notes WHERE event_id = ANY(%s)', (event_ids,)):
+        found.setdefault(row['event_id'], {})[row['kind']] = row['note']
+        found[row['event_id']]['model'] = row['model']
+    return found
 
 
 def build_signals(limit: int) -> list[dict]:
@@ -87,6 +103,7 @@ def build_signals(limit: int) -> list[dict]:
         rows = conn.execute('''SELECT seq, event_id, kind, body FROM ledger WHERE event_id IN
             (SELECT event_id FROM ledger WHERE kind='published' ORDER BY seq DESC LIMIT %s) ORDER BY seq''',
                             (limit,)).fetchall()
+        notes = ai_notes(conn, list({row['event_id'] for row in rows}))
     plans, events = {}, {}
     for row in rows:
         body = json.loads(row['body'])
@@ -94,7 +111,7 @@ def build_signals(limit: int) -> list[dict]:
             plans[row['event_id']] = (row['seq'], body)
         else:
             events.setdefault(row['event_id'], []).append(body)
-    views = [plan_view(seq, plan, events.get(event_id, [])) for event_id, (seq, plan) in plans.items()]
+    views = [plan_view(seq, plan, events.get(event_id, []), notes.get(event_id)) for event_id, (seq, plan) in plans.items()]
     return sorted(views, key=lambda item: -item['seq'])
 
 
@@ -135,8 +152,9 @@ def build_plan(seq: int) -> dict | None:
         if not head:
             return None
         rows = conn.execute('SELECT seq, kind, body FROM ledger WHERE event_id=%s ORDER BY seq', (head['event_id'],)).fetchall()
+        notes = ai_notes(conn, [head['event_id']])
     plan = json.loads(rows[0]['body'])
-    return plan_view(seq, plan, [json.loads(row['body']) for row in rows[1:]])
+    return plan_view(seq, plan, [json.loads(row['body']) for row in rows[1:]], notes.get(head['event_id']))
 
 
 @app.get('/signals/{seq}')

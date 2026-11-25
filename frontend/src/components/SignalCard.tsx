@@ -1,5 +1,6 @@
 import { ChevronDown, Hourglass } from "lucide-react";
 import Link from "next/link";
+import { AiPreview } from "@/components/AiNote";
 import Countdown from "@/components/Countdown";
 import MarketIcon from "@/components/MarketIcon";
 import { Badge, Chip, type Tone } from "@/components/ui";
@@ -86,6 +87,8 @@ export default function SignalCard({ plan, lang, ticker }: { plan: Plan; lang: L
           </div>
         )}
       </div>
+
+      <AiPreview plan={plan} />
 
       {chips.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">

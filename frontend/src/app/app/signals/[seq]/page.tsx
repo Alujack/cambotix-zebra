@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import TopBar from "@/components/shell/TopBar";
+import AiNote from "@/components/AiNote";
 import PositionSizer from "@/components/PositionSizer";
 import SignalChart from "@/components/SignalChart";
 import { IndicatorTile, KeyValue, SectionCard } from "@/components/ui";
@@ -151,6 +152,7 @@ async function Detail({ params }: { params: Promise<{ seq: string }> }) {
 
       <h2 className="label mb-2">{d.detail.summary}</h2>
       <Summary plan={plan} lang={lang} />
+      <AiNote plan={plan} />
 
       <h2 className="label mt-8 mb-2">{d.detail.levels}</h2>
       {levels ? (

@@ -186,3 +186,34 @@ def test_trade_result_is_sent_first_and_the_local_note_follows(client, monkeypat
         note = conn.execute("SELECT ref, message FROM messages WHERE kind='trade_note'").fetchone()
     assert note['ref'] == f'note:{signal.event_id}' and 'Reached TP1' in note['message']
     assert 'graded by code' in note['message'] and [row['kind'] for row in ledger_rows()][-1] == 'closed'
+
+
+def test_plan_note_is_written_without_prices_and_shown_on_the_site(client, monkeypatch):
+    from fastapi.testclient import TestClient
+    from web import api
+    monkeypatch.setenv('AI_PLAN_NOTES', 'true')
+    signal, plan = publish_in_past(client, monkeypatch)
+    with main.database() as conn:
+        assert conn.execute("SELECT status FROM ai_jobs WHERE kind='plan_note' AND ref=%s", (signal.event_id,)).fetchone() \
+            == {'status': 'queued'}
+    seen, replies = [], [json.dumps({'note': f'The rules bought because price swept {plan["entry"]:.2f} and closed back inside the range.'}),
+                         json.dumps({'note': 'Price swept the range low and closed back inside, so the rules bought. '
+                                             'The stop sits beyond the swept wick; a close back below it would prove the idea wrong.'})]
+
+    def fake_chat(job, messages, **kwargs):
+        seen.append(messages[-1]['content'])
+        return replies.pop(0)
+    monkeypatch.setattr(jobs.ollama, 'chat', fake_chat)
+    client.post('/agent')                                              # a price in the note: discarded, retried
+    with main.database() as conn:
+        assert conn.execute("SELECT error_code FROM ai_jobs WHERE kind='plan_note'").fetchone()['error_code'] == 'invented_numbers'
+        conn.execute('UPDATE ai_jobs SET next_attempt_at=now()')
+    client.post('/agent')
+    # The model is never shown a price: the open plan's levels stay private.
+    assert seen and all(f'{plan["entry"]:.2f}' not in data and f'{plan["stop"]:.2f}' not in data for data in seen)
+    api.clear_cache()
+    view = TestClient(api.app).get('/signals').json()[0]
+    assert view['status'] == 'open' and 'levels' not in view
+    assert view['ai']['plan'].startswith('Price swept the range low') and view['ai']['result'] is None
+    # A second run never rewrites the published explanation.
+    assert jobs.plan_note(signal.event_id) == 'skipped'

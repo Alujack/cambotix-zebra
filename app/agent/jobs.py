@@ -3,6 +3,7 @@ delay or block a signal alert or a trade result. Facts come from code; the model
 import json
 import logging
 import os
+import re
 import time
 
 from psycopg.types.json import Jsonb
@@ -10,10 +11,10 @@ from pydantic import ValidationError
 
 from app.ai import ollama, prompts
 from app.ai.review import classify
-from app.ai.schemas import TradeNote, unsupported_numbers
+from app.ai.schemas import NUMBER, PlanNote, TradeNote, unsupported_numbers
 from app.agent.tools import iso
 from app.db import database
-from app.domain import Signal, plain_reason
+from app.domain import Signal, plain_reason, trade_plan
 from app.outbox import queue_message
 
 MAX_ATTEMPTS = 3
@@ -30,6 +31,10 @@ def signal_notes_enabled() -> bool:
 
 def trade_notes_enabled() -> bool:
     return os.getenv('TRADE_NOTES', 'true').lower() == 'true'
+
+
+def plan_notes_enabled() -> bool:
+    return os.getenv('AI_PLAN_NOTES', 'true').lower() == 'true'
 
 
 def claim() -> dict | None:
@@ -55,7 +60,7 @@ def run_one() -> dict:
     if not job:
         return {'status': 'idle'}
     try:
-        outcome = (signal_note if job['kind'] == 'signal_note' else trade_note)(job['ref'])
+        outcome = {'signal_note': signal_note, 'trade_note': trade_note, 'plan_note': plan_note}[job['kind']](job['ref'])
     except ollama.LocalAIError as error:
         finish(job, 'retry', error.code)
         return {'status': 'retry', 'kind': job['kind'], 'error': error.code}
@@ -156,4 +161,80 @@ def trade_note(event_id: str) -> str:
                          '⚠️ AI commentary only; the result above is graded by code.'])
     with database() as conn:
         queue_message(conn, f'note:{event_id}', 'trade_note', 'private', message)
+        save_note(conn, event_id, 'result', note)
     return 'done'
+
+
+def save_note(conn, event_id: str, kind: str, note: str) -> None:
+    """Store a note for the website. First write wins: a published explanation is never silently rewritten."""
+    conn.execute('INSERT INTO ai_notes(event_id, kind, note, model) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING',
+                 (event_id, kind, note, ollama.model()))
+
+
+# A price is a free-standing number with a decimal point or 4+ digits (3512.4, 1.0921, 59240). Names like EMA200,
+# counts like 58W/112 and small numbers (RSI 62, 1.3 ATR stays: under 3 significant digits) are kept.
+PRICE = re.compile(r'(?<![A-Za-z0-9./])(?:\d+\.\d{2,}|\d{4,}(?:\.\d+)?)(?![A-Za-z0-9])')
+
+
+def without_prices(text: str) -> str:
+    """Drop every price or level from a sentence, plus the brackets and spacing it leaves behind."""
+    kept = re.sub(r'\(\s*\)', '', PRICE.sub('', text))
+    return re.sub(r'\s+([,.;:])', r'\1', re.sub(r'\s{2,}', ' ', kept)).strip(' ,')
+
+
+def plan_facts(conn, event_id: str) -> dict | None:
+    """What a plan note may say, with no prices in it: the plan's levels stay hidden on the site while it is open."""
+    head = conn.execute("SELECT body FROM ledger WHERE event_id=%s AND kind='published'", (event_id,)).fetchone()
+    row = conn.execute('SELECT payload FROM signals WHERE event_id=%s', (event_id,)).fetchone()
+    if not head or not row:
+        return None
+    plan, signal = json.loads(head['body']), Signal.model_validate(row['payload'])
+    levels = trade_plan(signal)
+    return {'market': plan['symbol'], 'direction': plan['direction'], 'model': plan['model'],
+            'timeframe': plan['timeframe'], 'session': plan.get('session'),
+            'entry': without_prices(levels.get('entry_note') or f'{plan.get("entry_type", "market")} entry'),
+            'setup': without_prices(plain_reason(signal)),
+            'stop': without_prices(f'{levels.get("basis", "beyond the setup")}, {levels["risk_atr"]:.1f} ATR from entry'),
+            'targets': [f'TP{i}: {multiple:g}R' + (f' ({without_prices(note)})' if without_prices(note) else '')
+                        for i, (multiple, _, note) in enumerate(plan['targets'], 1)],
+            'max_hold_minutes': plan.get('max_hold_minutes'),
+            'cautions': [without_prices(item) for item in plan.get('cautions', [])]}
+
+
+def plan_note(event_id: str) -> str:
+    """A beginner-level explanation of a published plan for the website. Facts from code; the model only words them."""
+    with database() as conn:
+        facts = plan_facts(conn, event_id)
+        done = conn.execute("SELECT 1 FROM ai_notes WHERE event_id=%s AND kind='plan'", (event_id,)).fetchone()
+    if facts is None or done:
+        return 'skipped'
+    data = json.dumps(facts, separators=(',', ':'))
+    text = ollama.chat('plan_note', [{'role': 'system', 'content': prompts.PLAN_NOTE},
+                                     {'role': 'user', 'content': 'DATA: ' + data}],
+                       schema=PlanNote.model_json_schema(), temperature=0.2, max_tokens=220)
+    note = PlanNote.model_validate_json(text).note
+    if unsupported_numbers(note, data):
+        # DATA carries no prices, so any price-like number was made up (or leaks a hidden level): discard it.
+        raise ollama.LocalAIError('invented_numbers')
+    with database() as conn:
+        save_note(conn, event_id, 'plan', note)
+    return 'done'
+
+
+def backfill_plan_notes() -> int:
+    """Queue a plan note for every published plan that has none yet. Returns how many were queued."""
+    with database() as conn:
+        rows = conn.execute("""SELECT l.event_id FROM ledger l WHERE l.kind='published' AND NOT EXISTS
+            (SELECT 1 FROM ai_notes n WHERE n.event_id=l.event_id AND n.kind='plan') ORDER BY l.seq""").fetchall()
+        for row in rows:
+            enqueue(conn, 'plan_note', row['event_id'])
+    return len(rows)
+
+
+if __name__ == '__main__':
+    # python -m app.agent.jobs backfill-plan-notes  → queue explanations for plans published before this feature.
+    import sys
+    if sys.argv[1:] == ['backfill-plan-notes']:
+        print(f'queued {backfill_plan_notes()} plan notes; the agent worker writes them on its next ticks')
+    else:
+        raise SystemExit('usage: python -m app.agent.jobs backfill-plan-notes')

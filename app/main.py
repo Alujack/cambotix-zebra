@@ -103,6 +103,9 @@ def finish(signal: Signal, status: str, analysis: Analysis | None, reasons: list
             # Published in the same transaction as the approval: an approved setup is always on the record.
             now = int(time.time())
             seq, _ = ledger.append(conn, signal.event_id, 'published', now, ledger.plan_record(signal, now, warnings))
+        if seq is not None and jobs.plan_notes_enabled():
+            # The website's plain-language explanation, written later by the agent worker like every other note.
+            jobs.enqueue(conn, 'plan_note', signal.event_id)
         if status == 'approved' and analysis is None and gate_mode() == 'rules' and jobs.signal_notes_enabled():
             # Commentary is written after the alert by the agent worker: a slow or offline model never delays it.
             jobs.enqueue(conn, 'signal_note', signal.event_id)

@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS ai_usage (
 CREATE INDEX IF NOT EXISTS ai_usage_provider_created_idx ON ai_usage (provider, created_at);
 CREATE TABLE IF NOT EXISTS ai_jobs (
     id bigserial PRIMARY KEY,
-    kind text NOT NULL CHECK (kind IN ('signal_note', 'trade_note')),
+    kind text NOT NULL CHECK (kind IN ('signal_note', 'trade_note', 'plan_note')),
     ref text NOT NULL,
     status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'done', 'failed', 'skipped')),
     attempts integer NOT NULL DEFAULT 0,
@@ -32,6 +32,19 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
     UNIQUE (kind, ref)
 );
 CREATE INDEX IF NOT EXISTS ai_jobs_queue_idx ON ai_jobs (next_attempt_at) WHERE status = 'queued';
+-- Databases created before plan notes keep the old two-kind CHECK; replace it (idempotent).
+ALTER TABLE ai_jobs DROP CONSTRAINT IF EXISTS ai_jobs_kind_check;
+ALTER TABLE ai_jobs ADD CONSTRAINT ai_jobs_kind_check CHECK (kind IN ('signal_note', 'trade_note', 'plan_note'));
+-- Plain-language AI explanations shown on the website: 'plan' when a plan publishes (written without prices, so it
+-- can be public while the plan's levels are still hidden), 'result' after it closes. Commentary only.
+CREATE TABLE IF NOT EXISTS ai_notes (
+    event_id text NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('plan', 'result')),
+    note text NOT NULL,
+    model text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (event_id, kind)
+);
 CREATE TABLE IF NOT EXISTS ai_reports (
     ref text PRIMARY KEY,
     period_start bigint NOT NULL,

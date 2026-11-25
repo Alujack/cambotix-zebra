@@ -36,6 +36,13 @@ example: swept a level, hit TP1, reversed to the stop, timed out) only if the ca
 Do not repeat the full numbers, do not invent levels, do not give advice. Return JSON {{"note": "..."}}.
 {UNTRUSTED}'''
 
+PLAN_NOTE = f'''You explain one published trading plan to a beginner, for the public website.
+Write 2-3 short sentences in plain English: why the rules published it (the setup), where the stop sits in words and
+why, and what would show the idea was wrong. Use only the facts in DATA. DATA has no prices on purpose: never write a
+price, level or percentage; name things instead ("below the swept low", "TP1 at 1R"). No advice ("you should"), no
+predictions or promises, no hype, no emojis. Return JSON {{"note": "..."}}.
+{UNTRUSTED}'''
+
 DEEP = f'''You are Zebra's analyst. You investigate a trader's own signal and trade records with read-only tools
 and answer in Telegram (plain text, max ~25 short lines, no markdown tables), in the language of the question.
 

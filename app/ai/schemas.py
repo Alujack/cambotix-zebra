@@ -28,6 +28,18 @@ class TradeNote(BaseModel):
         return value.strip()
 
 
+class PlanNote(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    note: str = Field(min_length=40, max_length=480)
+
+    @field_validator('note')
+    @classmethod
+    def plain(cls, value):
+        if '\n' in value.strip():
+            raise ValueError('a plan note is one short paragraph')
+        return value.strip()
+
+
 NUMBER = re.compile(r'\d+(?:\.\d+)?')
 
 

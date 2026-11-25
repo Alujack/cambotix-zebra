@@ -69,6 +69,8 @@ export type Plan = {
   levels?: { entry: number; stop: number; targets: [number, number, string][] };
   result?: { exit?: string; targets_hit?: number; ambiguous?: boolean; r_tp1?: number; r_scaled?: number; reason?: string };
   events: LedgerEvent[];
+  // AI commentary (web/api.py ai_notes): plan note is price-free and public; result note only after the close.
+  ai?: { plan: string | null; result: string | null; model: string | null };
 };
 
 export type Ticker = {

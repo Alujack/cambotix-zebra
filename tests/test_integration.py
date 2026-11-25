@@ -35,6 +35,7 @@ def isolated_database(monkeypatch):
     monkeypatch.delenv('CRT_MAX_HOLD_CANDLES', raising=False)
     monkeypatch.delenv('AI_COMMENTARY', raising=False)
     monkeypatch.setenv('AGENT_ENABLED', 'false')
+    monkeypatch.setenv('AI_PLAN_NOTES', 'false')         # tests that read ai_jobs expect only their own job; see the plan-note test
     monkeypatch.setenv('WEEKLY_REPORT_ENABLED', 'false')
     with main.database() as conn:
         ledger.migrate(conn)
@@ -42,7 +43,7 @@ def isolated_database(monkeypatch):
         # Test-only reset: replica mode skips the append-only triggers, which requires a database superuser.
         conn.execute('SET session_replication_role = replica')
         conn.execute('TRUNCATE messages, ledger, candles, coverage, notifications, signals, ai_usage, ai_jobs, '
-                     'ai_reports, agent_state, agent_updates, agent_messages')
+                     'ai_reports, agent_state, agent_updates, agent_messages, ai_notes')
     yield
 
 
