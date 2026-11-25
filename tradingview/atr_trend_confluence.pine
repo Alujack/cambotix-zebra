@@ -1,0 +1,166 @@
+//@version=6
+// ATR Trend Confluence System: an EMA baseline, a Supertrend trailing stop and BUY/SELL labels on the bar where the
+// stop flips, kept only when every filter agrees. A prototype for research, not a tested strategy.
+// web/trend.py runs the same logic on the broker's candles for the website and the API; keep the two in step
+// (inputs here = TrendConfig there).
+indicator("ATR Trend Confluence System", overlay=true)
+
+// ==========================================
+// 1. INPUTS
+// ==========================================
+
+baseLen = input.int(50, "Baseline EMA")
+
+stLen = input.int(14, "Supertrend ATR Length")
+stMult = input.float(2.8, "Supertrend Multiplier", step=0.1)
+
+htfTf = input.timeframe("60", "Higher Timeframe")
+htfFastLen = input.int(50, "HTF Fast EMA")
+htfSlowLen = input.int(200, "HTF Slow EMA")
+
+diLen = input.int(14, "DMI Length")
+adxSmooth = input.int(14, "ADX Smoothing")
+adxMin = input.float(20, "Minimum ADX")
+
+chopLen = input.int(14, "CHOP Length")
+maxChop = input.float(55, "Maximum CHOP")
+
+maxExtension = input.float(1.0, "Max Baseline Distance (ATR)")
+
+useHTF = input.bool(true, "Enable HTF Filter")
+useADX = input.bool(true, "Enable ADX Filter")
+useCHOP = input.bool(true, "Enable CHOP Filter")
+useSession = input.bool(true, "Enable Session Filter")
+useBOS = input.bool(false, "Require Recent BOS")
+
+bosLookback = input.int(8, "BOS Valid Bars")
+pivotLen = input.int(3, "Structure Pivot Length")
+
+londonSession = input.session("0700-1100:23456", "London Session")
+newYorkSession = input.session("0800-1100:23456", "New York Session")
+
+// ==========================================
+// 2. BASELINE
+// ==========================================
+
+baseline = ta.ema(close, baseLen)
+
+baseBull = close > baseline and baseline > baseline[1]
+baseBear = close < baseline and baseline < baseline[1]
+
+// ==========================================
+// 3. SUPERTREND
+// ==========================================
+
+[stLine, stDir] = ta.supertrend(stMult, stLen)
+
+stBull = stDir < 0
+stBear = stDir > 0
+
+flipBull = ta.crossunder(stDir, 0)
+flipBear = ta.crossover(stDir, 0)
+
+atr = ta.atr(stLen)
+
+// ==========================================
+// 4. CONFIRMED HTF DIRECTION
+// ==========================================
+// The previous completed higher-timeframe candle: one-bar offset with lookahead on, so nothing repaints.
+
+[htfClose, htfFast, htfSlow] = request.security(syminfo.tickerid, htfTf, [close[1], ta.ema(close, htfFastLen)[1], ta.ema(close, htfSlowLen)[1]], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+htfBull = htfClose > htfFast and htfFast > htfSlow
+htfBear = htfClose < htfFast and htfFast < htfSlow
+
+htfLongOK = not useHTF or htfBull
+htfShortOK = not useHTF or htfBear
+
+// ==========================================
+// 5. ADX + DMI
+// ==========================================
+
+[plusDI, minusDI, adx] = ta.dmi(diLen, adxSmooth)
+
+adxLongOK = not useADX or (adx >= adxMin and plusDI > minusDI)
+adxShortOK = not useADX or (adx >= adxMin and minusDI > plusDI)
+
+// ==========================================
+// 6. CHOPPINESS INDEX
+// ==========================================
+
+trSum = math.sum(ta.tr(true), chopLen)
+priceRange = math.max(ta.highest(high, chopLen) - ta.lowest(low, chopLen), syminfo.mintick)
+chop = 100.0 * math.log10(trSum / priceRange) / math.log10(chopLen)
+
+chopOK = not useCHOP or chop < maxChop
+
+// ==========================================
+// 7. SESSION FILTER
+// ==========================================
+
+inLondon = not na(time(timeframe.period, londonSession, "Europe/London"))
+inNewYork = not na(time(timeframe.period, newYorkSession, "America/New_York"))
+
+sessionOK = not useSession or inLondon or inNewYork
+
+// ==========================================
+// 8. STRUCTURE / BOS
+// ==========================================
+
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int swingHighBar = na
+var int swingLowBar = na
+
+if not na(ph)
+    lastSwingHigh := ph
+    swingHighBar := bar_index
+
+if not na(pl)
+    lastSwingLow := pl
+    swingLowBar := bar_index
+
+bullBOS = not na(lastSwingHigh) and bar_index > swingHighBar and ta.crossover(close, lastSwingHigh)
+bearBOS = not na(lastSwingLow) and bar_index > swingLowBar and ta.crossunder(close, lastSwingLow)
+
+bullBosRecent = ta.barssince(bullBOS) <= bosLookback
+bearBosRecent = ta.barssince(bearBOS) <= bosLookback
+
+structureLongOK = not useBOS or bullBosRecent
+structureShortOK = not useBOS or bearBosRecent
+
+// ==========================================
+// 9. EXTENSION FILTER
+// ==========================================
+
+nearBaseline = math.abs(close - baseline) <= atr * maxExtension
+
+// ==========================================
+// 10. FINAL SIGNALS
+// ==========================================
+
+longSignal = barstate.isconfirmed and flipBull and baseBull and htfLongOK and adxLongOK and chopOK and sessionOK and structureLongOK and nearBaseline
+shortSignal = barstate.isconfirmed and flipBear and baseBear and htfShortOK and adxShortOK and chopOK and sessionOK and structureShortOK and nearBaseline
+
+// ==========================================
+// 11. VISUALS
+// ==========================================
+
+plot(baseline, "EMA Baseline", color=color.yellow, linewidth=2)
+plot(stLine, "ATR Trailing Stop", color=stBull ? color.lime : color.red, linewidth=2, style=plot.style_linebr)
+
+plotshape(longSignal, title="BUY", style=shape.labelup, location=location.belowbar, color=color.green, text="BUY", textcolor=color.white, size=size.tiny)
+plotshape(shortSignal, title="SELL", style=shape.labeldown, location=location.abovebar, color=color.red, text="SELL", textcolor=color.white, size=size.tiny)
+// Flips the filters rejected, as on the website: where the plain trailing stop turned.
+plotshape(barstate.isconfirmed and flipBull and not longSignal, title="Rejected bullish flip", style=shape.circle, location=location.belowbar, color=color.gray, size=size.tiny)
+plotshape(barstate.isconfirmed and flipBear and not shortSignal, title="Rejected bearish flip", style=shape.circle, location=location.abovebar, color=color.gray, size=size.tiny)
+
+// ==========================================
+// 12. ALERTS (set them to "Once Per Bar Close")
+// ==========================================
+
+alertcondition(longSignal, title="Filtered BUY", message="BUY {{ticker}} at {{close}}")
+alertcondition(shortSignal, title="Filtered SELL", message="SELL {{ticker}} at {{close}}")

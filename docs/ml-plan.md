@@ -724,3 +724,32 @@ Findings:
   the next 8 hours, which is no skill at all.
 
 Nothing here goes to the lockbox, and no model is built on these ideas.
+
+## ATR Trend Confluence screen (2026-11-25): 90 tests, none passed
+
+The indicator added to the website's broker chart on the same day (`web/trend.py`, source in
+`tradingview/atr_trend_confluence.pine`): EMA50 baseline, Supertrend stop ATR 14 x 2.8, a label where the stop
+flips, kept only when the filters agree (baseline, 1h EMA50/200, Choppiness, ADX/DMI, sessions, distance from the
+baseline, optional break of structure). `ml/atr_trend.py` puts it through `ml/screen.py` with the same pass rule.
+`python -m ml.atr_trend` runs in about 2.5 minutes; `--check` proves that no rule reads a later candle and that the
+screen marks exactly what the website engine marks (60 days of M5: 367 flips, 181,482 filter states, 0 differences).
+Development data only. Full tables: `ml/reports/xauusd_atr_trend_screen.md`.
+
+The indicator has no exits, so the trade was fixed before the run: enter at the M1 open after the signal bar, stop
+at the stop line (at least 1 ATR), and either a 2R target or "trail" (out when the stop flips back). Script
+defaults, nothing tuned. M1, M5 and M15; the filter ladder one filter at a time, and each filter alone on top of
+every flip.
+
+| What | Result (mean R per trade, discovery / confirmation) |
+|---|---|
+| Every stop flip, zero cost | M1 +0.02 / -0.03, M5 +0.00 / +0.01, M15 +0.05 / -0.01: a coin flip, as every earlier screen found |
+| Every stop flip, recorded spread | M1 -0.36 / -0.32, M5 -0.12 / -0.11, M15 -0.04 / -0.06 |
+| Adding the filters (ladder A0 to F) | no rung reaches +0.03R with t >= 2 at zero cost in discovery; the filters remove trades, they do not add edge |
+| Everything on, as on the website | M1 143 trades a year, -0.20 / -0.22; M5 24 a year, -0.26 / -0.07; M15 6 a year: too few to judge |
+| Best single filter: London / New York mornings only, M5, 2R target | +0.06 / +0.06 at zero cost (t 2.7), -0.07 / -0.06 at the recorded spread: an edge smaller than the spread |
+
+79 tests have no edge before costs, 8 have too few trades (M15 with four or more filters), 3 have an edge smaller
+than the spread. The session effect is the "breaks continue in active hours" effect already seen in the idea
+screen; Dukascopy's spread is about three times Exness's, but a third of the cost still leaves it near +0.02R,
+under the +0.05R bar. The indicator stays on the chart as a description of trend and stop; it is not a model, and
+nothing here goes to the lockbox.

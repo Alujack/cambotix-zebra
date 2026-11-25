@@ -4,13 +4,21 @@ import { BarChart3, CandlestickChart, Eye, LayoutGrid, Trophy } from "lucide-rea
 import MarketIcon from "@/components/MarketIcon";
 import Link from "next/link";
 import { useState } from "react";
+import { price } from "@/lib/format";
+import { change24h, useLiveQuotes } from "@/lib/live";
 import type { MarketCategory } from "@/lib/site";
 
-export type WatchRow = { symbol: string; name: string; category: MarketCategory; price: string | null; change: number | null; href: string; active: boolean };
+export type WatchRow = { symbol: string; name: string; category: MarketCategory; price: string | null; change: number | null; price24h: number | null; href: string; active: boolean };
 type Labels = { mainList: string; mySignals: string; mySignalsNone: string; search: string; all: string; crypto: string; forex: string; metals: string; watchlist: string; freePlan: string; upgrade: string; deskTitle: string; deskEvery: string; deskNone: string; deskOpen: string; deskLink: string; noQuote: string };
 
 // Left panel of the Terminal: plan badge, search, category tabs, the desk's markets with broker price and 24 h change, desk status.
-export default function Watchlist({ rows, labels, upgradeHref, signalsHref, openHere }: { rows: WatchRow[]; labels: Labels; upgradeHref: string; signalsHref: string; openHere: number }) {
+// Prices and changes follow the live stream; the server's last M1 close shows until the first tick arrives.
+export default function Watchlist({ rows: stored, labels, upgradeHref, signalsHref, openHere }: { rows: WatchRow[]; labels: Labels; upgradeHref: string; signalsHref: string; openHere: number }) {
+  const quotes = useLiveQuotes();
+  const rows = stored.map((row) => {
+    const live = quotes[row.symbol];
+    return live ? { ...row, price: price(live.bid), change: change24h(live.bid, row.price24h) ?? row.change } : row;
+  });
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"all" | MarketCategory>("all");
   const tabs = (["all", "crypto", "forex", "metals"] as const).filter((key) => key === "all" || rows.some((row) => row.category === key));

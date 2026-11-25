@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 // Client clocks for the Terminal. Server components may not read the clock (react-hooks/purity), and the
 // values have to keep moving between the 60 s data refreshes anyway.
-function useNow(everyMs: number) {
+export function useNow(everyMs: number) {
   const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
     const tick = () => setNow(Date.now() / 1000);
@@ -21,7 +21,7 @@ const span = (seconds: number) => {
 };
 
 // FX and metals: open Sunday 22:00 UTC to Friday 21:00 UTC. Approximate on purpose: DST and broker breaks are ignored.
-function fxSession(now: number): { open: boolean; next: number } {
+export function fxSession(now: number): { open: boolean; next: number } {
   const date = new Date(now * 1000);
   const weekStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - date.getUTCDay()) / 1000; // Sunday 00:00
   const opens = weekStart + 22 * 3600;

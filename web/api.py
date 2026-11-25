@@ -3,9 +3,13 @@
 It exposes only what the public record shows. Open plans are listed without their levels (entry, stop,
 targets): a live level is the product, the graded outcome is the proof. Everything a visitor sees here is
 computed by the same `app.ledger` code that writes the Telegram digest, so the site and the messages agree.
+
+`/stream` is the one live endpoint: the broker's latest tick and current minute bar per symbol, as Server-Sent
+Events. One poller reads the `quotes` table for every listener, so visitors add no database load.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import threading
@@ -13,11 +17,15 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 
+import psycopg
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from app import ledger, news
-from app.db import readonly
+from app.db import connect, readonly
 from app.domain import SYNTHETIC_PREFIXES
+from web import setups as setups_engine
+from web import trend as trend_engine
 from web.indicators import aggregate, snapshot
 
 app = FastAPI(title='Cambotix Zebra — public record', docs_url=None, redoc_url=None)
@@ -125,6 +133,8 @@ def build_tickers() -> list[dict]:
             change = (row['c'] / earlier['c'] - 1) * 100 if earlier and earlier['c'] else None
             out.append({'symbol': row['symbol'], 'price': row['c'], 'time': row['t'] + 60,
                         'change_24h_pct': round(change, 2) if change is not None else None,
+                        # The close 24 h earlier, so the site can recompute the change on every live tick.
+                        'price_24h': earlier['c'] if earlier else None,
                         'source': 'broker M1 close, about 1 minute delayed'})
     return out
 
@@ -250,6 +260,37 @@ def indicators(symbol: str, tf: str = Query('15m'), at: int | None = None):
     return cached(f'indicators:{symbol}:{tf}:{end}', build)
 
 
+@app.get('/setups/{symbol}')
+def setups(symbol: str, to: int | None = None, bars: int = Query(300, ge=20, le=1500)):
+    """Our own indicator (tradingview/gold_setups.pine) on the broker's candles: classic 15m setup candidates with
+    the analyzer's levels, and the rule table on the last closed 15m bar. Indicator output, not published plans."""
+    if symbol.upper() not in allowed():
+        raise HTTPException(404, 'Unknown symbol')
+    symbol = symbol.upper()
+    end = (to or int(time.time())) // 60 * 60
+
+    def build():
+        rows = load_m1(symbol, end - (bars + setups_engine.WARMUP) * setups_engine.BAR, end)
+        closed = setups_engine.closed_bars(aggregate(rows, setups_engine.BAR), rows[-1]['t'] if rows else None)
+        return setups_engine.build(symbol, closed, bars)
+    return cached(f'setups:{symbol}:{end}:{bars}', build)
+
+
+@app.get('/trend/{symbol}')
+def trend(symbol: str, tf: str = Query('5m'), to: int | None = None, bars: int = Query(300, ge=20, le=1500)):
+    """The ATR Trend Confluence System (tradingview/atr_trend_confluence.pine) on the broker's candles, on the chart's
+    timeframe: baseline and trailing-stop lines, every stop flip with what blocked it, and the filtered BUY/SELL
+    labels. An untested indicator prototype: nothing here is a published plan."""
+    if tf not in TIMEFRAMES or symbol.upper() not in allowed():
+        raise HTTPException(404, 'Unknown symbol or timeframe')
+    symbol, seconds = symbol.upper(), TIMEFRAMES[tf]
+    end = (to or int(time.time())) // 60 * 60
+    # Warmup for the chart bars and for the 1h filter, capped so a daily chart never loads years of M1 rows.
+    start = end - min(max((bars + trend_engine.WARMUP) * seconds, trend_engine.HTF_HISTORY), 45 * 86400)
+    return cached(f'trend:{symbol}:{tf}:{end}:{bars}',
+                  lambda: trend_engine.build(symbol, tf, load_m1(symbol, start, end), seconds, bars))
+
+
 def allowed() -> set[str]:
     return {s.strip().upper() for s in os.getenv('SYMBOLS', 'XAUUSD').split(',') if s.strip()}
 
@@ -264,3 +305,125 @@ def ledger_rows(after: int = Query(0, ge=0)):
     """Raw chain rows for anyone who wants to verify the record themselves."""
     with readonly() as conn:
         return ledger.rows(conn, after=after, limit=5000)
+
+
+# -- live quotes --------------------------------------------------------------
+POLL_SECONDS = 0.25
+HEARTBEAT_SECONDS = 15        # well inside the Cloudflare tunnel's 100 s idle limit
+
+
+def read_quotes(conn) -> dict[str, dict]:
+    """Latest tick and current minute bar per public symbol. Empty until the analyzer has created the table."""
+    try:
+        rows = conn.execute('SELECT symbol, bid, ask, tick_ms, minute, o, h, l, c FROM quotes WHERE symbol = ANY(%s)',
+                            (sorted(allowed()),)).fetchall()
+    except psycopg.errors.UndefinedTable:
+        return {}
+    return {row['symbol']: {'symbol': row['symbol'], 'bid': row['bid'], 'ask': row['ask'], 'time_ms': row['tick_ms'],
+                            'bar': {'t': row['minute'], 'o': row['o'], 'h': row['h'], 'l': row['l'], 'c': row['c']}}
+            for row in rows}
+
+
+class QuoteHub:
+    """Reads `quotes` every 250 ms while anyone is listening and hands each changed quote to every listener."""
+
+    def __init__(self) -> None:
+        self.listeners: set[asyncio.Queue] = set()
+        self.latest: dict[str, dict] = {}
+        self.task: asyncio.Task | None = None
+        self.conn: psycopg.Connection | None = None
+
+    def subscribe(self) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+        self.listeners.add(queue)
+        if self.task is None or self.task.done():
+            self.task = asyncio.create_task(self.run())
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        self.listeners.discard(queue)
+
+    def read(self) -> dict[str, dict]:
+        """Runs in a worker thread. One connection, kept open while the poller runs and read-only for its lifetime."""
+        if self.conn is None or self.conn.closed:
+            self.conn = connect()
+            self.conn.autocommit = True
+            self.conn.execute('SET default_transaction_read_only = on')
+        try:
+            return read_quotes(self.conn)
+        except psycopg.Error:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
+
+    async def run(self) -> None:
+        loop = asyncio.get_running_loop()
+        try:
+            while self.listeners:
+                started = loop.time()
+                try:
+                    current = await asyncio.to_thread(self.read)
+                except psycopg.Error:
+                    await asyncio.sleep(1)          # database restarting: listeners keep their last quote
+                    continue
+                for symbol, quote in current.items():
+                    if self.latest.get(symbol) != quote:
+                        self.latest[symbol] = quote
+                        self.publish(quote)
+                await asyncio.sleep(max(0.0, POLL_SECONDS - (loop.time() - started)))
+        finally:
+            self.close()
+
+    def publish(self, quote: dict) -> None:
+        for queue in list(self.listeners):
+            try:
+                queue.put_nowait(quote)
+            except asyncio.QueueFull:
+                pass                                # a stalled browser skips a step; the next quote carries the whole bar
+
+
+hub = QuoteHub()
+
+
+def sse(quote: dict) -> str:
+    return f'data: {json.dumps(quote, separators=(",", ":"))}\n\n'
+
+
+async def quote_events(source: QuoteHub):
+    """The SSE body: the current quote for every symbol, then each change, with a comment line as heartbeat."""
+    queue = source.subscribe()
+    try:
+        # Nothing awaits between subscribing and copying `latest`, so no change can fall between the two.
+        current = list(source.latest.values())
+        yield 'retry: 3000\n\n'
+        for quote in current:
+            yield sse(quote)
+        while True:
+            try:
+                quote = await asyncio.wait_for(queue.get(), HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                yield ': ping\n\n'
+                continue
+            yield sse(quote)
+    finally:
+        source.unsubscribe(queue)
+
+
+@app.get('/stream')
+async def stream():
+    if len(hub.listeners) >= int(os.getenv('STREAM_MAX_LISTENERS', '500')):
+        raise HTTPException(503, 'Too many live listeners; retry shortly')
+    # no-transform keeps Next.js and any proxy from compressing (and so buffering) the stream.
+    return StreamingResponse(quote_events(hub), media_type='text/event-stream',
+                             headers={'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no'})
+
+
+@app.get('/quotes')
+def quotes_snapshot():
+    """The same quotes as /stream, once, for server-rendered pages. Never cached: it is the live price."""
+    with readonly() as conn:
+        return list(read_quotes(conn).values())

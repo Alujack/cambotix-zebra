@@ -5,12 +5,17 @@ import psycopg
 from psycopg.rows import dict_row
 
 
+def connect() -> psycopg.Connection:
+    """A new connection; the caller closes it. Most code wants `database()` instead."""
+    return psycopg.connect(host=os.getenv('DB_HOST', 'postgres'), dbname=os.getenv('DB_NAME', 'zebra'),
+                           user=os.getenv('DB_USER', 'zebra'), password=os.environ['POSTGRES_PASSWORD'],
+                           connect_timeout=1, options='-c statement_timeout=1500 -c lock_timeout=500',
+                           row_factory=dict_row)
+
+
 @contextmanager
 def database():
-    with psycopg.connect(host=os.getenv('DB_HOST', 'postgres'), dbname=os.getenv('DB_NAME', 'zebra'),
-                          user=os.getenv('DB_USER', 'zebra'), password=os.environ['POSTGRES_PASSWORD'],
-                          connect_timeout=1, options='-c statement_timeout=1500 -c lock_timeout=500',
-                          row_factory=dict_row) as conn:
+    with connect() as conn:
         yield conn
 
 

@@ -5,19 +5,23 @@ import AutoRefresh from "@/components/AutoRefresh";
 import HelpModal from "@/components/shell/HelpModal";
 import TopBar from "@/components/shell/TopBar";
 import SignalChart from "@/components/SignalChart";
-import { Ago, MarketClock, Until } from "@/components/terminal/Clocks";
+import { MarketClock, Until } from "@/components/terminal/Clocks";
+import LivePrice from "@/components/terminal/LivePrice";
+import SetupTable from "@/components/terminal/SetupTable";
+import TrendTable from "@/components/terminal/TrendTable";
 import TerminalFrame from "@/components/terminal/TerminalFrame";
 import MarketIcon from "@/components/MarketIcon";
 import Watchlist from "@/components/terminal/Watchlist";
 import TerminalPanel from "@/components/TerminalPanel";
 import TradingViewWidget from "@/components/TradingViewWidget";
 import { Skeleton } from "@/components/ui";
-import { getCandles, getIndicators, getNews, getRecord, getSentiment, getSignals, getTickers } from "@/lib/api";
+import { getCandles, getIndicators, getNews, getRecord, getSentiment, getSetups, getSignals, getTickers, getTrend } from "@/lib/api";
 import { decimals, price } from "@/lib/format";
 import { href, t, type Lang } from "@/lib/i18n";
 import { market, site, tvSource } from "@/lib/site";
 
 const TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
+const TF_SECONDS: { [tf: string]: number } = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400 };
 type Tone = "green" | "red" | "gold" | "neutral";
 const dotTone = (tone: Tone) => (tone === "green" ? "bg-green" : tone === "red" ? "bg-red" : tone === "gold" ? "bg-gold" : "bg-muted");
 const textTone = (tone: Tone) => (tone === "green" ? "text-green" : tone === "red" ? "text-red" : tone === "gold" ? "text-gold" : "text-text");
@@ -29,14 +33,24 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
   const query = await searchParams;
   const symbol = (query.symbol ?? site.markets[0]).toUpperCase();
   const tf = TFS.includes(query.tf ?? "") ? (query.tf as string) : "15m";
-  // Live = TradingView's embed on their feed (default); broker = our candles with every plan flagged.
-  const view = query.view === "broker" ? "broker" : "live";
+  // Broker (default) = our Exness candles, live price, every plan flagged and our indicator; live = TradingView's embed on their feed.
+  const view = query.view === "live" ? "live" : "broker";
   const link = (s: string, f: string, v: string) => href(lang, `/app/terminal?symbol=${s}&tf=${f}&view=${v}`);
 
-  const [chart, tickers, plans, record, news, sentiment, reading] = await Promise.all([
+  const [chart, tickers, plans, record, news, sentiment, reading, setups, trend] = await Promise.all([
     view === "broker" ? getCandles(symbol, tf, undefined, 300) : Promise.resolve({ symbol, tf, candles: [] }),
     getTickers(), getSignals(200), getRecord(), getNews(), getSentiment(), getIndicators(symbol, tf),
+    view === "broker" ? getSetups(symbol) : Promise.resolve(null),
+    view === "broker" ? getTrend(symbol, tf) : Promise.resolve(null),
   ]);
+  // Our indicator: a dot per 15m setup; the newest one's entry/SL/TP lines while it is recent (the Pine script draws them 48 bars long).
+  const setupMarks = (setups?.candidates ?? []).map((item) => ({ time: item.t, direction: item.direction }));
+  const recent = setups?.candidates.at(-1);
+  const setupLevels = recent && setups?.at && setups.at - recent.t <= 48 * 900 ? [
+    { label: `Z ${recent.direction} ${price(recent.entry)}`, price: recent.entry, tone: "white" as const },
+    { label: `Z SL ${price(recent.stop, recent.entry)}`, price: recent.stop, tone: "red" as const, dashed: true },
+    ...recent.targets.map((target, i) => ({ label: `Z TP${i + 1} +${target.r}R`, price: target.price, tone: "green" as const, dotted: true })),
+  ] : [];
   const info = market(symbol);
   const quote = tickers.find((item) => item.symbol === symbol);
   const stamp = record.generated_at ? Date.parse(record.generated_at) / 1000 : 0;
@@ -59,7 +73,7 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
 
   const watchRows = site.markets.map((item) => {
     const tick = tickers.find((row) => row.symbol === item);
-    return { symbol: item, name: market(item).name, category: market(item).category, price: tick ? price(tick.price) : null, change: tick?.change_24h_pct ?? null, href: link(item, tf, view), active: item === symbol };
+    return { symbol: item, name: market(item).name, category: market(item).category, price: tick ? price(tick.price) : null, change: tick?.change_24h_pct ?? null, price24h: tick?.price_24h ?? null, href: link(item, tf, view), active: item === symbol };
   });
 
   const panelProps = {
@@ -98,13 +112,8 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
         </span>
         <span className="text-sm tracking-wide text-muted">{view === "live" ? tvSource(symbol) : "EXNESS"}</span>
         <MarketClock hours={info.hours} labels={{ open: k.marketOpen, closed: k.marketClosed, closesIn: k.closesIn, opensIn: k.opensAt, always: k.always }} />
-        {quote ? (
-          <span className="flex items-center gap-2.5">
-            <span className="price !text-[22px]">{price(quote.price)}</span>
-            <span className={`num rounded-md px-2 py-0.5 text-sm font-semibold ${quote.change_24h_pct === null ? "bg-surface-2 text-muted" : quote.change_24h_pct >= 0 ? "bg-green/15 text-green" : "bg-red/15 text-red"}`}>{pct(quote.change_24h_pct)}</span>
-            <Ago since={quote.time} suffix="" />
-          </span>
-        ) : view === "broker" && <span className="text-xs text-muted">{k.noQuote}</span>}
+        <LivePrice symbol={symbol} hours={info.hours} showEmpty={view === "broker"} labels={{ paused: k.paused, closed: k.marketClosedBadge, noQuote: k.noQuote }}
+          initial={quote ? { price: quote.price, time: quote.time, change: quote.change_24h_pct, price24h: quote.price_24h ?? null } : null} />
         <div className="ml-auto flex gap-2">
           <a href={site.telegram} aria-label={k.askAi} className="btn-secondary !min-h-10 !rounded-xl !py-1 text-[15px]"><Zap size={16} /> <span className="sm:hidden min-[1400px]:inline">{k.askAi}</span></a>
           <button type="button" className="btn-secondary !min-h-10 !rounded-xl !py-1 text-[15px] disabled:opacity-60" disabled title={k.todo} aria-label={k.trade}><BarChart3 size={16} /> <span className="sm:hidden min-[1400px]:inline">{k.trade}</span></button>
@@ -140,11 +149,18 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
   const chartBody = view === "live" ? (
     <TradingViewWidget symbol={symbol} tf={tf} locale="en" height="100%" />
   ) : chart.candles.length > 0 ? (
-    <SignalChart key={`${symbol}-${tf}`} fill candles={chart.candles} levels={[]} markers={mine.map((plan) => ({ time: plan.published_at, direction: plan.direction }))} direction="BUY" decimals={dec} watermark={k.watermark} labels={{ ema20: "EMA20", ema50: "EMA50", ema200: "EMA200", rsi: "RSI" }} />
+    <SignalChart key={`${symbol}-${tf}`} fill live={{ symbol, period: TF_SECONDS[tf] }} candles={chart.candles} levels={[]} markers={mine.map((plan) => ({ time: plan.published_at, direction: plan.direction }))} direction="BUY" decimals={dec} watermark={k.watermark} setups={setups ? setupMarks : undefined} setupLevels={setupLevels} trend={trend ?? undefined} labels={{ ema20: "EMA20", ema50: "EMA50", ema200: "EMA200", rsi: "RSI", setups: k.setups.pill, trend: k.atrTrend.pill }} />
   ) : (
     <p className="grid h-full place-items-center p-8 text-center text-sm text-muted">{k.noCandles}</p>
   );
-  const chartNode = <>{chartBody}{eventPill}</>;
+  // Indicator tables, folded, stacked at the chart's top right.
+  const tables = view === "broker" && (trend?.table || setups?.table) && (
+    <div className="absolute top-11 right-20 z-[2] hidden flex-col items-end gap-1.5 lg:flex">
+      {trend?.table && <TrendTable data={trend} labels={k.atrTrend} />}
+      {setups?.table && <SetupTable data={setups} labels={k.setups} />}
+    </div>
+  );
+  const chartNode = <>{chartBody}{eventPill}{tables}</>;
 
   const mobileMarkets = (
     <div className="flex gap-1.5 overflow-x-auto px-4 pb-2.5">
@@ -184,6 +200,8 @@ async function Terminal({ searchParams }: PageProps<"/app/terminal">) {
 export default function TerminalPage(props: PageProps<"/app/terminal">) {
   return (
     <>
+      {/* Prices and the last candle stream live (LivePrice, Watchlist, SignalChart); this refresh brings each newly closed bar's
+          indicator lines and labels (they act on closed bars, down to 1m), plus new plans and news. */}
       <AutoRefresh seconds={60} />
       <Suspense fallback={<div className="space-y-3"><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-12" /><Skeleton className="h-[520px]" /></div>}>
         <Terminal {...props} />

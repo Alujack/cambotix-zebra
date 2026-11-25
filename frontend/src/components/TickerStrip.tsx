@@ -1,9 +1,9 @@
+import LiveTickerValues from "@/components/LiveTickerValues";
 import type { Ticker } from "@/lib/api";
-import { price } from "@/lib/format";
 import { t, type Lang } from "@/lib/i18n";
 import TickerTape from "./TickerTape";
 
-// Endless marquee of the broker's last prices. The list is rendered twice and slid by half its width, so it loops seamlessly.
+// Endless marquee of the broker's prices, live while the feeder runs (LiveTickerValues), else the last M1 close. The list is rendered twice and slid by half its width, so it loops seamlessly.
 // Pauses on hover; stands still under prefers-reduced-motion (see .marquee in globals.css).
 export default function TickerStrip({ tickers, lang }: { tickers: Ticker[]; lang: Lang }) {
   const d = t(lang);
@@ -11,18 +11,12 @@ export default function TickerStrip({ tickers, lang }: { tickers: Ticker[]; lang
   if (tickers.length === 0) return <TickerTape />;
   // Repeat short lists so one copy is wider than the screen.
   const row = Array.from({ length: Math.max(1, Math.ceil(8 / tickers.length)) }, () => tickers).flat();
-  const items = (copy: number) => row.map((item, index) => {
-    const change = item.change_24h_pct;
-    const tone = change === null ? "text-muted" : change >= 0 ? "text-green" : "text-red";
-    return (
-      <span key={`${copy}-${index}`} className="flex items-baseline gap-2.5 px-7" aria-hidden={copy === 1 || undefined}>
-        <span className="font-semibold">{item.symbol}</span>
-        <span className="num text-text/90">{price(item.price)}</span>
-        <span className={`num ${tone}`}>{change === null ? "—" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`}</span>
-        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">~1 min</span>
-      </span>
-    );
-  });
+  const items = (copy: number) => row.map((item, index) => (
+    <span key={`${copy}-${index}`} className="flex items-baseline gap-2.5 px-7" aria-hidden={copy === 1 || undefined}>
+      <span className="font-semibold">{item.symbol}</span>
+      <LiveTickerValues symbol={item.symbol} price={item.price} change={item.change_24h_pct} price24h={item.price_24h ?? null} labels={{ live: d.ticker.live, delayed: d.ticker.delayed }} />
+    </span>
+  ));
   return (
     <div className="group relative overflow-hidden border-b border-border bg-black/60 text-sm whitespace-nowrap" title={d.ticker.source}>
       <div className="marquee flex w-max py-2.5 group-hover:[animation-play-state:paused]">

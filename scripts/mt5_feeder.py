@@ -18,6 +18,10 @@ Every minute it also sends the broker's closed M1 candles (bid prices plus the
 bar spread) to /candles, which the analyzer uses to grade every published plan.
 The analyzer answers with the earliest time it still needs, so a feeder that was
 offline backfills the gap on its next run.
+
+Every 0.5 s it also sends the ticks that arrived since the last pass to /ticks, so the website's price and last
+candle move with the broker (--no-ticks turns this off). Ticks are display only; nothing is graded from them.
+Everything runs in one thread: the MetaTrader5 package is not safe to call from several.
 """
 from __future__ import annotations
 
@@ -54,6 +58,9 @@ MSS_BARS = 1500            # M15 = 375 H1 bars: the engine's 100-bar warmup plus
 DIRECTIONS = ('BUY_SETUP', 'SELL_SETUP')
 CANDLE_CHUNK = 2 * 86400   # M1 rows per request stay well under the analyzer's 1 MB limit
 FIRST_CANDLES = 3 * 3600   # history sent on the very first push
+TICK_PASS = 0.5            # seconds between tick reads
+TICK_BATCH = 500           # ticks read per pass; a backlog after a long scan drains over the next passes
+TICK_RESYNC_MS = 30_000    # after a longer gap (sleep, reconnect) restart from the latest tick, not replay the gap
 
 
 # -- config -------------------------------------------------------------------
@@ -300,12 +307,12 @@ def payload(row: pd.Series, close_epoch: int, symbol: str, direction: str) -> di
     }
 
 
-def post(body: dict, url: str, token: str, limit: int = 200) -> tuple[int, str]:
+def post(body: dict, url: str, token: str, limit: int = 200, timeout: float = 30) -> tuple[int, str]:
     request = urllib.request.Request(
         url, data=json.dumps(body).encode(),
         headers={'Content-Type': 'application/json', 'X-Zebra-Token': token})
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read().decode()[:limit]
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode()[:limit]
@@ -351,6 +358,55 @@ def push_candles(cfg: dict, state: dict) -> None:
             return
         start = reply['need_from']
     print('  candles: backfill continues next minute')
+
+
+def read_ticks(symbol: str, state: dict) -> list[list]:
+    """Ticks since the last pass as [time_ms, bid, ask], oldest first, keeping only those where bid or ask changed.
+    The first pass, and any pass after a gap longer than TICK_RESYNC_MS, starts from the latest tick alone."""
+    last = state.get('tick_ms')
+    latest = mt5.symbol_info_tick(symbol)
+    if latest is None or not latest.time_msc:
+        return []
+    if last is None or latest.time_msc - last > TICK_RESYNC_MS:
+        rows = [(int(latest.time_msc), float(latest.bid), float(latest.ask))]
+    elif latest.time_msc <= last:
+        return []                                   # nothing new since the last pass
+    else:
+        # Every tick since the last pass, not just the newest: a quick high or low between passes still reaches the bar.
+        got = mt5.copy_ticks_from(symbol, last // 1000, TICK_BATCH, mt5.COPY_TICKS_INFO)
+        rows = ([(int(r['time_msc']), float(r['bid']), float(r['ask'])) for r in got]
+                if got is not None and len(got) else [(int(latest.time_msc), float(latest.bid), float(latest.ask))])
+    out, previous = [], state.get('tick_quote')
+    for time_ms, bid, ask in rows:
+        if last is not None and time_ms <= last:
+            continue
+        state['tick_ms'] = time_ms
+        if bid <= 0 or ask < bid or (bid, ask) == previous:
+            continue
+        out.append([time_ms, bid, ask])
+        previous = (bid, ask)
+    state['tick_quote'] = previous
+    return out
+
+
+def push_ticks(cfg: dict, state: dict, dry_run: bool) -> None:
+    """One pass: read new ticks and send them as one batch. Failures are logged at most once a minute."""
+    ticks = read_ticks(cfg['mt5_symbol'], state)
+    if not ticks:
+        return
+    if dry_run:
+        stamp = dt.datetime.fromtimestamp(ticks[-1][0] / 1000, dt.timezone.utc)
+        print(f'  [dry-run] {len(ticks)} tick(s) {cfg["symbol"]}  last {stamp:%H:%M:%S}.{ticks[-1][0] % 1000:03d} UTC  '
+              f'bid={ticks[-1][1]}  ask={ticks[-1][2]}  age={time.time() - ticks[-1][0] / 1000:.2f}s')
+        return
+    status, text = post({'symbol': cfg['symbol'], 'ticks': ticks}, cfg['ticks_url'], cfg['token'], timeout=3)
+    if status == 200:
+        state['ticks_sent'] = state.get('ticks_sent', 0) + len(ticks)
+        return
+    state['tick_failures'] = state.get('tick_failures', 0) + 1
+    if time.time() - state.get('tick_logged', 0) >= 60:
+        state['tick_logged'] = time.time()
+        print(f'  ticks: HTTP {status} {text} ({state["tick_failures"]} failed batch(es) so far)')
 
 
 def scan(cfg: dict, dry_run: bool) -> None:
@@ -404,6 +460,8 @@ def main() -> None:
     parser.add_argument('--once', action='store_true', help='scan the last closed bar and exit')
     parser.add_argument('--dry-run', action='store_true', help='print the payload instead of sending')
     parser.add_argument('--no-candles', action='store_true', help='do not send M1 candles for outcome grading')
+    parser.add_argument('--no-ticks', action='store_true',
+                        help='do not send live ticks for the website chart (with --dry-run they are printed instead)')
     parser.add_argument('--history-hours', type=float, default=FIRST_CANDLES / 3600,
                         help='M1 history sent on the first push, e.g. 168 to backfill a week for a new chart (default 3)')
     parser.add_argument('--symbol', default=os.getenv('MT5_SYMBOL', 'XAUUSDm'),
@@ -428,6 +486,7 @@ def main() -> None:
         'symbol': re.sub(r'[a-z.]+$', '', broker_symbol).upper(),
         'url': analyzer + '/signals',
         'candles_url': analyzer + '/candles',
+        'ticks_url': analyzer + '/ticks',
         'token': os.getenv('ZEBRA_ANALYZER_TOKEN') or settings.get('ANALYZER_TOKEN', ''),
         'min_adx': float(settings.get('MIN_ADX', 20)),
         'min_atr': float(settings.get('MIN_ATR_PERCENT', 0.02)),
@@ -468,6 +527,7 @@ def main() -> None:
           f'(ADX>={cfg["min_adx"]}, ATR% {cfg["min_atr"]}-{cfg["max_atr"]})')
 
     candles = not (args.no_candles or args.dry_run)
+    live_ticks = not args.no_ticks
     state: dict = {}
     try:
         if args.once:
@@ -484,27 +544,43 @@ def main() -> None:
             return
         cadence = ', '.join((['15m scan'] if m15_models else []) + (['5m ICT scan'] if 'ict' in models else [])
                             + (['1m EMA scan'] if 'ema' in models else []) + (['hourly MSS scan'] if 'mss' in models else []))
-        print(f'watching; candles every minute, {cadence or "no scans (candles only)"} 10s after each bar close. Ctrl+C to stop.')
+        ticks_note = f'ticks every {TICK_PASS}s, ' if live_ticks else ''
+        print(f'watching; {ticks_note}candles every minute, {cadence or "no scans (candles only)"} 10s after each bar '
+              'close. Ctrl+C to stop.')
+        if live_ticks and (not mt5.initialize() or not mt5.symbol_select(cfg['mt5_symbol'], True)):
+            print(f'  ticks: MT5 not ready ({mt5.last_error()}); retrying every pass')
         scanned = scanned_m5 = scanned_h1 = None
+        next_job = (int(time.time()) // 60 + 1) * 60 + 10
         while True:
-            time.sleep(max(1.0, 60 - time.time() % 60 + 10))
-            if candles:
-                push_candles(cfg, state)
-            if 'ema' in models:
-                scan_ema(cfg, args.dry_run)
-            bar = int(time.time()) // TF_SECONDS
-            if m15_models and time.time() % TF_SECONDS < 60 and bar != scanned:
-                scanned = bar
-                scan(cfg, args.dry_run)
-            bar_m5 = int(time.time()) // M5_SECONDS
-            if 'ict' in models and time.time() % M5_SECONDS < 60 and bar_m5 != scanned_m5:
-                scanned_m5 = bar_m5
-                scan_ict(cfg, args.dry_run)
-            bar_h1 = int(time.time()) // mss_engine.H1
-            if 'mss' in models and time.time() % mss_engine.H1 < 60 and bar_h1 != scanned_h1:
-                scanned_h1 = bar_h1
-                scan_mss(cfg, args.dry_run)
+            started = time.time()
+            if live_ticks:
+                push_ticks(cfg, state, args.dry_run)
+            if time.time() >= next_job:
+                if candles:
+                    push_candles(cfg, state)
+                if 'ema' in models:
+                    scan_ema(cfg, args.dry_run)
+                bar = int(time.time()) // TF_SECONDS
+                if m15_models and time.time() % TF_SECONDS < 60 and bar != scanned:
+                    scanned = bar
+                    scan(cfg, args.dry_run)
+                bar_m5 = int(time.time()) // M5_SECONDS
+                if 'ict' in models and time.time() % M5_SECONDS < 60 and bar_m5 != scanned_m5:
+                    scanned_m5 = bar_m5
+                    scan_ict(cfg, args.dry_run)
+                bar_h1 = int(time.time()) // mss_engine.H1
+                if 'mss' in models and time.time() % mss_engine.H1 < 60 and bar_h1 != scanned_h1:
+                    scanned_h1 = bar_h1
+                    scan_mss(cfg, args.dry_run)
+                if live_ticks and not args.dry_run and next_job % TF_SECONDS == 10:
+                    print(f'{dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} UTC  ticks: '
+                          f'{state.pop("ticks_sent", 0)} sent, {state.pop("tick_failures", 0)} failed batch(es) this quarter')
+                next_job = (int(time.time()) // 60 + 1) * 60 + 10
             sys.stdout.flush()
+            pause = next_job - time.time()
+            if live_ticks:
+                pause = min(pause, TICK_PASS - (time.time() - started))
+            time.sleep(max(0.05, pause))
     except KeyboardInterrupt:
         print('stopped')
     finally:

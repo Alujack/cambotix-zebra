@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app import ledger
+from app import ledger, quotes
 from app.agent import jobs, worker
 from app.agent.telegram import deliver
 from app.ai import tables as ai_tables
@@ -32,6 +32,7 @@ async def lifespan(_):
     with database() as conn:
         ledger.migrate(conn)
         ai_tables.migrate(conn)
+        quotes.migrate(conn)
     yield
 
 
@@ -258,6 +259,41 @@ async def candles(request: Request):
     older = [stamp for stamp in waiting if stamp < since]
     return {'symbol': batch.symbol, 'stored': len(batch.candles), 'since': since, 'through': through,
             'need_from': min(older) if older else through}
+
+
+class TickBatch(BaseModel):
+    """Broker ticks since the feeder's last pass: rows of [time_ms, bid, ask], for the website's live price only."""
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    symbol: str = Field(min_length=3, max_length=20, pattern=r'^[A-Z0-9]+$')
+    ticks: list[tuple[int, float, float]] = Field(min_length=1, max_length=2000)
+
+
+@app.post('/ticks', dependencies=[Depends(authorize)])
+async def ticks(request: Request):
+    """Fold ticks into the symbol's live quote and current minute bar. Never graded: see app/quotes.py."""
+    body = await request.body()
+    if len(body) > 200_000:
+        raise HTTPException(413, 'Payload too large')
+    try:
+        batch = TickBatch.model_validate_json(body)
+    except ValidationError:
+        raise HTTPException(422, 'Invalid tick batch')
+    if batch.symbol not in allowed_symbols():
+        raise HTTPException(422, 'Symbol is not accepted')
+    if any(time_ms <= 0 or bid <= 0 or ask < bid for time_ms, bid, ask in batch.ticks):
+        raise HTTPException(422, 'Invalid tick')
+    with database() as conn:
+        row = conn.execute('SELECT bid, ask, tick_ms, minute, o, h, l, c FROM quotes WHERE symbol=%s FOR UPDATE',
+                           (batch.symbol,)).fetchone()
+        quote, applied = quotes.fold(row, batch.ticks, int(time.time() * 1000))
+        if applied:
+            conn.execute('''INSERT INTO quotes(symbol, bid, ask, tick_ms, minute, o, h, l, c, updated_at)
+                VALUES (%(symbol)s, %(bid)s, %(ask)s, %(tick_ms)s, %(minute)s, %(o)s, %(h)s, %(l)s, %(c)s, now())
+                ON CONFLICT (symbol) DO UPDATE SET bid=excluded.bid, ask=excluded.ask, tick_ms=excluded.tick_ms,
+                  minute=excluded.minute, o=excluded.o, h=excluded.h, l=excluded.l, c=excluded.c, updated_at=now()''',
+                         {'symbol': batch.symbol, **quote})
+    return {'symbol': batch.symbol, 'applied': applied, 'skipped': len(batch.ticks) - applied,
+            'tick_ms': quote['tick_ms'] if quote else None}
 
 
 def queue_digest(conn):

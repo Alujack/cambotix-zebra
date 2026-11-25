@@ -2,7 +2,7 @@
 // internal `api` container, which is never published. Reads are uncached here (Cache Components keep
 // them out of the static shell) because the API itself caches every answer for 60 seconds.
 
-const API_URL = process.env.API_URL ?? "http://127.0.0.1:8091";
+export const API_URL = process.env.API_URL ?? "http://127.0.0.1:8091";
 
 export type Summary = {
   closed: number;
@@ -78,6 +78,7 @@ export type Ticker = {
   price: number;
   time: number;
   change_24h_pct: number | null;
+  price_24h?: number | null;
   source: string;
 };
 
@@ -128,3 +129,28 @@ export const getNews = () => get<NewsItem[]>("/news", []);
 export type Sentiment = { crypto_fear_greed: { value: number; label: string; time: number; source: string } | null };
 export const getSentiment = () => get<Sentiment>("/sentiment", { crypto_fear_greed: null });
 export const getLedger = (after = 0) => get<LedgerRow[]>(`/ledger?after=${after}`, []);
+
+// Our own indicator (tradingview/gold_setups.pine) computed on the broker's candles by web/setups.py.
+export type SetupCandidate = { t: number; bar_time: number; direction: "BUY" | "SELL"; entry: number; stop: number; risk: number; risk_atr: number; basis: string; targets: { r: number; price: number }[] };
+export type SetupRow = { reading: string | number; status: string; ok: boolean };
+export type Setups = {
+  symbol: string; tf: "15m"; model: "classic"; name: string; bars: number; at: number | null; bar_time: number | null;
+  rules: { min_adx: number; min_atr_percent: number; max_atr_percent: number; filter_sessions: boolean; tp_r_multiples: string };
+  candidates: SetupCandidate[];
+  table: { trend: SetupRow; rsi: SetupRow; macd_hist: SetupRow; adx: SetupRow; atr_percent: SetupRow; session: SetupRow; setup: SetupRow & { buy_failures: string[]; sell_failures: string[] } } | null;
+};
+export const getSetups = (symbol: string, bars = 300) => get<Setups | null>(`/setups/${symbol}?bars=${bars}`, null);
+
+// The ATR Trend Confluence System (tradingview/atr_trend_confluence.pine) computed on the broker's candles by web/trend.py.
+export type TrendFlip = { t: number; bar_time: number; direction: "BUY" | "SELL"; price: number; trail: number; atr: number; blocked_by: string[]; passed: boolean };
+export type TrendRow = { reading: string | number; status: string; ok: boolean };
+export type Trend = {
+  symbol: string; tf: string; name: string; bars: number; at: number | null; bar_time: number | null;
+  htf: { tf: string; enabled: boolean; bars: number; settled: boolean };
+  baseline: { t: number; v: number }[];
+  trail: { t: number; v: number; dir: "up" | "down" }[];
+  signals: TrendFlip[]; flips: TrendFlip[];
+  table: { trail: TrendRow; baseline: TrendRow; htf: TrendRow; adx: TrendRow; chop: TrendRow; session: TrendRow; extension: TrendRow; structure: TrendRow;
+    signal: { status: string; ok: boolean; trend: "up" | "down"; flipped_this_bar: "BUY" | "SELL" | null; buy_blocked: string[]; sell_blocked: string[] } } | null;
+};
+export const getTrend = (symbol: string, tf = "5m", bars = 300) => get<Trend | null>(`/trend/${symbol}?tf=${tf}&bars=${bars}`, null);
