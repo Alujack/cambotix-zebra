@@ -1,26 +1,13 @@
 "use client";
 
-import { BarChart3, Bitcoin, CandlestickChart, Coins, Euro, Eye, LayoutGrid, PoundSterling, Trophy } from "lucide-react";
+import { BarChart3, CandlestickChart, Eye, LayoutGrid, Trophy } from "lucide-react";
+import MarketIcon from "@/components/MarketIcon";
 import Link from "next/link";
 import { useState } from "react";
 import type { MarketCategory } from "@/lib/site";
 
 export type WatchRow = { symbol: string; name: string; category: MarketCategory; price: string | null; change: number | null; href: string; active: boolean };
 type Labels = { mainList: string; mySignals: string; mySignalsNone: string; search: string; all: string; crypto: string; forex: string; metals: string; watchlist: string; freePlan: string; upgrade: string; deskTitle: string; deskEvery: string; deskNone: string; deskOpen: string; deskLink: string; noQuote: string };
-
-// Solid coin-style market icons.
-const icons: { [symbol: string]: { Icon: typeof Coins; tone: string } } = {
-  XAUUSD: { Icon: Coins, tone: "bg-gradient-to-b from-[#f6dc8a] to-[#d9a93a] text-[#6b4a07]" },
-  BTCUSD: { Icon: Bitcoin, tone: "bg-[#f7931a] text-white" },
-  BTCUSDT: { Icon: Bitcoin, tone: "bg-[#f7931a] text-white" },
-  EURUSD: { Icon: Euro, tone: "bg-[#2563eb] text-[#facc15]" },
-  GBPUSD: { Icon: PoundSterling, tone: "bg-[#7c3aed] text-white" },
-};
-
-export function MarketIcon({ symbol, size = 36 }: { symbol: string; size?: number }) {
-  const { Icon, tone } = icons[symbol] ?? { Icon: Coins, tone: "bg-surface-2 text-muted" };
-  return <span className={`grid flex-none place-items-center rounded-full ${tone}`} style={{ width: size, height: size }}><Icon size={size * 0.5} strokeWidth={2.2} /></span>;
-}
 
 // Left panel of the Terminal: plan badge, search, category tabs, the desk's markets with broker price and 24 h change, desk status.
 export default function Watchlist({ rows, labels, upgradeHref, signalsHref, openHere }: { rows: WatchRow[]; labels: Labels; upgradeHref: string; signalsHref: string; openHere: number }) {

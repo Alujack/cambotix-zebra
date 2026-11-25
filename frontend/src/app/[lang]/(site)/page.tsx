@@ -2,7 +2,7 @@ import { ArrowRight, BarChart3, ChevronDown, Fingerprint, Link2, ShieldCheck, Tr
 import Link from "next/link";
 import { Suspense } from "react";
 import HeroBackdrop from "@/components/home/HeroBackdrop";
-import { MarketIcon } from "@/components/terminal/Watchlist";
+import MarketIcon from "@/components/MarketIcon";
 import { StatCard } from "@/components/ui";
 import { getRecord, getSignals } from "@/lib/api";
 import { modelName, percent, r, utc } from "@/lib/format";
