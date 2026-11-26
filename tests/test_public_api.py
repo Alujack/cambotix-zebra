@@ -166,6 +166,11 @@ def test_candles_and_indicators_come_from_stored_m1(client, monkeypatch):
     body = client.get('/candles/XAUUSD?tf=15m&bars=50').json()
     assert body['tf'] == '15m' and len(body['candles']) == 50 and body['candles'][-1]['n'] <= 15
     assert all(b['t'] % 900 == 0 for b in body['candles'])
+    # Bucketing in SQL matches the Python aggregate the indicators and the grader use, bar for bar.
+    end = now + 900
+    for seconds in (300, 3600, 14400):
+        expected = api.aggregate(api.load_m1('XAUUSD', end - 260 * 900, end), seconds)
+        assert api.load_bars('XAUUSD', end - 260 * 900, end, seconds) == expected
     reading = client.get('/indicators/XAUUSD?tf=15m').json()
     assert reading['ema']['verdict'] in ('UPTREND', 'MIXED') and 0 <= reading['rsi']['value'] <= 100
     assert reading['bollinger_b']['verdict'] in ('inside bands', 'above upper band', 'below lower band')

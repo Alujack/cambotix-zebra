@@ -228,6 +228,16 @@ def load_m1(symbol: str, start: int, end: int) -> list[dict]:
                             (symbol, start, end)).fetchall()
 
 
+def load_bars(symbol: str, start: int, end: int, seconds: int) -> list[dict]:
+    """Stored M1 bucketed into epoch-aligned bars in the database (same result as aggregate(load_m1(...))), so a
+    daily or 4h chart does not pull hundreds of thousands of M1 rows into Python."""
+    with readonly() as conn:
+        return conn.execute('''SELECT t - t %% %s AS t, (array_agg(o ORDER BY t))[1] AS o, max(h) AS h, min(l) AS l,
+            (array_agg(c ORDER BY t DESC))[1] AS c, count(*)::int AS n
+            FROM candles WHERE symbol=%s AND t>=%s AND t<%s GROUP BY 1 ORDER BY 1''',
+                            (seconds, symbol, start, end)).fetchall()
+
+
 @app.get('/candles/{symbol}')
 def candles(symbol: str, tf: str = Query('15m'), to: int | None = None, bars: int = Query(300, ge=20, le=1500)):
     """Broker candles aggregated from stored M1, ending at `to` (default: latest). Same data the grader uses."""
@@ -238,7 +248,7 @@ def candles(symbol: str, tf: str = Query('15m'), to: int | None = None, bars: in
     start = end - bars * seconds
 
     def build():
-        out = aggregate(load_m1(symbol.upper(), start, end), seconds)
+        out = load_bars(symbol.upper(), start, end, seconds)
         return {'symbol': symbol.upper(), 'tf': tf, 'candles': out[-bars:]}
     return cached(f'candles:{symbol}:{tf}:{end}:{bars}', build)
 

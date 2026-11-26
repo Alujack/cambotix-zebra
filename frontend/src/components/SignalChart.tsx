@@ -132,7 +132,9 @@ export default function SignalChart({ candles, levels, markerTime, markers = [],
     const observer = new ResizeObserver(resize);
     observer.observe(box.current);
     const last = candles.length - 1;
+    // First open: the newest ~250 bars stay readable; older history is a scroll or zoom away.
     if (view.current) chart.timeScale().setVisibleLogicalRange({ from: last - view.current.fromEnd, to: last - view.current.toEnd });
+    else if (candles.length > 250) chart.timeScale().setVisibleLogicalRange({ from: last - 250, to: last + 5 });
     else chart.timeScale().fitContent();
     window.addEventListener("resize", resize);
     return () => {

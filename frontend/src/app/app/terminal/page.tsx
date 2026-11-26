@@ -22,6 +22,9 @@ import { market, site, tvSource } from "@/lib/site";
 
 const TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const TF_SECONDS: { [tf: string]: number } = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400 };
+// Candles loaded per timeframe (the API caps at 1500): about a day of 1m, ten days of 15m, half a year of 4h. The chart opens
+// on the newest bars and the rest is there to scroll back through.
+const TF_BARS: { [tf: string]: number } = { "1m": 1440, "5m": 1000, "15m": 1000, "30m": 1000, "1h": 1000, "4h": 1000, "1d": 365 };
 type Tone = "green" | "red" | "gold" | "neutral";
 const dotTone = (tone: Tone) => (tone === "green" ? "bg-green" : tone === "red" ? "bg-red" : tone === "gold" ? "bg-gold" : "bg-muted");
 const textTone = (tone: Tone) => (tone === "green" ? "text-green" : tone === "red" ? "text-red" : tone === "gold" ? "text-gold" : "text-text");
@@ -38,10 +41,10 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
   const link = (s: string, f: string, v: string) => href(lang, `/app/terminal?symbol=${s}&tf=${f}&view=${v}`);
 
   const [chart, tickers, plans, record, news, sentiment, reading, setups, trend] = await Promise.all([
-    view === "broker" ? getCandles(symbol, tf, undefined, 300) : Promise.resolve({ symbol, tf, candles: [] }),
+    view === "broker" ? getCandles(symbol, tf, undefined, TF_BARS[tf]) : Promise.resolve({ symbol, tf, candles: [] }),
     getTickers(), getSignals(200), getRecord(), getNews(), getSentiment(), getIndicators(symbol, tf),
-    view === "broker" ? getSetups(symbol) : Promise.resolve(null),
-    view === "broker" ? getTrend(symbol, tf) : Promise.resolve(null),
+    view === "broker" ? getSetups(symbol, 1000) : Promise.resolve(null),
+    view === "broker" ? getTrend(symbol, tf, Math.min(TF_BARS[tf], 1000)) : Promise.resolve(null),
   ]);
   // Our indicator: a dot per 15m setup; the newest one's entry/SL/TP lines while it is recent (the Pine script draws them 48 bars long).
   const setupMarks = (setups?.candidates ?? []).map((item) => ({ time: item.t, direction: item.direction }));

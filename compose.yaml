@@ -132,6 +132,18 @@ services:
       n8n:
         condition: service_healthy
         restart: true
+  cloudflared:
+    # Publishes the website only: the tunnel's public hostname must point at http://frontend:3000 (set in the
+    # Cloudflare dashboard). Never route the analyzer, api, n8n or gateway through it. Opt-in: COMPOSE_PROFILES=tunnel.
+    image: cloudflare/cloudflared:2026.8.3
+    profiles: [tunnel]
+    restart: unless-stopped
+    command: [tunnel, --no-autoupdate, run]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      frontend:
+        condition: service_healthy
 volumes:
   postgres_data:
   n8n_data:
