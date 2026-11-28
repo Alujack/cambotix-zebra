@@ -38,6 +38,18 @@ CREATE TABLE IF NOT EXISTS candles (
     spread double precision NOT NULL,
     PRIMARY KEY (symbol, t)
 );
+-- Hourly bars derived from candles, so 4h/1d/1M charts over years read thousands of rows instead of millions.
+-- Rebuilt for the hours each /candles batch touches (refresh_h1); never a source of truth: grading reads candles.
+CREATE TABLE IF NOT EXISTS candles_h1 (
+    symbol text NOT NULL,
+    t bigint NOT NULL,
+    o double precision NOT NULL,
+    h double precision NOT NULL,
+    l double precision NOT NULL,
+    c double precision NOT NULL,
+    n integer NOT NULL,
+    PRIMARY KEY (symbol, t)
+);
 CREATE TABLE IF NOT EXISTS coverage (
     symbol text PRIMARY KEY,
     since bigint NOT NULL,
@@ -79,6 +91,21 @@ def migrate(conn) -> None:
     # Databases created before the community chat existed carry the old two-value CHECK.
     conn.execute('''ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_chat_check;
         ALTER TABLE messages ADD CONSTRAINT messages_chat_check CHECK (chat IN ('private', 'digest', 'community'))''')
+    # Databases with candles from before candles_h1 existed: build it once, symbol by symbol.
+    if not conn.execute('SELECT 1 FROM candles_h1 LIMIT 1').fetchone():
+        for row in conn.execute('SELECT DISTINCT symbol FROM candles').fetchall():
+            refresh_h1(conn, row['symbol'], 0, 2 ** 62)
+
+
+def refresh_h1(conn, symbol: str, start: int, end: int) -> None:
+    """Recompute the hourly bars covering [start, end) from the stored M1 candles, inside the caller's transaction."""
+    conn.execute("SET LOCAL statement_timeout = '10min'")     # the first build reads every stored candle
+    conn.execute('''INSERT INTO candles_h1(symbol, t, o, h, l, c, n)
+        SELECT symbol, t - t %% 3600, (array_agg(o ORDER BY t))[1], max(h), min(l), (array_agg(c ORDER BY t DESC))[1], count(*)
+        FROM candles WHERE symbol=%s AND t >= %s AND t < %s GROUP BY symbol, t - t %% 3600
+        ON CONFLICT (symbol, t) DO UPDATE SET o=excluded.o, h=excluded.h, l=excluded.l, c=excluded.c, n=excluded.n''',
+                 (symbol, start - start % 3600, end + (-end) % 3600))
+    conn.execute('SET LOCAL statement_timeout TO DEFAULT')
 
 
 def canonical(value: dict) -> str:

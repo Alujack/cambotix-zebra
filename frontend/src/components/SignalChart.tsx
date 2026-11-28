@@ -1,7 +1,7 @@
 "use client";
 
 import { CandlestickSeries, ColorType, createChart, createSeriesMarkers, createTextWatermark, LineSeries, LineStyle, type IChartApi, type ISeriesApi, type SeriesMarker, type UTCTimestamp } from "lightweight-charts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Candle } from "@/lib/api";
 import { liveBars, useLiveQuote, type LiveBar } from "@/lib/live";
 
@@ -13,7 +13,9 @@ type Props = { candles: Candle[]; levels: Level[]; markerTime?: number; markers?
   // Our own indicator (web/setups.py): a dot on each 15m setup bar and, for a recent one, its entry/SL/TP lines. One toggle shows or hides both.
   setups?: { time: number; direction: "BUY" | "SELL" }[]; setupLevels?: Level[];
   // Follow the broker live: each tick moves the last candle, a tick past it starts the next one. `period` is the bar length in seconds.
-  live?: { symbol: string; period: number } };
+  live?: { symbol: string; period: number };
+  // Scroll back in time: near the left edge, the next `pageBars` older candles are fetched from /api/candles and prepended.
+  history?: { symbol: string; tf: string; pageBars: number } };
 type Bar = { time: number; open: number; high: number; low: number; close: number };
 
 const ema = (values: number[], length: number) => {
@@ -47,8 +49,19 @@ const foldBar = (series: ISeriesApi<"Candlestick">, last: Bar | null, minute: Li
 
 // Candles with the plan's levels drawn on the price axis, a BUY/SELL marker on the signal candle, EMA overlays and an RSI pane.
 // `fill` sizes the chart to its parent (the Terminal workspace) instead of a fixed height.
-export default function SignalChart({ candles, levels, markerTime, markers = [], direction, decimals, watermark, height = 340, fill = false, labels, live, setups, setupLevels, trend }: Props) {
+export default function SignalChart({ candles: latest, levels, markerTime, markers = [], direction, decimals, watermark, height = 340, fill = false, labels, live, setups, setupLevels, trend, history }: Props) {
   const box = useRef<HTMLDivElement>(null);
+  // Older pages fetched while scrolling back, for this symbol and timeframe only. Each fetch also keeps the latest page as
+  // it was then, so when a refresh moves the latest window forward the bars between the two are not lost.
+  const historyKey = history ? `${history.symbol}:${history.tf}` : "";
+  const [older, setOlder] = useState<{ key: string; candles: Candle[]; done: boolean }>({ key: "", candles: [], done: false });
+  const loading = useRef(false);
+  const retryAt = useRef(0);
+  const candles = useMemo(() => {
+    if (older.key !== historyKey || older.candles.length === 0 || latest.length === 0) return latest;
+    return [...older.candles.filter((c) => c.t < latest[0].t), ...latest];
+  }, [older, historyKey, latest]);
+  const done = older.key === historyKey && older.done;
   // With the trend indicator on the chart its baseline is the EMA50, so the plain EMA lines start hidden to keep the chart readable.
   const [overlays, setOverlays] = useState(() => ({ ema20: !trend, ema50: !trend, ema200: false, rsi: true, setups: true, trend: true }));
   // Visible window measured in bars from the right edge, so a refresh with a new candle keeps the user's zoom and scroll.
@@ -136,6 +149,23 @@ export default function SignalChart({ candles, levels, markerTime, markers = [],
     if (view.current) chart.timeScale().setVisibleLogicalRange({ from: last - view.current.fromEnd, to: last - view.current.toEnd });
     else if (candles.length > 250) chart.timeScale().setVisibleLogicalRange({ from: last - 250, to: last + 5 });
     else chart.timeScale().fitContent();
+    if (history && !done) chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (!range || range.from > 50 || loading.current || Date.now() < retryAt.current) return;
+      loading.current = true;
+      const first = candles[0].t;
+      fetch(`/api/candles?symbol=${history.symbol}&tf=${history.tf}&to=${first}&bars=${history.pageBars}`)
+        .then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))))
+        .then((body: { candles?: Candle[] }) => {
+          const page = (body.candles ?? []).filter((c) => c.t < first);
+          setOlder((prev) => {
+            const kept = prev.key === historyKey ? prev.candles : [];
+            const seen = [...kept.filter((c) => c.t < latest[0].t), ...latest];
+            return { key: historyKey, candles: [...page, ...seen], done: page.length === 0 };
+          });
+        })
+        .catch(() => { retryAt.current = Date.now() + 5000; })   // API restarting: try again on a later scroll
+        .finally(() => { loading.current = false; });
+    });
     window.addEventListener("resize", resize);
     return () => {
       const range = chart.timeScale().getVisibleLogicalRange();
@@ -145,7 +175,7 @@ export default function SignalChart({ candles, levels, markerTime, markers = [],
       series.current = null;
       chart.remove();
     };
-  }, [candles, levels, markerTime, markers, direction, decimals, overlays, watermark, height, fill, liveSymbol, period, setups, setupLevels, trend]);
+  }, [candles, levels, markerTime, markers, direction, decimals, overlays, watermark, height, fill, liveSymbol, period, setups, setupLevels, trend, history, historyKey, done, latest]);
 
   // Each tick: move the last candle in place. The EMA and RSI lines follow on the next data refresh.
   useEffect(() => {

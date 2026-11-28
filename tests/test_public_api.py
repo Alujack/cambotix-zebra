@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 import os
 import time
 
@@ -20,7 +21,7 @@ def clean_record(monkeypatch):
     with main.database() as conn:
         ledger.migrate(conn)
         conn.execute('SET session_replication_role = replica')
-        conn.execute('TRUNCATE messages, ledger, candles, coverage, notifications, signals')
+        conn.execute('TRUNCATE messages, ledger, candles, candles_h1, coverage, notifications, signals')
     api.clear_cache()
     yield
 
@@ -162,15 +163,24 @@ def test_candles_and_indicators_come_from_stored_m1(client, monkeypatch):
     with main.database() as conn:
         with conn.cursor() as cursor:
             cursor.executemany('INSERT INTO candles(symbol,t,o,h,l,c,spread) VALUES (%s,%s,%s,%s,%s,%s,%s)', rows)
+        ledger.refresh_h1(conn, 'XAUUSD', rows[0][1], rows[-1][1] + 60)
     api.clear_cache()
     body = client.get('/candles/XAUUSD?tf=15m&bars=50').json()
     assert body['tf'] == '15m' and len(body['candles']) == 50 and body['candles'][-1]['n'] <= 15
     assert all(b['t'] % 900 == 0 for b in body['candles'])
     # Bucketing in SQL matches the Python aggregate the indicators and the grader use, bar for bar.
     end = now + 900
-    for seconds in (300, 3600, 14400):
-        expected = api.aggregate(api.load_m1('XAUUSD', end - 260 * 900, end), seconds)
-        assert api.load_bars('XAUUSD', end - 260 * 900, end, seconds) == expected
+    # Hour and longer come from the hourly rollup: still bar for bar the same.
+    for seconds in (300, 3600, 14400, 86400):
+        start = end - 260 * 900
+        expected = api.aggregate(api.load_m1('XAUUSD', start - start % seconds, end), seconds)
+        assert api.load_bars('XAUUSD', start, end, seconds) == expected
+    months = client.get('/candles/XAUUSD?tf=1M&bars=20').json()
+    assert months['first'] == rows[0][1] and 1 <= len(months['candles']) <= 2
+    assert sum(b['n'] for b in months['candles']) == len(rows)
+    assert all(datetime.fromtimestamp(b['t'], timezone.utc).day == 1 for b in months['candles'])
+    # Paging back: the page before the first stored bar is empty, which tells the chart the history ended.
+    assert client.get(f'/candles/XAUUSD?tf=15m&bars=50&to={rows[0][1]}').json()['candles'] == []
     reading = client.get('/indicators/XAUUSD?tf=15m').json()
     assert reading['ema']['verdict'] in ('UPTREND', 'MIXED') and 0 <= reading['rsi']['value'] <= 100
     assert reading['bollinger_b']['verdict'] in ('inside bands', 'above upper band', 'below lower band')

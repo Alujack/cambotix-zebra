@@ -3,7 +3,7 @@
 watchlist. Nothing is scanned or published. Public market-data endpoints only: no account, no API key, no MT5.
 
     py -3.13 scripts/binance_feeder.py --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT
-    py -3.13 scripts/binance_feeder.py --symbols BTCUSDT,ETHUSDT --backfill-days 180     # one-time history, then exits
+    py -3.13 scripts/binance_feeder.py --symbols BTCUSDT,ETHUSDT --backfill-days 1100    # one-time history, then exits
 Unattended: scripts\\install_autostart.ps1 -Script binance_feeder.py -Symbol BTCUSDT,... (see that script).
 
 api.binance.com is unreachable from some networks; BINANCE_API in .env (or the environment) picks another host.
@@ -84,10 +84,11 @@ def push_candles(cfg: dict, symbol: str, state: dict) -> None:
     print(f'  {symbol} candles: catch-up continues next minute')
 
 
-def backfill(cfg: dict, symbol: str, days: float) -> None:
-    """Backward from now, so each older chunk touches the stored window and extends it (see backfill_candles.py)."""
-    stop = int(time.time()) // 60 * 60
-    floor, total = stop - int(days * 86400), 0
+def backfill(cfg: dict, symbol: str, days: float, skip_days: float = 0) -> None:
+    """Backward from now (or skip_days back, past history already stored), so each older chunk touches the stored
+    window and extends it (see backfill_candles.py)."""
+    now = int(time.time()) // 60 * 60
+    stop, floor, total = now - int(skip_days * 86400), now - int(days * 86400), 0
     while stop > floor:
         start = max(floor, stop - CANDLE_CHUNK)
         reply = send_chunk(cfg, symbol, start, stop)
@@ -135,6 +136,8 @@ def main() -> None:
     parser.add_argument('--history-hours', type=float, default=48,
                         help='M1 history sent on start, so a restart after downtime closes the gap (default 48)')
     parser.add_argument('--backfill-days', type=float, help='send this much history for every symbol, then exit')
+    parser.add_argument('--skip-days', type=float, default=0,
+                        help='with --backfill-days: start this many days back (history already stored; keep some overlap)')
     args = parser.parse_args()
 
     settings = env()
@@ -150,7 +153,7 @@ def main() -> None:
         raise SystemExit('--symbols is empty')
     if args.backfill_days:
         for symbol in symbols:
-            backfill(cfg, symbol, args.backfill_days)
+            backfill(cfg, symbol, args.backfill_days, args.skip_days)
         return
 
     states: dict = {symbol: {} for symbol in symbols} | {'_logged': 0.0}

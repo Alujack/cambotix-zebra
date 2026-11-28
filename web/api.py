@@ -231,28 +231,53 @@ def load_m1(symbol: str, start: int, end: int) -> list[dict]:
                             (symbol, start, end)).fetchall()
 
 
+MONTH = 31 * 86400                 # '1M' is calendar months (UTC); this is only its widest span, for window sizes
+CHART_TIMEFRAMES = {**TIMEFRAMES, '1M': MONTH}
+
+
 def load_bars(symbol: str, start: int, end: int, seconds: int) -> list[dict]:
-    """Stored M1 bucketed into epoch-aligned bars in the database (same result as aggregate(load_m1(...))), so a
-    daily or 4h chart does not pull hundreds of thousands of M1 rows into Python."""
+    """Stored candles bucketed into epoch-aligned bars in the database (same result as aggregate(load_m1(...))), so a
+    chart does not pull hundreds of thousands of M1 rows into Python. Hour and longer read the hourly rollup
+    (candles_h1, kept by the analyzer), so a daily chart over years reads thousands of rows; MONTH means calendar months."""
+    if seconds == MONTH:
+        bucket = "extract(epoch FROM date_trunc('month', to_timestamp(t) AT TIME ZONE 'UTC'))::bigint"
+        first_day = datetime.fromtimestamp(max(start, 0), timezone.utc).replace(day=1, hour=0, minute=0, second=0)
+        start = int(first_day.timestamp())
+    else:
+        bucket, start = f't - t %% {int(seconds)}', start - start % seconds
+    table, count = ('candles_h1', 'sum(n)::int') if seconds >= 3600 else ('candles', 'count(*)::int')
     with readonly() as conn:
-        return conn.execute('''SELECT t - t %% %s AS t, (array_agg(o ORDER BY t))[1] AS o, max(h) AS h, min(l) AS l,
-            (array_agg(c ORDER BY t DESC))[1] AS c, count(*)::int AS n
-            FROM candles WHERE symbol=%s AND t>=%s AND t<%s GROUP BY 1 ORDER BY 1''',
-                            (seconds, symbol, start, end)).fetchall()
+        conn.execute("SET LOCAL statement_timeout = '5s'")
+        return conn.execute(f'''SELECT {bucket} AS t, (array_agg(o ORDER BY t))[1] AS o, max(h) AS h, min(l) AS l,
+            (array_agg(c ORDER BY t DESC))[1] AS c, {count} AS n
+            FROM {table} WHERE symbol=%s AND t>=%s AND t<%s GROUP BY 1 ORDER BY 1''', (symbol, start, end)).fetchall()
+
+
+def first_candle(symbol: str) -> int | None:
+    with readonly() as conn:
+        row = conn.execute('SELECT t FROM candles WHERE symbol=%s ORDER BY t LIMIT 1', (symbol,)).fetchone()
+    return row['t'] if row else None
 
 
 @app.get('/candles/{symbol}')
-def candles(symbol: str, tf: str = Query('15m'), to: int | None = None, bars: int = Query(300, ge=20, le=1500)):
-    """Broker candles aggregated from stored M1, ending at `to` (default: latest). Same data the grader uses."""
-    if tf not in TIMEFRAMES or symbol not in allowed():
+def candles(symbol: str, tf: str = Query('15m'), to: int | None = None, bars: int = Query(300, ge=20, le=5000)):
+    """Broker candles aggregated from stored M1, the `bars` before `to` (default: latest). Same data the grader uses.
+    `first` is the oldest stored candle, so a chart scrolling back knows when the history ends."""
+    if tf not in CHART_TIMEFRAMES or symbol not in allowed():
         raise HTTPException(404, 'Unknown symbol or timeframe')
-    seconds = TIMEFRAMES[tf]
+    symbol, seconds = symbol.upper(), CHART_TIMEFRAMES[tf]
     end = (to or int(time.time())) // 60 * 60
-    start = end - bars * seconds
 
     def build():
-        out = load_bars(symbol.upper(), start, end, seconds)
-        return {'symbol': symbol.upper(), 'tf': tf, 'candles': out[-bars:]}
+        first, span, out = first_candle(symbol), bars * seconds, []
+        # A window that lands on a weekend or holiday comes back short: widen it (up to 8x) rather than return a
+        # page with nothing in it, which a scrolling chart would take for the end of the history.
+        for _ in range(4):
+            out = load_bars(symbol, end - span, end, seconds)
+            if len(out) >= bars or first is None or end - span <= first:
+                break
+            span *= 2
+        return {'symbol': symbol, 'tf': tf, 'candles': out[-bars:], 'first': first}
     return cached(f'candles:{symbol}:{tf}:{end}:{bars}', build)
 
 

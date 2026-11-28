@@ -42,7 +42,7 @@ def isolated_database(monkeypatch):
         ai_tables.migrate(conn)
         # Test-only reset: replica mode skips the append-only triggers, which requires a database superuser.
         conn.execute('SET session_replication_role = replica')
-        conn.execute('TRUNCATE messages, ledger, candles, coverage, notifications, signals, ai_usage, ai_jobs, '
+        conn.execute('TRUNCATE messages, ledger, candles, candles_h1, coverage, notifications, signals, ai_usage, ai_jobs, '
                      'ai_reports, agent_state, agent_updates, agent_messages, ai_notes')
     yield
 
@@ -297,6 +297,10 @@ def test_candles_are_graded_into_the_record(client, monkeypatch):
     assert client.post('/candles', json=replay).status_code == 200
     with main.database() as conn:
         assert conn.execute('SELECT h FROM candles WHERE t=%s', (first + 60,)).fetchone()['h'] == tp1 + 0.3
+        # The hourly rollup the long charts read follows every stored batch.
+        hours = conn.execute('SELECT t, o, h, l, c, n FROM candles_h1 ORDER BY t').fetchall()
+    assert sum(row['n'] for row in hours) == 3 and max(row['h'] for row in hours) == tp1 + 0.3
+    assert hours[0]['o'] == entry and hours[-1]['c'] == entry and all(row['t'] % 3600 == 0 for row in hours)
 
 
 def test_coverage_asks_for_missing_history(client, monkeypatch):

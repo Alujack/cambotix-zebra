@@ -242,6 +242,8 @@ async def candles(request: Request):
         with conn.cursor() as cursor:
             cursor.executemany('''INSERT INTO candles(symbol,t,o,h,l,c,spread) VALUES (%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT DO NOTHING''', [(batch.symbol, *row) for row in batch.candles])
+        if batch.candles:
+            ledger.refresh_h1(conn, batch.symbol, batch.start, batch.end)
         row = conn.execute('SELECT since, through FROM coverage WHERE symbol=%s FOR UPDATE', (batch.symbol,)).fetchone()
         if not row:
             since, through = batch.start, batch.end

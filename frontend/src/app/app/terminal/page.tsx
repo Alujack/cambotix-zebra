@@ -20,11 +20,11 @@ import { decimals, price } from "@/lib/format";
 import { href, t, type Lang } from "@/lib/i18n";
 import { market, site, tvSource } from "@/lib/site";
 
-const TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
-const TF_SECONDS: { [tf: string]: number } = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400 };
-// Candles loaded per timeframe (the API caps at 1500): about a day of 1m, ten days of 15m, half a year of 4h. The chart opens
-// on the newest bars and the rest is there to scroll back through.
-const TF_BARS: { [tf: string]: number } = { "1m": 1440, "5m": 1000, "15m": 1000, "30m": 1000, "1h": 1000, "4h": 1000, "1d": 365 };
+const TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1M"];
+const TF_SECONDS: { [tf: string]: number } = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400, "1M": 0 };   // 1M is calendar months: no live folding, the refresh brings it
+// Candles per page (the API caps at 5000): the first page is the newest, and scrolling left fetches the next one, back to
+// the start of the stored history (three years). 4h, 1d and 1M fit the whole three years in one or two pages.
+const TF_BARS: { [tf: string]: number } = { "1m": 1440, "5m": 1500, "15m": 1500, "30m": 1500, "1h": 1500, "4h": 3000, "1d": 1500, "1M": 120 };
 type Tone = "green" | "red" | "gold" | "neutral";
 const dotTone = (tone: Tone) => (tone === "green" ? "bg-green" : tone === "red" ? "bg-red" : tone === "gold" ? "bg-gold" : "bg-muted");
 const textTone = (tone: Tone) => (tone === "green" ? "text-green" : tone === "red" ? "text-red" : tone === "gold" ? "text-gold" : "text-text");
@@ -42,9 +42,9 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
 
   const [chart, tickers, plans, record, news, sentiment, reading, setups, trend] = await Promise.all([
     view === "broker" ? getCandles(symbol, tf, undefined, TF_BARS[tf]) : Promise.resolve({ symbol, tf, candles: [] }),
-    getTickers(), getSignals(200), getRecord(), getNews(), getSentiment(), getIndicators(symbol, tf),
+    getTickers(), getSignals(200), getRecord(), getNews(), getSentiment(), getIndicators(symbol, tf === "1M" ? "1d" : tf),
     view === "broker" ? getSetups(symbol, 1000) : Promise.resolve(null),
-    view === "broker" ? getTrend(symbol, tf, Math.min(TF_BARS[tf], 1000)) : Promise.resolve(null),
+    view === "broker" && tf !== "1M" ? getTrend(symbol, tf, Math.min(TF_BARS[tf], 1000)) : Promise.resolve(null),
   ]);
   // Our indicator: a dot per 15m setup; the newest one's entry/SL/TP lines while it is recent (the Pine script draws them 48 bars long).
   const setupMarks = (setups?.candidates ?? []).map((item) => ({ time: item.t, direction: item.direction }));
@@ -153,7 +153,7 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
   const chartBody = view === "live" ? (
     <TradingViewWidget symbol={symbol} tf={tf} locale="en" height="100%" />
   ) : chart.candles.length > 0 ? (
-    <SignalChart key={`${symbol}-${tf}`} fill live={{ symbol, period: TF_SECONDS[tf] }} candles={chart.candles} levels={[]} markers={mine.map((plan) => ({ time: plan.published_at, direction: plan.direction }))} direction="BUY" decimals={dec} watermark={k.watermark} setups={setups ? setupMarks : undefined} setupLevels={setupLevels} trend={trend ?? undefined} labels={{ ema20: "EMA20", ema50: "EMA50", ema200: "EMA200", rsi: "RSI", setups: k.setups.pill, trend: k.atrTrend.pill }} />
+    <SignalChart key={`${symbol}-${tf}`} fill live={{ symbol, period: TF_SECONDS[tf] }} history={view === "broker" ? { symbol, tf, pageBars: TF_BARS[tf] } : undefined} candles={chart.candles} levels={[]} markers={mine.map((plan) => ({ time: plan.published_at, direction: plan.direction }))} direction="BUY" decimals={dec} watermark={k.watermark} setups={setups ? setupMarks : undefined} setupLevels={setupLevels} trend={trend ?? undefined} labels={{ ema20: "EMA20", ema50: "EMA50", ema200: "EMA200", rsi: "RSI", setups: k.setups.pill, trend: k.atrTrend.pill }} />
   ) : (
     <p className="grid h-full place-items-center p-8 text-center text-sm text-muted">{k.noCandles}</p>
   );

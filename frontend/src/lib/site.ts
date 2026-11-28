@@ -41,7 +41,7 @@ const tvSymbols: { [symbol: string]: string } = {
 };
 export const tvSymbol = (symbol: string) => tvSymbols[symbol] ?? `FX:${symbol}`;
 export const tvSource = (symbol: string) => tvSymbol(symbol).split(":")[0];
-const tvIntervals: { [tf: string]: string } = { "1m": "1", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D" };
+const tvIntervals: { [tf: string]: string } = { "1m": "1", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D", "1M": "M" };
 export const tvInterval = (tf: string) => tvIntervals[tf] ?? "15";
 
 // Units per standard lot, for the position-size calculator on a plan's detail page.
