@@ -38,7 +38,87 @@ const GB = ({ cx, cy, r, clip }: FlagProps) => (
   </g>
 );
 
-const FLAGS: { [currency: string]: (props: FlagProps) => React.ReactElement } = { EUR: EU, USD: US, GBP: GB };
+const JP = ({ cx, cy, r, clip }: FlagProps) => (
+  <g clipPath={`url(#${clip})`}>
+    <circle cx={cx} cy={cy} r={r} fill="#ffffff" />
+    <circle cx={cx} cy={cy} r={r * 0.45} fill="#bc002d" />
+  </g>
+);
+
+const CH = ({ cx, cy, r, clip }: FlagProps) => (
+  <g clipPath={`url(#${clip})`}>
+    <circle cx={cx} cy={cy} r={r} fill="#da291c" />
+    <path d={`M${cx} ${cy - r * 0.55}V${cy + r * 0.55}M${cx - r * 0.55} ${cy}H${cx + r * 0.55}`} stroke="#ffffff" strokeWidth={r * 0.32} />
+  </g>
+);
+
+// Maple leaf drawn on a unit box (-1..1), scaled to the flag.
+const LEAF = "M0 -0.9 L0.14 -0.62 L0.32 -0.7 L0.26 -0.3 L0.56 -0.5 L0.5 -0.32 L0.8 -0.24 L0.62 -0.06 L0.7 0.06 L0.2 0.26 L0.06 0.3 L0.06 0.62 L-0.06 0.62 L-0.06 0.3 L-0.2 0.26 L-0.7 0.06 L-0.62 -0.06 L-0.8 -0.24 L-0.5 -0.32 L-0.56 -0.5 L-0.26 -0.3 L-0.32 -0.7 L-0.14 -0.62 Z";
+const CA = ({ cx, cy, r, clip }: FlagProps) => (
+  <g clipPath={`url(#${clip})`}>
+    <circle cx={cx} cy={cy} r={r} fill="#ffffff" />
+    <rect x={cx - r} y={cy - r} width={r * 0.5} height={2 * r} fill="#d52b1e" />
+    <rect x={cx + r * 0.5} y={cy - r} width={r * 0.5} height={2 * r} fill="#d52b1e" />
+    <path d={LEAF} transform={`translate(${cx} ${cy}) scale(${r * 0.5})`} fill="#d52b1e" />
+  </g>
+);
+
+// Australia and New Zealand: blue ensign, a small Union Jack in the top-left and the Southern Cross on the right.
+const ensign = (stars: [number, number, number][], fill: string, outline?: string) => ({ cx, cy, r, clip }: FlagProps) => (
+  <g clipPath={`url(#${clip})`}>
+    <circle cx={cx} cy={cy} r={r} fill="#012169" />
+    <g transform={`translate(${cx - r * 0.5} ${cy - r * 0.5}) scale(${r * 0.5})`}>
+      <path d="M-1 -1L1 1M1 -1L-1 1" stroke="#ffffff" strokeWidth="0.36" />
+      <path d="M-1 -1L1 1M1 -1L-1 1" stroke="#c8102e" strokeWidth="0.12" />
+      <path d="M0 -1V1M-1 0H1" stroke="#ffffff" strokeWidth="0.56" />
+      <path d="M0 -1V1M-1 0H1" stroke="#c8102e" strokeWidth="0.32" />
+    </g>
+    {stars.map(([x, y, s], i) => <circle key={i} cx={cx + x * r} cy={cy + y * r} r={s * r} fill={fill} stroke={outline} strokeWidth={outline ? r * 0.04 : 0} />)}
+  </g>
+);
+const AU = ensign([[-0.5, 0.5, 0.16], [0.5, -0.5, 0.08], [0.25, 0.0, 0.08], [0.75, -0.05, 0.08], [0.5, 0.6, 0.09], [0.55, 0.2, 0.05]], "#ffffff");
+const NZ = ensign([[0.5, -0.5, 0.09], [0.25, 0.05, 0.09], [0.72, -0.05, 0.08], [0.5, 0.6, 0.1]], "#c8102e", "#ffffff");
+
+const FLAGS: { [currency: string]: (props: FlagProps) => React.ReactElement } = { EUR: EU, USD: US, GBP: GB, JPY: JP, CHF: CH, CAD: CA, AUD: AU, NZD: NZ };
+
+// Crypto coins other than Bitcoin, as exchanges show them.
+function Coin({ coin, id }: { coin: string; id: string }) {
+  if (coin === "ETH") return (
+    <svg viewBox="0 0 48 48" width="100%" height="100%" aria-hidden>
+      <circle cx="24" cy="24" r="24" fill="#627eea" />
+      <path d="M24 8 L34 24.5 L24 30.5 L14 24.5 Z" fill="#ffffff" />
+      <path d="M24 8 L34 24.5 L24 20 Z" fill="#c1ccf7" />
+      <path d="M24 32.5 L34 26.5 L24 40 L14 26.5 Z" fill="#ffffff" />
+    </svg>
+  );
+  if (coin === "SOL") return (
+    <svg viewBox="0 0 48 48" width="100%" height="100%" aria-hidden>
+      <defs><linearGradient id={`${id}-sol`} x1="0" x2="1" y1="1" y2="0"><stop offset="0" stopColor="#9945ff" /><stop offset="1" stopColor="#14f195" /></linearGradient></defs>
+      <circle cx="24" cy="24" r="24" fill="#101014" />
+      {[15, 22.5, 30].map((y, i) => <path key={i} d={i === 1 ? `M14 ${y} H31 L35 ${y + 4} H18 Z` : `M18 ${y} H35 L31 ${y + 4} H14 Z`} fill={`url(#${id}-sol)`} />)}
+    </svg>
+  );
+  if (coin === "BNB") return (
+    <svg viewBox="0 0 48 48" width="100%" height="100%" aria-hidden>
+      <circle cx="24" cy="24" r="24" fill="#f3ba2f" />
+      <g fill="#ffffff" transform="rotate(45 24 24)">
+        <rect x="20.5" y="20.5" width="7" height="7" />
+        <rect x="21" y="9" width="6" height="6" /><rect x="21" y="33" width="6" height="6" />
+        <rect x="9" y="21" width="6" height="6" /><rect x="33" y="21" width="6" height="6" />
+      </g>
+    </svg>
+  );
+  if (coin === "XRP") return (
+    <svg viewBox="0 0 48 48" width="100%" height="100%" aria-hidden>
+      <circle cx="24" cy="24" r="24" fill="#23292f" />
+      <g fill="none" stroke="#ffffff" strokeWidth="3.4" strokeLinecap="round">
+        <path d="M13 13 L20 20 a5.6 5.6 0 0 0 8 0 L35 13" />
+        <path d="M13 35 L20 28 a5.6 5.6 0 0 1 8 0 L35 35" />
+      </g>
+    </svg>
+  );
+  return null;
+}
 
 function Gold({ id }: { id: string }) {
   return (
@@ -97,6 +177,7 @@ export default function MarketIcon({ symbol, size = 36 }: { symbol: string; size
   let art: React.ReactNode = null;
   if (s.startsWith("XAU")) art = <Gold id={id} />;
   else if (s.startsWith("BTC")) art = <Bitcoin />;
+  else if (/^(ETH|SOL|BNB|XRP)USDT?$/.test(s)) art = <Coin coin={s.slice(0, 3)} id={id} />;
   else if (/^[A-Z]{6}$/.test(s)) art = <Pair base={s.slice(0, 3)} quote={s.slice(3)} id={id} />;
   return (
     <span className="grid flex-none place-items-center overflow-hidden rounded-full" style={{ width: size, height: size }} title={symbol}>

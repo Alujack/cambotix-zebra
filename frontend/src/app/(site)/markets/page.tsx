@@ -22,7 +22,7 @@ const voteBar = { bull: "bg-green", bear: "bg-red", flat: "bg-white/15" };
 async function Board({ searchParams }: { searchParams: Promise<{ tf?: string }> }) {
   const query = await searchParams;
   const tf = TFS.includes(query.tf ?? "") ? (query.tf as string) : "15m";
-  const readings = await Promise.all(site.markets.map(async (symbol) => ({ symbol, reading: await getIndicators(symbol, tf) })));
+  const readings = await Promise.all(site.watchlist.map(async (symbol) => ({ symbol, reading: await getIndicators(symbol, tf) })));
   const read = readings.filter((row) => row.reading !== null).map((row) => ({ ...row, bias: bias(row.reading!) }));
   const count = (label: string) => read.filter((row) => row.bias.label === label).length;
   const latest = Math.max(0, ...read.map((row) => row.reading!.at));

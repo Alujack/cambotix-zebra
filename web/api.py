@@ -125,7 +125,10 @@ def build_signals(limit: int) -> list[dict]:
 
 def build_tickers() -> list[dict]:
     with readonly() as conn:
-        latest = conn.execute('SELECT DISTINCT ON (symbol) symbol, t, c FROM candles ORDER BY symbol, t DESC').fetchall()
+        # One primary-key lookup per configured symbol: DISTINCT ON over the whole table scans every stored candle
+        # (millions once history is backfilled) and hits the read-only statement timeout.
+        latest = [row for symbol in sorted(allowed()) if (row := conn.execute(
+            'SELECT symbol, t, c FROM candles WHERE symbol=%s ORDER BY t DESC LIMIT 1', (symbol,)).fetchone())]
         out = []
         for row in latest:
             earlier = conn.execute('SELECT c FROM candles WHERE symbol=%s AND t <= %s ORDER BY t DESC LIMIT 1',
@@ -262,7 +265,7 @@ def indicators(symbol: str, tf: str = Query('15m'), at: int | None = None):
     end = ((at or int(time.time())) // seconds + 1) * seconds
 
     def build():
-        bars = aggregate(load_m1(symbol.upper(), end - 260 * seconds, end), seconds)
+        bars = load_bars(symbol.upper(), end - 260 * seconds, end, seconds)
         reading = snapshot(bars)
         if reading is None:
             raise HTTPException(404, 'Not enough broker candles for this symbol yet')

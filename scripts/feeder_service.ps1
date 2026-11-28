@@ -5,9 +5,15 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1                    # local stack
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Vps               # VPS analyzer via scripts\vps_feeder.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Symbol EURUSDm -Models ict -LogName feeder-eurusd.log
+#   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Script chart_feeder.py -Symbol "GBPUSDc,USDJPYc" -LogName feeder-fx.log
+#   powershell -ExecutionPolicy Bypass -File scripts\feeder_service.ps1 -Script binance_feeder.py -Symbol "BTCUSDT,ETHUSDT" -LogName feeder-binance.log
 # Each symbol runs its own service; give a second one its own -LogName so the two logs do not interleave.
+# -Script picks the feeder: mt5_feeder.py (one symbol, signals) or a chart-only feeder (chart_feeder.py for MT5,
+# binance_feeder.py for Binance) that takes a comma list in -Symbol and ignores -Models.
 param(
     [string]$Symbol = 'XAUUSDm',
+    [ValidateSet('mt5_feeder.py', 'chart_feeder.py', 'binance_feeder.py')]
+    [string]$Script = 'mt5_feeder.py',
     [string]$Models = 'crt',
     [string]$LogName = 'feeder.log',
     [switch]$Vps
@@ -61,10 +67,10 @@ function Start-DockerDesktop {
 }
 
 $port = Get-AnalyzerPort
-$feederArgs = @('--symbol', $Symbol, '--models', $Models)
+$feederArgs = if ($Script -eq 'mt5_feeder.py') { @('--symbol', $Symbol, '--models', $Models) } else { @('--symbols', $Symbol) }
 $env:PYTHONUNBUFFERED = '1'
 $target = if ($Vps) { 'VPS analyzer' } else { "local analyzer 127.0.0.1:$port" }
-Write-Log "feeder service started: $Symbol, models $Models, $target"
+Write-Log "feeder service started: $Script $Symbol$(if ($Script -eq 'mt5_feeder.py') { ", models $Models" }), $target"
 
 while ($true) {
     if ($Vps) {
@@ -85,7 +91,7 @@ while ($true) {
             }
         }
         Write-Log 'analyzer is up; starting feeder'
-        & py (Join-Path $root 'scripts\mt5_feeder.py') @feederArgs *>&1 | ForEach-Object { Write-Log "$_" }
+        & py (Join-Path $root "scripts\$Script") @feederArgs *>&1 | ForEach-Object { Write-Log "$_" }
     }
     Write-Log "feeder exited (code $LASTEXITCODE); restarting in 30s"
     Start-Sleep 30

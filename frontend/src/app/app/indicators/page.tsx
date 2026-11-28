@@ -25,13 +25,13 @@ function tiles(x: Indicators, d: ReturnType<typeof t>, dec: number) {
 async function Readings({ lang, searchParams }: { lang: Lang; searchParams: Promise<{ symbol?: string; tf?: string }> }) {
   const d = t(lang);
   const query = await searchParams;
-  const symbol = (query.symbol ?? site.markets[0]).toUpperCase();
+  const symbol = (query.symbol ?? site.watchlist[0]).toUpperCase();
   const tf = TFS.includes(query.tf ?? "") ? (query.tf as string) : "15m";
   const reading = await getIndicators(symbol, tf);
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-1.5">
-        {site.markets.map((item) => <Link key={item} href={href(lang, `/app/indicators?symbol=${item}&tf=${tf}`)} className={`pill ${item === symbol ? "pill-active" : ""}`}>{item}</Link>)}
+        {site.watchlist.map((item) => <Link key={item} href={href(lang, `/app/indicators?symbol=${item}&tf=${tf}`)} className={`pill ${item === symbol ? "pill-active" : ""}`}>{item}</Link>)}
         <span className="mx-2 text-border">|</span>
         {TFS.map((item) => <Link key={item} href={href(lang, `/app/indicators?symbol=${symbol}&tf=${item}`)} className={`pill ${item === tf ? "pill-active" : ""}`}>{item}</Link>)}
       </div>

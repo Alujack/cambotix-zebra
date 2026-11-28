@@ -34,7 +34,7 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
   const d = t(lang);
   const k = d.terminal;
   const query = await searchParams;
-  const symbol = (query.symbol ?? site.markets[0]).toUpperCase();
+  const symbol = (query.symbol ?? site.watchlist[0]).toUpperCase();
   const tf = TFS.includes(query.tf ?? "") ? (query.tf as string) : "15m";
   // Broker (default) = our Exness candles, live price, every plan flagged and our indicator; live = TradingView's embed on their feed.
   const view = query.view === "live" ? "live" : "broker";
@@ -70,11 +70,12 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
     [k.fearGreed, fg ? `${fg.value} · ${fg.label}` : "—", fgTone],
     [k.volatility, reading ? reading.atr.verdict : "—", reading?.atr.verdict === "volatile" ? "red" : reading?.atr.verdict === "quiet" ? "neutral" : reading ? "green" : "neutral"],
     [k.trend, reading ? reading.ema.verdict.toLowerCase() : "—", reading ? reading.ema.tone : "neutral"],
-    ...tickers.filter((item) => item.symbol !== symbol).slice(0, 2).map((item): [string, string, Tone] => [`${item.symbol} 24h`, pct(item.change_24h_pct), item.change_24h_pct === null ? "neutral" : item.change_24h_pct >= 0 ? "green" : "red"]),
+    // The desk's other markets (in watchlist order), not whichever tickers sort first.
+    ...site.markets.filter((item) => item !== symbol).map((item) => tickers.find((row) => row.symbol === item)).filter((item) => item !== undefined).slice(0, 2).map((item): [string, string, Tone] => [`${item.symbol} 24h`, pct(item.change_24h_pct), item.change_24h_pct === null ? "neutral" : item.change_24h_pct >= 0 ? "green" : "red"]),
     [k.desk, record.open > 0 ? `${record.open} ${k.openPlans}` : feedFresh ? k.scanning : k.paused, record.open > 0 ? "gold" : feedFresh ? "green" : "neutral"],
   ];
 
-  const watchRows = site.markets.map((item) => {
+  const watchRows = site.watchlist.map((item) => {
     const tick = tickers.find((row) => row.symbol === item);
     return { symbol: item, name: market(item).name, category: market(item).category, price: tick ? price(tick.price) : null, change: tick?.change_24h_pct ?? null, price24h: tick?.price_24h ?? null, href: link(item, tf, view), active: item === symbol };
   });
@@ -113,7 +114,7 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
           <span className="text-[15px] font-semibold">{symbol}</span>
           <Check size={15} className="text-green" />
         </span>
-        <span className="text-sm tracking-wide text-muted">{view === "live" ? tvSource(symbol) : "EXNESS"}</span>
+        <span className="text-sm tracking-wide text-muted">{view === "live" ? tvSource(symbol) : symbol.endsWith("USDT") ? "BINANCE" : "EXNESS"}</span>
         <MarketClock hours={info.hours} labels={{ open: k.marketOpen, closed: k.marketClosed, closesIn: k.closesIn, opensIn: k.opensAt, always: k.always }} />
         <LivePrice symbol={symbol} hours={info.hours} showEmpty={view === "broker"} labels={{ paused: k.paused, closed: k.marketClosedBadge, noQuote: k.noQuote }}
           initial={quote ? { price: quote.price, time: quote.time, change: quote.change_24h_pct, price24h: quote.price_24h ?? null } : null} />
@@ -167,7 +168,7 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
 
   const mobileMarkets = (
     <div className="flex gap-1.5 overflow-x-auto px-4 pb-2.5">
-      {site.markets.map((item) => <Link key={item} href={link(item, tf, view)} className={`pill ${item === symbol ? "pill-active" : ""}`}>{item}</Link>)}
+      {site.watchlist.map((item) => <Link key={item} href={link(item, tf, view)} className={`pill ${item === symbol ? "pill-active" : ""}`}>{item}</Link>)}
     </div>
   );
 

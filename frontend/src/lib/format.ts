@@ -5,7 +5,8 @@ export const utc = (epoch: number, withTime = true) => {
 };
 
 // Decimals follow the asset: gold/indices/BTC 2, forex 5. `ref` lets a small distance (6.30 on gold) borrow its level's decimals.
-export const decimals = (ref: number) => (ref >= 100 ? 2 : 5);
+// 2 for gold and BTC, 3 for yen pairs and coins priced in the tens or hundreds (USDJPY, SOL, BNB), 5 for the rest.
+export const decimals = (ref: number) => (ref >= 1000 ? 2 : ref >= 50 ? 3 : 5);
 export const price = (value: number, ref: number = value) => value.toLocaleString("en-US", {
   minimumFractionDigits: decimals(ref),
   maximumFractionDigits: decimals(ref),
