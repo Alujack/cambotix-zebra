@@ -93,8 +93,10 @@ def migrate(conn) -> None:
         ALTER TABLE messages ADD CONSTRAINT messages_chat_check CHECK (chat IN ('private', 'digest', 'community'))''')
     # Databases with candles from before candles_h1 existed: build it once, symbol by symbol.
     if not conn.execute('SELECT 1 FROM candles_h1 LIMIT 1').fetchone():
+        conn.execute("SET LOCAL statement_timeout = '10min'")    # DISTINCT reads every stored candle too
         for row in conn.execute('SELECT DISTINCT symbol FROM candles').fetchall():
             refresh_h1(conn, row['symbol'], 0, 2 ** 62)
+        conn.execute('SET LOCAL statement_timeout TO DEFAULT')
 
 
 def refresh_h1(conn, symbol: str, start: int, end: int) -> None:

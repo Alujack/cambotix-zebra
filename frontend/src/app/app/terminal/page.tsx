@@ -47,6 +47,8 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
     view === "broker" && tf !== "1M" ? getTrend(symbol, tf, Math.min(TF_BARS[tf], 1000)) : Promise.resolve(null),
   ]);
   // Our indicator: a dot per 15m setup; the newest one's entry/SL/TP lines while it is recent (the Pine script draws them 48 bars long).
+  // Off on 4h and longer: there many 15m setups land on the same few candles and bury the right edge in labels.
+  const chartSetups = !["4h", "1d", "1M"].includes(tf);
   const setupMarks = (setups?.candidates ?? []).map((item) => ({ time: item.t, direction: item.direction }));
   const recent = setups?.candidates.at(-1);
   const setupLevels = recent && setups?.at && setups.at - recent.t <= 48 * 900 ? [
@@ -153,7 +155,7 @@ async function Workspace({ lang, searchParams }: { lang: Lang; searchParams: Pro
   const chartBody = view === "live" ? (
     <TradingViewWidget symbol={symbol} tf={tf} locale="en" height="100%" />
   ) : chart.candles.length > 0 ? (
-    <SignalChart key={`${symbol}-${tf}`} fill live={{ symbol, period: TF_SECONDS[tf] }} history={view === "broker" ? { symbol, tf, pageBars: TF_BARS[tf] } : undefined} candles={chart.candles} levels={[]} markers={mine.map((plan) => ({ time: plan.published_at, direction: plan.direction }))} direction="BUY" decimals={dec} watermark={k.watermark} setups={setups ? setupMarks : undefined} setupLevels={setupLevels} trend={trend ?? undefined} labels={{ ema20: "EMA20", ema50: "EMA50", ema200: "EMA200", rsi: "RSI", setups: k.setups.pill, trend: k.atrTrend.pill }} />
+    <SignalChart key={`${symbol}-${tf}`} fill live={{ symbol, period: TF_SECONDS[tf] }} history={view === "broker" ? { symbol, tf, pageBars: TF_BARS[tf] } : undefined} candles={chart.candles} levels={[]} markers={mine.map((plan) => ({ time: plan.published_at, direction: plan.direction }))} direction="BUY" decimals={dec} watermark={k.watermark} setups={setups && chartSetups ? setupMarks : undefined} setupLevels={chartSetups ? setupLevels : undefined} trend={trend ?? undefined} labels={{ ema20: "EMA20", ema50: "EMA50", ema200: "EMA200", rsi: "RSI", setups: k.setups.pill, trend: k.atrTrend.pill }} />
   ) : (
     <p className="grid h-full place-items-center p-8 text-center text-sm text-muted">{k.noCandles}</p>
   );
